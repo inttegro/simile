@@ -1,0 +1,42 @@
+use snapbox::cmd::Command;
+
+#[test]
+fn prints_version_as_json() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "version"])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"version\": \"0.1.0\",\n",
+            "  \"architecture\": \"[..]\",\n",
+            "  \"operatingSystem\": \"[..]\"\n",
+            "}\n"
+        ));
+}
+
+#[test]
+fn doctor_writes_machine_output_only_to_stdout() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "doctor"])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"ok\": true,\n",
+            "  \"checks\": [\n",
+            "    {\n",
+            "      \"name\": \"build\",\n",
+            "      \"status\": \"pass\",\n",
+            "      \"detail\": \"simile 0.1.0\"\n",
+            "    },\n",
+            "    {\n",
+            "      \"name\": \"current-directory\",\n",
+            "      \"status\": \"pass\",\n",
+            "      \"detail\": \"[..]\"\n",
+            "    }\n",
+            "  ]\n",
+            "}\n"
+        ))
+        .stderr_eq("");
+}

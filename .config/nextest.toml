@@ -1,0 +1,10 @@
+[profile.default]
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+fail-fast = false
+retries = 1
+status-level = "skip"
+final-status-level = "fail"
+junit.path = "target/nextest/ci/junit.xml"

@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Test
+        run: cargo test --workspace --all-targets --all-features --locked
+
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal --component clippy --component rustfmt
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Documentation
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install current stable Rust for audit tooling
+        run: rustup toolchain install stable --profile minimal
+      - name: Install cargo-deny
+        run: rustup run stable cargo install cargo-deny --locked
+      - name: Audit dependencies
+        run: cargo deny check
