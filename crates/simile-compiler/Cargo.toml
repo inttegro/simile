@@ -1,0 +1,19 @@
+[package]
+name = "simile-compiler"
+description = "Compiler pipeline for OpenAPI contracts and Simile behavior overlays"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+simile-hcl.workspace = true
+simile-openapi.workspace = true
+simile-spec.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "simile-hcl"
+description = "HCL behavior parser and semantic compiler for Simile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+hcl-rs.workspace = true
+simile-spec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+simile-openapi.workspace = true
+
+[lints]
+workspace = true

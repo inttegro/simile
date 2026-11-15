@@ -1,4 +1,6 @@
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum OutputFormat {
@@ -58,8 +60,20 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Compile an OpenAPI contract and optional HCL behavior modules.
+    Compile(CompileArgs),
     /// Check the local environment and report actionable problems.
     Doctor,
     /// Print detailed build information.
     Version,
+}
+
+#[derive(Debug, Args)]
+pub struct CompileArgs {
+    /// OpenAPI JSON or YAML contract.
+    pub openapi: PathBuf,
+
+    /// HCL behavior module. Repeat to compile multiple modules.
+    #[arg(short, long, value_name = "FILE")]
+    pub behavior: Vec<PathBuf>,
 }

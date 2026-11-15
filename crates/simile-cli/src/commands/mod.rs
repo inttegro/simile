@@ -1,3 +1,4 @@
+mod compile;
 mod doctor;
 mod version;
 
@@ -15,6 +16,7 @@ pub enum Status {
 
 pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<Status> {
     match command {
+        Command::Compile(arguments) => compile::execute(arguments, terminal),
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Version => version::execute(ctx, terminal),
     }
