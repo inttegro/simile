@@ -1,11 +1,16 @@
 # Working in Simile
 
-Simile is a Rust CLI workspace with a strict presentation/application boundary.
+Simile is a Rust CLI workspace with strict source, compilation, application and presentation
+boundaries.
 
 ## Structure
 
 - `crates/simile-cli`: argument parsing, terminal rendering, logging and process exit behaviour.
+- `crates/simile-compiler`: orchestration of all source adapters into one compiled service.
 - `crates/simile-core`: application context, domain types and operations.
+- `crates/simile-hcl`: HCL syntax parsing and semantic validation of behavior overlays.
+- `crates/simile-openapi`: JSON/YAML OpenAPI parsing and feature-line adapters.
+- `crates/simile-spec`: version-neutral API, behavior and compiled-service types.
 - `crates/simile-cli/src/commands`: thin adapters from CLI arguments to core operations.
 - `crates/simile-core/src/ops`: application behaviour, independent of Clap and terminal output.
 
@@ -16,12 +21,20 @@ Simile is a Rust CLI workspace with a strict presentation/application boundary.
 | Add or rename a flag | `crates/simile-cli/src/cli.rs` |
 | Add a command adapter | `crates/simile-cli/src/commands/` |
 | Implement behaviour | `crates/simile-core/src/ops/` |
+| Change the canonical service model | `crates/simile-spec/` |
+| Change OpenAPI ingestion | `crates/simile-openapi/` |
+| Change the HCL language or validation | `crates/simile-hcl/` |
+| Change source coordination | `crates/simile-compiler/` |
 | Add shared application state | `crates/simile-core/src/context.rs` |
 | Change human or JSON rendering | `crates/simile-cli/src/terminal.rs` and the relevant command |
 | Add end-to-end CLI coverage | `crates/simile-cli/tests/` |
 
 Do not put domain behaviour in the Clap model or grow a command adapter into an operation. Do not
 add a crate until a real compilation, ownership or reuse boundary exists.
+
+OpenAPI is the complete HTTP contract. HCL is an optional behavior overlay and must not redefine
+routes, request shapes or response shapes. Keep source-specific syntax out of `simile-spec` and
+coordination policy out of the source adapters.
 
 ## Interface invariants
 

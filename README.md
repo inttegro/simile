@@ -1,21 +1,83 @@
 # Simile
 
-Simile is an Inttegro command-line application built around a small, explicit Rust workspace.
+Simile lets a service provider distribute a faithful, locally runnable model of its system. It
+emulates the service's API, state transitions, and asynchronous behaviour so developers can build
+and test complete integrations without depending on hosted test infrastructure.
 
-The initial commands expose the operational foundation:
+An HTTP response is only the visible edge of many services. A request may create durable state,
+enqueue work, emit an event, deliver a webhook, retry, or complete later. Simile treats those
+effects as part of the operation rather than reducing the service to static request and response
+fixtures.
+
+The provider owns the behaviour definition. The developer runs it on their own machine or in CI:
+
+```text
+application under test
+        |
+        v
+local Simile runtime ----> immediate response
+        |
+        +---------------> state changes
+        +---------------> events, webhooks, retries, and delayed outcomes
+```
+
+This moves the execution and availability of test mode to the developer while leaving the service
+provider in control of its semantics. Definitions can represent services such as Inttegro or
+Stripe without requiring those platforms to operate a separate hosted environment for every
+integration.
+
+Read the [service charter](CHARTER.md) for the product boundary and design principles, and the
+[compiler architecture](docs/architecture.md) for the source and ownership boundaries.
+
+## Status
+
+Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
+parse behavior modules written in HCL, and compile both into one validated service model. The
+runtime described by the charter is the next product layer; the current CLI does not yet serve the
+compiled service.
+
+The available foundation commands are:
 
 ```console
 $ simile version
 $ simile doctor
 $ simile --output json doctor
+$ simile compile openapi.yaml --behavior orders.hcl
 ```
+
+OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile will derive its
+default deterministic behavior from the OpenAPI operation. HCL is used only when a provider needs
+to select a declared response or describe observable effects that OpenAPI cannot express:
+
+```hcl
+resource "db" "orders" {}
+resource "event_bus" "commerce" {}
+
+async "publish_order" {
+  uses = ["db.orders", "event_bus.commerce"]
+}
+
+behavior "createOrder" {
+  response { status = 201 }
+  trigger "publish_order" {}
+}
+```
+
+Resource kinds are intentionally abstract. A definition may declare `db`, `cache`, `queue`,
+`mail`, `object_store`, `event_bus`, `scheduler`, or `http`; it cannot couple local emulation to a
+production vendor or reveal private implementation checks.
 
 ## Architecture
 
-Simile follows a command/operation boundary inspired by Cargo:
+Simile follows a pipeline of narrow ownership boundaries:
 
-- `simile-cli` owns argument parsing, terminal rendering, logging and exit behaviour.
-- `simile-core` owns application context, domain types and operations.
+- `simile-cli` owns argument parsing, terminal rendering, logging, and process exit behaviour.
+- `simile-core` owns application context, domain types, and operations.
+- `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
+- `simile-hcl` parses and validates optional behavior modules against that contract.
+- `simile-compiler` coordinates both sources and produces a compiled service.
+- `simile-spec` contains only the version-neutral model shared by those units and the future
+  runtime.
 - Files under `commands/` are thin adapters. Behaviour belongs under `ops/`.
 - Human output goes to stdout, diagnostics go to stderr, and JSON never contains ANSI colour.
 
