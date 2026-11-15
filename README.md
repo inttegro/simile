@@ -32,9 +32,9 @@ Read the [service charter](CHARTER.md) for the product boundary and design princ
 ## Status
 
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
-parse behavior modules written in HCL, and compile both into one validated service model. The
-runtime described by the charter is the next product layer; the current CLI does not yet serve the
-compiled service.
+parse behavior modules written in HCL, compile both into one validated service model, and emit a
+versioned `.similec` runtime artifact. The runtime described by the charter is the next product
+layer; the current CLI does not yet serve the compiled service.
 
 The available foundation commands are:
 
@@ -42,8 +42,16 @@ The available foundation commands are:
 $ simile version
 $ simile doctor
 $ simile --output json doctor
-$ simile compile openapi.yaml --behavior orders.hcl
+$ simile compile openapi.yaml --behavior orders.hcl --artifact service.similec
+$ simile inspect service.similec
 ```
+
+OpenAPI JSON/YAML and HCL are source formats. They are not the runtime storage format. A
+`.similec` file contains a compact indexed model encoded as deterministic CBOR, wrapped in a
+versioned envelope with a payload length and SHA-256 integrity digest. The string table,
+operation records, value arena, async-operation references, and resource references are all
+ordered before encoding, so identical compiler input produces identical artifact bytes. See the
+[compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile will derive its
 default deterministic behavior from the OpenAPI operation. HCL is used only when a provider needs
@@ -73,6 +81,8 @@ Simile follows a pipeline of narrow ownership boundaries:
 
 - `simile-cli` owns argument parsing, terminal rendering, logging, and process exit behaviour.
 - `simile-core` owns application context, domain types, and operations.
+- `simile-artifact` lowers the compiled service into the indexed runtime model and owns the
+  versioned `.similec` envelope.
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.

@@ -64,6 +64,8 @@ pub enum Command {
     Compile(CompileArgs),
     /// Check the local environment and report actionable problems.
     Doctor,
+    /// Verify and summarize a compiled Simile artifact.
+    Inspect(InspectArgs),
     /// Print detailed build information.
     Version,
 }
@@ -76,4 +78,14 @@ pub struct CompileArgs {
     /// HCL behavior module. Repeat to compile multiple modules.
     #[arg(short, long, value_name = "FILE")]
     pub behavior: Vec<PathBuf>,
+
+    /// Write the compiled runtime artifact to this path.
+    #[arg(short, long, value_name = "FILE")]
+    pub artifact: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct InspectArgs {
+    /// Compiled `.similec` artifact.
+    pub artifact: PathBuf,
 }

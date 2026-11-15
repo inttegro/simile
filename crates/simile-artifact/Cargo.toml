@@ -1,0 +1,21 @@
+[package]
+name = "simile-artifact"
+description = "Versioned deterministic compiled artifacts for Simile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ciborium.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+simile-spec.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

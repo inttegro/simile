@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/simile-artifact",
     "crates/simile-cli",
     "crates/simile-compiler",
     "crates/simile-core",
@@ -20,12 +21,15 @@ repository = "https://github.com/inttegro/simile"
 [workspace.dependencies]
 anstream = "1.0.0"
 anstyle = "1.0.14"
+ciborium = "0.2.2"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
 hcl-rs = "0.20.0"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_norway = "0.9.42"
+sha2 = "0.10.9"
+simile-artifact = { version = "=0.1.0", path = "crates/simile-artifact" }
 simile-compiler = { version = "=0.1.0", path = "crates/simile-compiler" }
 simile-core = { version = "=0.1.0", path = "crates/simile-core" }
 simile-hcl = { version = "=0.1.0", path = "crates/simile-hcl" }

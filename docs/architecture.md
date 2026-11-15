@@ -23,6 +23,13 @@ complete for HTTP. HCL is optional and additive for behavior.
                 (simile-spec)
                       |
                       v
+              simile-artifact
+        indexed IR + versioned CBOR envelope
+                      |
+                      v
+                 `.similec`
+                      |
+                      v
                 future runtime
 ```
 
@@ -73,6 +80,18 @@ runtime and leaves source-specific structures behind.
 only converts arguments into that request and renders the structured report. Neither crate knows
 how either source language works.
 
+### Runtime artifact: `simile-artifact`
+
+The source model is intentionally convenient for parsing and diagnostics; it is not persisted as
+JSON. `simile-artifact` lowers `CompiledService` into an indexed representation with a sorted,
+deduplicated string table, ordered operation records, numeric references between behaviors,
+async operations and resources, and an arena for request and response value trees.
+
+The resulting payload is encoded as deterministic CBOR. A fixed envelope supplies a magic value,
+format version, flags, payload length, and SHA-256 payload digest. The reader validates the entire
+envelope and every internal index before an artifact can reach the runtime. The binary format is a
+compiler output: providers continue to publish and review OpenAPI and HCL as text.
+
 ## Invariants
 
 - OpenAPI remains the single source of truth for the HTTP wire contract.
@@ -84,10 +103,15 @@ how either source language works.
 - Distributed definitions contain observable behavior, not sensitive production logic.
 - Parsing, semantic validation, orchestration, file I/O, and terminal rendering remain separate
   testable units.
+- Compiled artifact bytes are deterministic for the same compiled service.
+- Binary compatibility is governed by the artifact envelope version, not the Rust layout of
+  source-domain structs.
+- Readers reject unknown format versions, unsupported flags, corrupt payloads, dangling indexes,
+  truncated files, and trailing bytes.
 
 ## Deliberate next boundaries
 
-The current compiler establishes source ownership and cross-source validation. Subsequent slices can
-add `$ref` resolution, full request/response schema compilation, example selection, deterministic
-data generation, state actions, scenario inputs, and runtime bytecode without collapsing these
-boundaries.
+The current compiler establishes source ownership, cross-source validation, and the runtime
+artifact boundary. Subsequent slices can add `$ref` resolution, a dedicated schema IR, example
+selection, deterministic data generation, state actions, scenario inputs, and executable runtime
+instructions without collapsing these boundaries.

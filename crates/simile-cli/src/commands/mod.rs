@@ -1,5 +1,6 @@
 mod compile;
 mod doctor;
+mod inspect;
 mod version;
 
 use simile_core::Context;
@@ -18,6 +19,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
     match command {
         Command::Compile(arguments) => compile::execute(arguments, terminal),
         Command::Doctor => doctor::execute(ctx, terminal),
+        Command::Inspect(arguments) => inspect::execute(arguments, terminal),
         Command::Version => version::execute(ctx, terminal),
     }
 }

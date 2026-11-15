@@ -1,4 +1,5 @@
 use snapbox::cmd::Command;
+use std::fs;
 
 fn fixture(name: &str) -> String {
     format!(
@@ -74,4 +75,60 @@ fn compiles_a_service_contract_as_json() {
             "}\n"
         ))
         .stderr_eq("");
+}
+
+#[test]
+fn writes_and_inspects_a_compiled_artifact() {
+    let artifact = std::env::temp_dir().join(format!(
+        "simile-cli-artifact-{}.similec",
+        std::process::id()
+    ));
+    drop(fs::remove_file(&artifact));
+    let artifact_path = artifact.to_string_lossy().into_owned();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "compile",
+            &fixture("orders.yaml"),
+            "--behavior",
+            &fixture("orders.hcl"),
+            "--artifact",
+            &artifact_path,
+        ])
+        .assert()
+        .success()
+        .stdout_eq(format!(
+            concat!(
+                "Compiled Orders 1.0.0\n",
+                "contract OpenAPI 3.2.1 · 1 operations\n",
+                "behavior 0 OpenAPI defaults · 1 HCL overlays\n",
+                "runtime 1 async operations · 1 resources\n",
+                "artifact {} · format 1 · [..] bytes\n",
+                "digest sha256:[..]\n"
+            ),
+            artifact_path
+        ));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "inspect", &artifact_path])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"formatVersion\": 1,\n",
+            "  \"compilerVersion\": \"0.1.0\",\n",
+            "  \"service\": \"Orders\",\n",
+            "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"openapiVersion\": \"3.2.1\",\n",
+            "  \"operations\": 1,\n",
+            "  \"responses\": 1,\n",
+            "  \"valueNodes\": [..],\n",
+            "  \"resources\": 1,\n",
+            "  \"asyncOperations\": 1,\n",
+            "  \"encodedBytes\": [..],\n",
+            "  \"payloadSha256\": \"[..]\"\n",
+            "}\n"
+        ));
+
+    fs::remove_file(artifact).unwrap_or_else(|error| panic!("{error}"));
 }

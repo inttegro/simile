@@ -13,6 +13,7 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
     let report = ops::compile(&ops::CompileRequest {
         openapi: arguments.openapi,
         behaviors: arguments.behavior,
+        artifact: arguments.artifact,
     })?;
     match terminal.output() {
         OutputFormat::Human => {
@@ -32,6 +33,18 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
                 "{MUTED}runtime{MUTED:#} {} async operations · {} resources",
                 report.async_operations, report.resources
             ))?;
+            if let Some(artifact) = &report.artifact {
+                terminal.line(format_args!(
+                    "{MUTED}artifact{MUTED:#} {} · format {} · {} bytes",
+                    artifact.path.display(),
+                    artifact.format_version,
+                    artifact.bytes
+                ))?;
+                terminal.line(format_args!(
+                    "{MUTED}digest{MUTED:#} sha256:{}",
+                    artifact.payload_sha256
+                ))?;
+            }
         }
         OutputFormat::Json => terminal.json(&report)?,
     }

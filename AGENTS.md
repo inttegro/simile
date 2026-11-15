@@ -6,6 +6,7 @@ boundaries.
 ## Structure
 
 - `crates/simile-cli`: argument parsing, terminal rendering, logging and process exit behaviour.
+- `crates/simile-artifact`: indexed runtime model and versioned `.similec` encoding/decoding.
 - `crates/simile-compiler`: orchestration of all source adapters into one compiled service.
 - `crates/simile-core`: application context, domain types and operations.
 - `crates/simile-hcl`: HCL syntax parsing and semantic validation of behavior overlays.
@@ -19,6 +20,7 @@ boundaries.
 | Change | Location |
 | --- | --- |
 | Add or rename a flag | `crates/simile-cli/src/cli.rs` |
+| Change the compiled artifact format | `crates/simile-artifact/` |
 | Add a command adapter | `crates/simile-cli/src/commands/` |
 | Implement behaviour | `crates/simile-core/src/ops/` |
 | Change the canonical service model | `crates/simile-spec/` |
