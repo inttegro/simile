@@ -33,8 +33,10 @@ Read the [service charter](CHARTER.md) for the product boundary and design princ
 
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
 parse behavior modules written in HCL, compile both into one validated service model, and emit a
-versioned `.similec` runtime artifact. The runtime described by the charter is the next product
-layer; the current CLI does not yet serve the compiled service.
+versioned `.similec` runtime artifact. Request-body schemas are compiled into the artifact and the
+first runtime primitive can decode JSON requests and return structured JSON-pointer validation
+errors. HTTP serving, response synthesis, state, and asynchronous execution remain subsequent
+runtime layers; the current CLI does not yet serve the compiled service.
 
 The available foundation commands are:
 
@@ -52,6 +54,8 @@ versioned envelope with a payload length and SHA-256 integrity digest. The strin
 operation records, value arena, async-operation references, and resource references are all
 ordered before encoding, so identical compiler input produces identical artifact bytes. See the
 [compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
+The supported request-validation boundary is documented in
+[request validation](docs/request-validation.md).
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile will derive its
 default deterministic behavior from the OpenAPI operation. HCL is used only when a provider needs
@@ -84,10 +88,12 @@ Simile follows a pipeline of narrow ownership boundaries:
 - `simile-artifact` lowers the compiled service into the indexed runtime model and owns the
   versioned `.similec` envelope.
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
+- `simile-schema` compiles request schemas into portable graphs and validates decoded values.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
-- `simile-spec` contains only the version-neutral model shared by those units and the future
-  runtime.
+- `simile-runtime` loads an operation from an artifact, applies HTTP body semantics, decodes JSON,
+  and reports protocol or schema failures without depending on source formats.
+- `simile-spec` contains only the version-neutral model shared by compilation units.
 - Files under `commands/` are thin adapters. Behaviour belongs under `ops/`.
 - Human output goes to stdout, diagnostics go to stderr, and JSON never contains ANSI colour.
 

@@ -3,7 +3,7 @@
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
 
-## Envelope version 1
+## Envelope version 2
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -11,7 +11,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 1 |
+| 10 | 2 | unsigned big-endian flags; zero in version 2 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -22,24 +22,31 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 1 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 2 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
 3. service metadata;
 4. operations in stable operation-key order;
-5. an indexed value arena used by request and response definitions;
+5. an indexed value arena used by response definitions;
 6. resources in stable resource-reference order; and
-7. asynchronous operations in stable name order.
+7. asynchronous operations in stable name order; and
+8. one shared request-schema catalog.
 
 Strings, value nodes, resources, and asynchronous operations are referenced with unsigned numeric
 identifiers. Behavior records therefore point directly to asynchronous-operation records, and
 those records point directly to abstract resources. The runtime does not repeatedly compare or
 allocate names to follow those edges.
 
-JSON values from an OpenAPI source are lowered into tagged value nodes: null, boolean, signed
-integer, unsigned integer, floating point, string identifier, child-node array, or sorted object
-fields. The original JSON text and object-key repetition are not stored in the artifact.
+Each operation embeds a compact request-body plan containing its declared media types and schema
+root identifiers. Those roots point into the shared catalog, where component schemas are compiled
+once and recursive references remain graph edges. The catalog contains only the constraints needed
+by request validation. The runtime therefore validates a request without parsing OpenAPI,
+interpreting arbitrary source JSON, or copying common schemas into every operation.
+
+JSON values retained from an OpenAPI source are lowered into tagged value nodes: null, boolean,
+signed integer, unsigned integer, floating point, string identifier, child-node array, or sorted
+object fields. The original JSON text and object-key repetition are not stored in the artifact.
 
 ## Determinism and compatibility
 

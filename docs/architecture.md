@@ -24,13 +24,15 @@ complete for HTTP. HCL is optional and additive for behavior.
                       |
                       v
               simile-artifact
-        indexed IR + versioned CBOR envelope
+       indexed IR + compiled request schemas
+         + versioned CBOR envelope
                       |
                       v
                  `.similec`
                       |
                       v
-                future runtime
+                simile-runtime
+          request decoding + validation
 ```
 
 ## Units of work
@@ -85,12 +87,32 @@ how either source language works.
 The source model is intentionally convenient for parsing and diagnostics; it is not persisted as
 JSON. `simile-artifact` lowers `CompiledService` into an indexed representation with a sorted,
 deduplicated string table, ordered operation records, numeric references between behaviors,
-async operations and resources, and an arena for request and response value trees.
+async operations and resources, compiled request-body plans, and an arena for retained response
+definition value trees.
 
 The resulting payload is encoded as deterministic CBOR. A fixed envelope supplies a magic value,
 format version, flags, payload length, and SHA-256 payload digest. The reader validates the entire
 envelope and every internal index before an artifact can reach the runtime. The binary format is a
 compiler output: providers continue to publish and review OpenAPI and HCL as text.
+
+### Schema compiler: `simile-schema`
+
+`simile-schema` owns the executable subset of JSON Schema used for request validation. It compiles
+each declared request media type into an indexed graph, resolves local component references once,
+and preserves recursive references without copying their source trees. Validation operates on a
+decoded JSON value and returns bounded, structured issues whose paths are JSON Pointers.
+
+This boundary is intentionally independent of HTTP and OpenAPI parsing. The artifact embeds the
+compiled graph; the runtime never interprets source schema fragments. See
+[request validation](request-validation.md) for the supported keywords and failure model.
+
+### Runtime primitives: `simile-runtime`
+
+`simile-runtime` reads only validated artifact records. Its request-body entry point locates an
+operation by stable method/path key, enforces whether a body is allowed or required, negotiates the
+declared media type, decodes JSON, and applies the compiled schema. Missing bodies, undeclared
+media types, malformed payloads, and schema violations remain distinct errors so a future HTTP
+adapter can map them deliberately.
 
 ## Invariants
 
@@ -108,10 +130,13 @@ compiler output: providers continue to publish and review OpenAPI and HCL as tex
   source-domain structs.
 - Readers reject unknown format versions, unsupported flags, corrupt payloads, dangling indexes,
   truncated files, and trailing bytes.
+- Request validation never reparses OpenAPI or follows a source reference at runtime.
+- Validation issues use stable JSON Pointer paths and named rules.
 
 ## Deliberate next boundaries
 
-The current compiler establishes source ownership, cross-source validation, and the runtime
-artifact boundary. Subsequent slices can add `$ref` resolution, a dedicated schema IR, example
-selection, deterministic data generation, state actions, scenario inputs, and executable runtime
-instructions without collapsing these boundaries.
+The current compiler establishes source ownership, cross-source validation, a runtime artifact
+boundary, and compiled JSON request validation. Subsequent slices can add form and multipart
+decoders, parameter validation, example selection, deterministic response generation, state
+actions, scenario inputs, and executable asynchronous instructions without collapsing these
+boundaries.
