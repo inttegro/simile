@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 use simile_schema::{
-    BoundRequestBody, RequestBodyPlan, RequestSchemaCompiler, SchemaCatalog, ValidationRule,
+    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, RequestBodyPlan, SchemaCatalog,
+    ValidationRule,
 };
-use simile_spec::{MediaTypeContract, OpenApiFeature, RequestBodyContract};
+use simile_spec::{MediaTypeContract, OpenApiFeature, RequestBodyContract, ResponseBodyContract};
 
 #[test]
 fn validates_recursive_component_schemas() {
@@ -91,9 +92,9 @@ fn matches_content_type_parameters_and_wildcards() {
         ]),
     };
     let components = BTreeMap::new();
-    let mut compiler = RequestSchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
     let plan = compiler
-        .compile_body(&body)
+        .compile_request(&body)
         .unwrap_or_else(|error| panic!("{error}"));
     let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
     let body = BoundRequestBody::new(&plan, &schemas);
@@ -128,12 +129,12 @@ fn shares_component_nodes_across_request_bodies() {
             },
         )]),
     };
-    let mut compiler = RequestSchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
     let first = compiler
-        .compile_body(&body)
+        .compile_request(&body)
         .unwrap_or_else(|error| panic!("{error}"));
     let second = compiler
-        .compile_body(&body)
+        .compile_request(&body)
         .unwrap_or_else(|error| panic!("{error}"));
     let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
 
@@ -165,6 +166,102 @@ fn does_not_require_response_only_properties_in_requests() {
 }
 
 #[test]
+fn projects_compatible_request_values_without_reflecting_write_only_fields() {
+    let request = RequestBodyContract {
+        required: true,
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "secret", "profile"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "secret": {"$ref": "#/components/schemas/Secret"},
+                        "profile": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["note"],
+                            "properties": {"note": {"type": "string"}}
+                        }
+                    }
+                })),
+                example: None,
+            },
+        )]),
+    };
+    let response = ResponseBodyContract {
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "name", "secret", "profile"],
+                    "properties": {
+                        "id": {"type": "string", "example": "ord_simile"},
+                        "name": {"type": "string"},
+                        "secret": {"$ref": "#/components/schemas/Secret"},
+                        "profile": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["note", "level"],
+                            "properties": {
+                                "note": {"type": "string"},
+                                "level": {"type": "string", "enum": ["new"]}
+                            }
+                        }
+                    }
+                })),
+                example: None,
+            },
+        )]),
+    };
+    let components = BTreeMap::from([
+        (
+            "Secret".to_owned(),
+            json!({"allOf": [{"$ref": "#/components/schemas/SecretValue"}]}),
+        ),
+        (
+            "SecretValue".to_owned(),
+            json!({"type": "string", "writeOnly": true}),
+        ),
+    ]);
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let request_plan = compiler
+        .compile_request(&request)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let response_plan = compiler
+        .compile_response(&response)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
+    let request_media = BoundRequestBody::new(&request_plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("request media type should be present"));
+    let response_media = BoundResponseBody::new(&response_plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("response media type should be present"));
+    let input = json!({
+        "name": "Night Drive",
+        "secret": "do-not-reflect",
+        "profile": {"note": "customer supplied"}
+    });
+
+    assert!(request_media.validate(&input).is_empty());
+    let value = response_media
+        .synthesize_from(&input)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(value["id"], "ord_simile");
+    assert_eq!(value["name"], "Night Drive");
+    assert_eq!(value["profile"]["note"], "customer supplied");
+    assert_eq!(value["profile"]["level"], "new");
+    assert!(value.get("secret").is_none());
+    assert!(response_media.validate(&value).is_empty());
+}
+
+#[test]
 fn rejects_empty_type_arrays() {
     let body = RequestBodyContract {
         required: true,
@@ -177,8 +274,8 @@ fn rejects_empty_type_arrays() {
         )]),
     };
     let components = BTreeMap::new();
-    let mut compiler = RequestSchemaCompiler::new(&components, OpenApiFeature::V3_1);
-    let error = match compiler.compile_body(&body) {
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let error = match compiler.compile_request(&body) {
         Err(error) => error,
         Ok(plan) => panic!("empty type array should fail, compiled {plan:?}"),
     };
@@ -291,9 +388,9 @@ fn plan(
             },
         )]),
     };
-    let mut compiler = RequestSchemaCompiler::new(&components, feature);
+    let mut compiler = BodySchemaCompiler::new(&components, feature);
     let plan = compiler
-        .compile_body(&body)
+        .compile_request(&body)
         .unwrap_or_else(|error| panic!("{error}"));
     let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
     (plan, schemas)

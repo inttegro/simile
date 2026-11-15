@@ -1,6 +1,6 @@
 [package]
 name = "simile-runtime"
-description = "Runtime request validation and emulation primitives for Simile"
+description = "Runtime request validation and response synthesis primitives for Simile"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ publish = false
 serde_json.workspace = true
 simile-artifact.workspace = true
 simile-schema.workspace = true
+simile-spec.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -1,22 +1,28 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
-use simile_spec::{OpenApiFeature, RequestBodyContract};
+use simile_spec::{OpenApiFeature, RequestBodyContract, ResponseBodyContract};
 
 use crate::{
     AdditionalProperties, CompileError, JsonType, MediaTypePlan, NumberBound, RequestBodyPlan,
-    Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
+    ResponseBodyPlan, Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
 };
 
-/// Compiles every request body in a service into one shared schema catalog.
-pub struct RequestSchemaCompiler<'a> {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum SchemaDirection {
+    Request,
+    Response,
+}
+
+/// Compiles request and response bodies into one shared runtime schema catalog.
+pub struct BodySchemaCompiler<'a> {
     components: &'a BTreeMap<String, Value>,
     feature: OpenApiFeature,
     nodes: Vec<Option<SchemaNode>>,
-    references: BTreeMap<String, SchemaId>,
+    references: BTreeMap<(SchemaDirection, String), SchemaId>,
 }
 
-impl<'a> RequestSchemaCompiler<'a> {
+impl<'a> BodySchemaCompiler<'a> {
     #[must_use]
     pub fn new(components: &'a BTreeMap<String, Value>, feature: OpenApiFeature) -> Self {
         Self {
@@ -27,16 +33,35 @@ impl<'a> RequestSchemaCompiler<'a> {
         }
     }
 
-    pub fn compile_body(&mut self, body: &RequestBodyContract) -> Result<RequestBodyPlan> {
-        let content = body
-            .content
+    pub fn compile_request(&mut self, body: &RequestBodyContract) -> Result<RequestBodyPlan> {
+        let content =
+            self.compile_content(&body.content, "requestBody", SchemaDirection::Request)?;
+        Ok(RequestBodyPlan {
+            required: body.required,
+            content,
+        })
+    }
+
+    pub fn compile_response(&mut self, body: &ResponseBodyContract) -> Result<ResponseBodyPlan> {
+        let content =
+            self.compile_content(&body.content, "responseBody", SchemaDirection::Response)?;
+        Ok(ResponseBodyPlan { content })
+    }
+
+    fn compile_content(
+        &mut self,
+        content: &BTreeMap<String, simile_spec::MediaTypeContract>,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<BTreeMap<String, MediaTypePlan>> {
+        content
             .iter()
             .map(|(media_type, contract)| {
                 let schema = contract
                     .schema
                     .as_ref()
                     .map(|schema| {
-                        self.compile_schema(schema, "requestBody.schema")
+                        self.compile_schema(schema, &format!("{field}.schema"), direction)
                             .map(SchemaRef)
                     })
                     .transpose()?;
@@ -48,11 +73,7 @@ impl<'a> RequestSchemaCompiler<'a> {
                     },
                 ))
             })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        Ok(RequestBodyPlan {
-            required: body.required,
-            content,
-        })
+            .collect()
     }
 
     pub fn finish(self) -> Result<SchemaCatalog> {
@@ -64,13 +85,18 @@ impl<'a> RequestSchemaCompiler<'a> {
         Ok(SchemaCatalog { nodes })
     }
 
-    fn compile_schema(&mut self, schema: &Value, field: &str) -> Result<SchemaId> {
+    fn compile_schema(
+        &mut self,
+        schema: &Value,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<SchemaId> {
         match schema {
             Value::Bool(allowed) => self.push(SchemaNode {
                 allowed: Some(*allowed),
                 ..SchemaNode::default()
             }),
-            Value::Object(object) => self.compile_object(object, field),
+            Value::Object(object) => self.compile_object(object, field, direction),
             _ => Err(CompileError::InvalidField {
                 field: field.to_owned(),
                 expected: "an object or boolean",
@@ -78,7 +104,12 @@ impl<'a> RequestSchemaCompiler<'a> {
         }
     }
 
-    fn compile_object(&mut self, schema: &Map<String, Value>, field: &str) -> Result<SchemaId> {
+    fn compile_object(
+        &mut self,
+        schema: &Map<String, Value>,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<SchemaId> {
         if let Some(reference) = schema.get("$ref") {
             let reference = reference
                 .as_str()
@@ -86,25 +117,31 @@ impl<'a> RequestSchemaCompiler<'a> {
                     field: format!("{field}.$ref"),
                     expected: "a string",
                 })?;
-            let target = self.compile_reference(reference, field)?;
+            let target = self.compile_reference(reference, field, direction)?;
             if self.feature == OpenApiFeature::V3_0 || schema.len() == 1 {
                 return Ok(target);
             }
             let id = self.reserve()?;
-            let mut node = self.node(schema, field)?;
+            let mut node = self.node(schema, field, direction)?;
             node.all_of.insert(0, target);
             self.fill(id, node);
             return Ok(id);
         }
 
         let id = self.reserve()?;
-        let node = self.node(schema, field)?;
+        let node = self.node(schema, field, direction)?;
         self.fill(id, node);
         Ok(id)
     }
 
-    fn compile_reference(&mut self, reference: &str, field: &str) -> Result<SchemaId> {
-        if let Some(id) = self.references.get(reference) {
+    fn compile_reference(
+        &mut self,
+        reference: &str,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<SchemaId> {
+        let key = (direction, reference.to_owned());
+        if let Some(id) = self.references.get(&key) {
             return Ok(*id);
         }
         let name = component_name(reference).ok_or_else(|| CompileError::UnsupportedReference {
@@ -119,7 +156,7 @@ impl<'a> RequestSchemaCompiler<'a> {
                 reference: reference.to_owned(),
             })?;
         let id = self.reserve()?;
-        self.references.insert(reference.to_owned(), id);
+        self.references.insert(key, id);
         let node = match schema {
             Value::Bool(allowed) => SchemaNode {
                 allowed: Some(*allowed),
@@ -127,17 +164,20 @@ impl<'a> RequestSchemaCompiler<'a> {
             },
             Value::Object(object) => {
                 if let Some(nested) = object.get("$ref").and_then(Value::as_str) {
-                    let target =
-                        self.compile_reference(nested, &format!("components.schemas.{name}"))?;
+                    let target = self.compile_reference(
+                        nested,
+                        &format!("components.schemas.{name}"),
+                        direction,
+                    )?;
                     let mut node = if self.feature == OpenApiFeature::V3_0 || object.len() == 1 {
                         SchemaNode::default()
                     } else {
-                        self.node(object, &format!("components.schemas.{name}"))?
+                        self.node(object, &format!("components.schemas.{name}"), direction)?
                     };
                     node.all_of.insert(0, target);
                     node
                 } else {
-                    self.node(object, &format!("components.schemas.{name}"))?
+                    self.node(object, &format!("components.schemas.{name}"), direction)?
                 }
             }
             _ => {
@@ -151,7 +191,12 @@ impl<'a> RequestSchemaCompiler<'a> {
         Ok(id)
     }
 
-    fn node(&mut self, schema: &Map<String, Value>, field: &str) -> Result<SchemaNode> {
+    fn node(
+        &mut self,
+        schema: &Map<String, Value>,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<SchemaNode> {
         let mut types = self.types(schema, field)?;
         if self.feature == OpenApiFeature::V3_0
             && !types.is_empty()
@@ -165,19 +210,19 @@ impl<'a> RequestSchemaCompiler<'a> {
             enum_values: optional_array(schema, "enum", field)?.cloned(),
             const_value: schema.get("const").cloned(),
             hint: schema_hint(schema),
-            properties: self.properties(schema, field)?,
-            required: request_required(schema, field)?,
-            additional: self.additional_properties(schema, field)?,
+            properties: self.properties(schema, field, direction)?,
+            required: self.direction_required(schema, field, direction)?,
+            additional: self.additional_properties(schema, field, direction)?,
             items: schema
                 .get("items")
-                .map(|value| self.compile_schema(value, &format!("{field}.items")))
+                .map(|value| self.compile_schema(value, &format!("{field}.items"), direction))
                 .transpose()?,
-            all_of: self.schema_array(schema, "allOf", field)?,
-            any_of: self.schema_array(schema, "anyOf", field)?,
-            one_of: self.schema_array(schema, "oneOf", field)?,
+            all_of: self.schema_array(schema, "allOf", field, direction)?,
+            any_of: self.schema_array(schema, "anyOf", field, direction)?,
+            one_of: self.schema_array(schema, "oneOf", field, direction)?,
             not: schema
                 .get("not")
-                .map(|value| self.compile_schema(value, &format!("{field}.not")))
+                .map(|value| self.compile_schema(value, &format!("{field}.not"), direction))
                 .transpose()?,
             minimum: lower_bound(schema, self.feature, field)?,
             maximum: upper_bound(schema, self.feature, field)?,
@@ -226,6 +271,7 @@ impl<'a> RequestSchemaCompiler<'a> {
         &mut self,
         schema: &Map<String, Value>,
         field: &str,
+        direction: SchemaDirection,
     ) -> Result<BTreeMap<String, SchemaId>> {
         let Some(value) = schema.get("properties") else {
             return Ok(BTreeMap::new());
@@ -236,27 +282,29 @@ impl<'a> RequestSchemaCompiler<'a> {
                 field: format!("{field}.properties"),
                 expected: "an object",
             })?;
-        properties
-            .iter()
-            .map(|(name, value)| {
-                Ok((
-                    name.clone(),
-                    self.compile_schema(value, &format!("{field}.properties.{name}"))?,
-                ))
-            })
-            .collect()
+        let mut compiled = BTreeMap::new();
+        for (name, value) in properties {
+            if !self.property_available(value, direction) {
+                continue;
+            }
+            let schema =
+                self.compile_schema(value, &format!("{field}.properties.{name}"), direction)?;
+            compiled.insert(name.clone(), schema);
+        }
+        Ok(compiled)
     }
 
     fn additional_properties(
         &mut self,
         schema: &Map<String, Value>,
         field: &str,
+        direction: SchemaDirection,
     ) -> Result<AdditionalProperties> {
         match schema.get("additionalProperties") {
             None | Some(Value::Bool(true)) => Ok(AdditionalProperties::Allow),
             Some(Value::Bool(false)) => Ok(AdditionalProperties::Deny),
             Some(value @ Value::Object(_)) => Ok(AdditionalProperties::Schema(
-                self.compile_schema(value, &format!("{field}.additionalProperties"))?,
+                self.compile_schema(value, &format!("{field}.additionalProperties"), direction)?,
             )),
             Some(_) => Err(CompileError::InvalidField {
                 field: format!("{field}.additionalProperties"),
@@ -270,6 +318,7 @@ impl<'a> RequestSchemaCompiler<'a> {
         schema: &Map<String, Value>,
         name: &str,
         field: &str,
+        direction: SchemaDirection,
     ) -> Result<Vec<SchemaId>> {
         let Some(value) = schema.get(name) else {
             return Ok(Vec::new());
@@ -284,8 +333,76 @@ impl<'a> RequestSchemaCompiler<'a> {
         values
             .iter()
             .enumerate()
-            .map(|(index, value)| self.compile_schema(value, &format!("{field}.{name}.{index}")))
+            .map(|(index, value)| {
+                self.compile_schema(value, &format!("{field}.{name}.{index}"), direction)
+            })
             .collect()
+    }
+
+    fn property_available(&self, value: &Value, direction: SchemaDirection) -> bool {
+        !self.directionally_excluded(value, direction, 0, &mut BTreeSet::new())
+    }
+
+    fn direction_required(
+        &self,
+        object: &Map<String, Value>,
+        field: &str,
+        direction: SchemaDirection,
+    ) -> Result<BTreeSet<String>> {
+        let mut required = string_set(object, "required", field)?;
+        if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+            required.retain(|name| {
+                properties
+                    .get(name)
+                    .is_none_or(|value| self.property_available(value, direction))
+            });
+        }
+        Ok(required)
+    }
+
+    fn directionally_excluded(
+        &self,
+        value: &Value,
+        direction: SchemaDirection,
+        depth: usize,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        let Some(schema) = value.as_object() else {
+            return false;
+        };
+        let annotation = match direction {
+            SchemaDirection::Request => "readOnly",
+            SchemaDirection::Response => "writeOnly",
+        };
+        if schema.get(annotation).and_then(Value::as_bool) == Some(true) {
+            return true;
+        }
+        if depth >= 64 {
+            return false;
+        }
+        if let Some(name) = schema
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(component_name)
+        {
+            if visited.insert(name.clone())
+                && self.components.get(&name).is_some_and(|component| {
+                    self.directionally_excluded(component, direction, depth + 1, visited)
+                })
+            {
+                return true;
+            }
+        }
+        ["allOf", "anyOf", "oneOf"].iter().any(|keyword| {
+            schema
+                .get(*keyword)
+                .and_then(Value::as_array)
+                .is_some_and(|schemas| {
+                    schemas.iter().any(|schema| {
+                        self.directionally_excluded(schema, direction, depth + 1, visited)
+                    })
+                })
+        })
     }
 
     fn reserve(&mut self) -> Result<SchemaId> {
@@ -374,21 +491,6 @@ fn string_set(object: &Map<String, Value>, name: &str, field: &str) -> Result<BT
                 })
         })
         .collect()
-}
-
-fn request_required(object: &Map<String, Value>, field: &str) -> Result<BTreeSet<String>> {
-    let mut required = string_set(object, "required", field)?;
-    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
-        required.retain(|name| {
-            properties
-                .get(name)
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("readOnly"))
-                .and_then(Value::as_bool)
-                != Some(true)
-        });
-    }
-    Ok(required)
 }
 
 fn optional_bool(object: &Map<String, Value>, name: &str, field: &str) -> Result<Option<bool>> {

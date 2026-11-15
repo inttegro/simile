@@ -99,6 +99,55 @@ components:
 }
 
 #[test]
+fn normalizes_referenced_response_bodies_and_examples() {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      responses:
+        "201":
+          $ref: '#/components/responses/CreatedOrder'
+components:
+  responses:
+    CreatedOrder:
+      description: Created
+      content:
+        application/json:
+          examples:
+            created:
+              value: { id: ord_123 }
+          schema:
+            $ref: '#/components/schemas/Order'
+  schemas:
+    Order:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+"#;
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let operation = contract
+        .operation_by_id("createOrder")
+        .unwrap_or_else(|| panic!("operation missing"));
+    let body = operation.responses[0]
+        .body
+        .as_ref()
+        .unwrap_or_else(|| panic!("response body missing"));
+
+    assert_eq!(
+        body.content["application/json"].schema,
+        Some(serde_json::json!({"$ref": "#/components/schemas/Order"}))
+    );
+    assert_eq!(
+        body.content["application/json"].example,
+        Some(serde_json::json!({"id": "ord_123"}))
+    );
+}
+
+#[test]
 fn query_is_only_an_operation_in_openapi_3_2() {
     let old =
         simile_openapi::parse(&fixture("3.1.2", "query")).unwrap_or_else(|error| panic!("{error}"));

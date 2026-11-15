@@ -27,7 +27,7 @@ boundaries.
 | Implement behaviour | `crates/simile-core/src/ops/` |
 | Change the canonical service model | `crates/simile-spec/` |
 | Change OpenAPI ingestion | `crates/simile-openapi/` |
-| Change request schema compilation, validation or synthesis | `crates/simile-schema/` |
+| Change body schema compilation, validation or synthesis | `crates/simile-schema/` |
 | Change loaded-artifact execution | `crates/simile-runtime/` |
 | Change the HCL language or validation | `crates/simile-hcl/` |
 | Change source coordination | `crates/simile-compiler/` |

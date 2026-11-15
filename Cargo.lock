@@ -642,6 +642,7 @@ dependencies = [
  "simile-artifact",
  "simile-compiler",
  "simile-schema",
+ "simile-spec",
  "thiserror",
 ]
 

@@ -9,5 +9,6 @@ pub use behavior::{
 };
 pub use contract::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
-    OperationKey, RequestBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
+    OperationKey, RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus,
+    ServiceInfo,
 };

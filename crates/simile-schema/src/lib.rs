@@ -7,7 +7,7 @@ mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub use compile::RequestSchemaCompiler;
+pub use compile::BodySchemaCompiler;
 pub use error::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,40 +39,37 @@ impl RequestBodyPlan {
     /// Match a Content-Type value, ignoring parameters and honoring OpenAPI wildcards.
     #[must_use]
     pub fn select(&self, content_type: &str) -> Option<SelectedMediaType<'_>> {
-        let essence = content_type
-            .split(';')
-            .next()
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if essence.is_empty() {
-            return None;
-        }
-        let exact = self.content.get_key_value(&essence);
-        let wildcard = essence
-            .split_once('/')
-            .and_then(|(kind, _)| self.content.get_key_value(&format!("{kind}/*")));
-        let fallback = self.content.get_key_value("*/*");
-        exact
-            .or(wildcard)
-            .or(fallback)
-            .map(|(declared, plan)| SelectedMediaType {
-                requested: essence,
-                declared,
-                schema: plan.schema,
-                example: plan.example.as_ref(),
-            })
+        select_media(&self.content, content_type)
     }
 
     #[doc(hidden)]
     #[must_use]
     fn is_well_formed(&self, schemas: &SchemaCatalog) -> bool {
-        !self.content.is_empty()
-            && self.content.keys().all(|media_type| !media_type.is_empty())
-            && self
-                .content
-                .values()
-                .all(|media| media.schema.is_none_or(|schema| schemas.contains(schema)))
+        content_is_well_formed(&self.content, schemas)
+    }
+}
+
+/// A response-body contract reduced to the information needed by the runtime.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResponseBodyPlan {
+    content: BTreeMap<String, MediaTypePlan>,
+}
+
+impl ResponseBodyPlan {
+    pub fn media_types(&self) -> impl Iterator<Item = &str> {
+        self.content.keys().map(String::as_str)
+    }
+
+    /// Match a Content-Type value, ignoring parameters and honoring OpenAPI wildcards.
+    #[must_use]
+    pub fn select(&self, content_type: &str) -> Option<SelectedMediaType<'_>> {
+        select_media(&self.content, content_type)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    fn is_well_formed(&self, schemas: &SchemaCatalog) -> bool {
+        content_is_well_formed(&self.content, schemas)
     }
 }
 
@@ -82,6 +79,46 @@ struct MediaTypePlan {
     schema: Option<SchemaRef>,
     #[serde(rename = "e", skip_serializing_if = "Option::is_none")]
     example: Option<Value>,
+}
+
+fn select_media<'a>(
+    content: &'a BTreeMap<String, MediaTypePlan>,
+    content_type: &str,
+) -> Option<SelectedMediaType<'a>> {
+    let essence = content_type
+        .split(';')
+        .next()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if essence.is_empty() {
+        return None;
+    }
+    let exact = content.get_key_value(&essence);
+    let wildcard = essence
+        .split_once('/')
+        .and_then(|(kind, _)| content.get_key_value(&format!("{kind}/*")));
+    let fallback = content.get_key_value("*/*");
+    exact
+        .or(wildcard)
+        .or(fallback)
+        .map(|(declared, plan)| SelectedMediaType {
+            requested: essence,
+            declared,
+            schema: plan.schema,
+            example: plan.example.as_ref(),
+        })
+}
+
+fn content_is_well_formed(
+    content: &BTreeMap<String, MediaTypePlan>,
+    schemas: &SchemaCatalog,
+) -> bool {
+    !content.is_empty()
+        && content.keys().all(|media_type| !media_type.is_empty())
+        && content
+            .values()
+            .all(|media| media.schema.is_none_or(|schema| schemas.contains(schema)))
 }
 
 /// The declared media type and optional schema selected for an incoming body.
@@ -193,6 +230,15 @@ impl<'a> BoundMediaType<'a> {
             |schema| self.schemas.synthesize(schema),
         )
     }
+
+    /// Synthesize a valid value and project compatible fields from a request body.
+    pub fn synthesize_from(&self, request: &Value) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize()?;
+        Ok(match self.selected.schema() {
+            Some(schema) => self.schemas.project(schema, &baseline, request),
+            None => baseline,
+        })
+    }
 }
 
 /// A request-body plan bound to the shared schema catalog that owns its roots.
@@ -200,6 +246,41 @@ impl<'a> BoundMediaType<'a> {
 pub struct BoundRequestBody<'a> {
     plan: &'a RequestBodyPlan,
     schemas: &'a SchemaCatalog,
+}
+
+/// A response-body plan bound to the shared compiled schema catalog that owns its roots.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundResponseBody<'a> {
+    plan: &'a ResponseBodyPlan,
+    schemas: &'a SchemaCatalog,
+}
+
+impl<'a> BoundResponseBody<'a> {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(plan: &'a ResponseBodyPlan, schemas: &'a SchemaCatalog) -> Self {
+        Self { plan, schemas }
+    }
+
+    pub fn media_types(&self) -> impl Iterator<Item = &str> {
+        self.plan.media_types()
+    }
+
+    #[must_use]
+    pub fn select(&self, content_type: &str) -> Option<BoundMediaType<'a>> {
+        self.plan
+            .select(content_type)
+            .map(|selected| BoundMediaType {
+                selected,
+                schemas: self.schemas,
+            })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        self.plan.is_well_formed(self.schemas)
+    }
 }
 
 impl<'a> BoundRequestBody<'a> {

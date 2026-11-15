@@ -136,6 +136,8 @@ impl fmt::Display for ResponseStatus {
 pub struct ResponseContract {
     pub status: ResponseStatus,
     pub definition: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<ResponseBodyContract>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -149,6 +151,11 @@ pub struct MediaTypeContract {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RequestBodyContract {
     pub required: bool,
+    pub content: BTreeMap<String, MediaTypeContract>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ResponseBodyContract {
     pub content: BTreeMap<String, MediaTypeContract>,
 }
 

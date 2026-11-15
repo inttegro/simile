@@ -6,7 +6,10 @@ use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use simile_schema::{BoundRequestBody, RequestBodyPlan, RequestSchemaCompiler, SchemaCatalog};
+use simile_schema::{
+    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, RequestBodyPlan, ResponseBodyPlan,
+    SchemaCatalog,
+};
 use simile_spec::{
     BehaviorOrigin, CompiledService, HttpMethod, OpenApiFeature, ResourceKind, ResourceRef,
     ResponseStatus,
@@ -14,7 +17,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 3;
+pub const FORMAT_VERSION: u16 = 4;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -37,7 +40,8 @@ pub struct ArtifactSummary {
     pub openapi_version: String,
     pub operations: usize,
     pub request_bodies: usize,
-    pub request_schema_nodes: usize,
+    pub response_bodies: usize,
+    pub schema_nodes: usize,
     pub responses: usize,
     pub value_nodes: usize,
     pub resources: usize,
@@ -58,7 +62,16 @@ pub struct Artifact {
 pub struct ArtifactOperation<'a> {
     key: &'a str,
     request_body: Option<&'a RequestBodyPlan>,
+    responses: &'a [ResponseRecord],
+    behavior_response_status: Option<u16>,
     schemas: &'a SchemaCatalog,
+}
+
+/// One compiled response available to the runtime for an operation.
+#[derive(Clone, Debug)]
+pub struct ArtifactResponse<'a> {
+    status: ResponseStatus,
+    body: Option<BoundResponseBody<'a>>,
 }
 
 impl<'a> ArtifactOperation<'a> {
@@ -71,6 +84,33 @@ impl<'a> ArtifactOperation<'a> {
     pub fn request_body(&self) -> Option<BoundRequestBody<'a>> {
         self.request_body
             .map(|plan| BoundRequestBody::new(plan, self.schemas))
+    }
+
+    pub fn responses(&self) -> impl Iterator<Item = ArtifactResponse<'a>> + 'a {
+        self.responses.iter().map(|response| ArtifactResponse {
+            status: decode_status(response.0, response.1),
+            body: response
+                .3
+                .as_ref()
+                .map(|body| BoundResponseBody::new(body, self.schemas)),
+        })
+    }
+
+    #[must_use]
+    pub const fn behavior_response_status(&self) -> Option<u16> {
+        self.behavior_response_status
+    }
+}
+
+impl<'a> ArtifactResponse<'a> {
+    #[must_use]
+    pub const fn status(&self) -> &ResponseStatus {
+        &self.status
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> Option<BoundResponseBody<'a>> {
+        self.body
     }
 }
 
@@ -96,7 +136,14 @@ impl Artifact {
                 .iter()
                 .filter(|operation| operation.6.is_some())
                 .count(),
-            request_schema_nodes: self.payload.7.len(),
+            response_bodies: self
+                .payload
+                .3
+                .iter()
+                .flat_map(|operation| &operation.7)
+                .filter(|response| response.3.is_some())
+                .count(),
+            schema_nodes: self.payload.7.len(),
             responses,
             value_nodes: self.payload.4.len(),
             resources: self.payload.5.len(),
@@ -118,6 +165,8 @@ impl Artifact {
                 ArtifactOperation {
                     key: self.string(operation.0),
                     request_body: operation.6.as_ref(),
+                    responses: &operation.7,
+                    behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
                     schemas: &self.payload.7,
                 }
             })
@@ -243,7 +292,7 @@ struct OperationRecord(
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ResponseRecord(u8, u16, ValueId);
+struct ResponseRecord(u8, u16, ValueId, Option<ResponseBodyPlan>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct BehaviorRecord(Option<u16>, Vec<AsyncId>);
@@ -372,7 +421,7 @@ impl Payload {
         let async_ids = index_async_operations(service)?;
         let mut values = ValueArena::default();
         let mut schema_compiler =
-            RequestSchemaCompiler::new(&service.contract.schemas, service.contract.openapi.feature);
+            BodySchemaCompiler::new(&service.contract.schemas, service.contract.openapi.feature);
 
         let service_record = ServiceRecord(
             strings.id(&service.contract.info.title)?,
@@ -389,7 +438,7 @@ impl Payload {
             let request_body = operation
                 .request
                 .as_ref()
-                .map(|body| schema_compiler.compile_body(body))
+                .map(|body| schema_compiler.compile_request(body))
                 .transpose()?;
             let mut ordered_responses = operation.responses.iter().collect::<Vec<_>>();
             ordered_responses.sort_by(|left, right| left.status.cmp(&right.status));
@@ -401,6 +450,11 @@ impl Payload {
                         kind,
                         status,
                         values.push(&response.definition, &strings)?,
+                        response
+                            .body
+                            .as_ref()
+                            .map(|body| schema_compiler.compile_response(body))
+                            .transpose()?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -529,6 +583,13 @@ impl Payload {
                     return Err(Error::Invalid("default response status"));
                 }
                 validate_index(response.2, values, "response definition")?;
+                if response
+                    .3
+                    .as_ref()
+                    .is_some_and(|body| !BoundResponseBody::new(body, &self.7).is_well_formed())
+                {
+                    return Err(Error::Invalid("response schema"));
+                }
             }
             if let Some(behavior) = &operation.9 {
                 for trigger in &behavior.1 {
@@ -577,7 +638,7 @@ impl Payload {
             }
         }
         if !self.7.is_well_formed() {
-            return Err(Error::Invalid("request schema catalog"));
+            return Err(Error::Invalid("body schema catalog"));
         }
         Ok(())
     }
@@ -765,6 +826,15 @@ const fn encode_status(status: &ResponseStatus) -> (u8, u16) {
         ResponseStatus::Exact(status) => (0, *status),
         ResponseStatus::Range(status) => (1, *status),
         ResponseStatus::Default => (2, 0),
+    }
+}
+
+fn decode_status(kind: u8, status: u16) -> ResponseStatus {
+    match kind {
+        0 => ResponseStatus::Exact(status),
+        1 => ResponseStatus::Range(status),
+        2 => ResponseStatus::Default,
+        _ => unreachable!("artifact validation rejects unknown response status kinds"),
     }
 }
 

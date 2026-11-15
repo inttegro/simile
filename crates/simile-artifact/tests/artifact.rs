@@ -5,7 +5,8 @@ use simile_artifact::{Error, decode, encode};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorOrigin, CompiledOperation, CompiledService,
     HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation, OperationKey,
-    RequestBodyContract, Resource, ResourceKind, ResponseContract, ResponseStatus, ServiceInfo,
+    RequestBodyContract, Resource, ResourceKind, ResponseBodyContract, ResponseContract,
+    ResponseStatus, ServiceInfo,
 };
 
 #[test]
@@ -17,13 +18,14 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 3);
+    assert_eq!(summary.format_version, 4);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
     assert_eq!(summary.operations, 1);
     assert_eq!(summary.request_bodies, 1);
-    assert!(summary.request_schema_nodes > 0);
+    assert_eq!(summary.response_bodies, 1);
+    assert!(summary.schema_nodes > 0);
     assert_eq!(summary.responses, 1);
     assert_eq!(summary.resources, 1);
     assert_eq!(summary.async_operations, 1);
@@ -49,6 +51,7 @@ fn response_source_order_does_not_change_the_artifact() {
     operation.contract.responses.push(ResponseContract {
         status: ResponseStatus::Exact(400),
         definition: json!({"description": "Bad request"}),
+        body: None,
     });
     service
         .contract
@@ -126,7 +129,37 @@ fn example_service() -> CompiledService {
         }),
         responses: vec![ResponseContract {
             status: ResponseStatus::Exact(201),
-            definition: json!({"description": "Created"}),
+            definition: json!({
+                "description": "Created",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["customerId", "id"],
+                            "properties": {
+                                "customerId": {"type": "string"},
+                                "id": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }),
+            body: Some(ResponseBodyContract {
+                content: BTreeMap::from([(
+                    "application/json".to_owned(),
+                    MediaTypeContract {
+                        schema: Some(json!({
+                            "type": "object",
+                            "required": ["customerId", "id"],
+                            "properties": {
+                                "customerId": {"type": "string"},
+                                "id": {"type": "string"}
+                            }
+                        })),
+                        example: None,
+                    },
+                )]),
+            }),
         }],
     };
     let resource = Resource {

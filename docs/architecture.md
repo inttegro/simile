@@ -24,7 +24,7 @@ complete for HTTP. HCL is optional and additive for behavior.
                       |
                       v
               simile-artifact
-       indexed IR + compiled request schemas
+        indexed IR + compiled body schemas
          + versioned CBOR envelope
                       |
                       v
@@ -32,7 +32,7 @@ complete for HTTP. HCL is optional and additive for behavior.
                       |
                       v
                 simile-runtime
-          request decoding + validation
+       request validation + response synthesis
 ```
 
 ## Units of work
@@ -87,8 +87,8 @@ how either source language works.
 The source model is intentionally convenient for parsing and diagnostics; it is not persisted as
 JSON. `simile-artifact` lowers `CompiledService` into an indexed representation with a sorted,
 deduplicated string table, ordered operation records, numeric references between behaviors,
-async operations and resources, compiled request-body plans, and an arena for retained response
-definition value trees.
+async operations and resources, compiled request- and response-body plans, and an arena for
+retained response definition value trees.
 
 The resulting payload is encoded as deterministic CBOR. A fixed envelope supplies a magic value,
 format version, flags, payload length, and SHA-256 payload digest. The reader validates the entire
@@ -97,10 +97,11 @@ compiler output: providers continue to publish and review OpenAPI and HCL as tex
 
 ### Schema compiler: `simile-schema`
 
-`simile-schema` owns the executable subset of JSON Schema used for request validation. It compiles
-each declared request media type into an indexed graph, resolves local component references once,
-and preserves recursive references without copying their source trees. Validation operates on a
-decoded JSON value and returns bounded, structured issues whose paths are JSON Pointers.
+`simile-schema` owns the executable subset of JSON Schema used for body validation and synthesis.
+It compiles each declared request and response media type into an indexed graph, resolves local
+component references once per request/response direction, and preserves recursive references
+without copying their source trees. Validation operates on a decoded JSON value and returns
+bounded, structured issues whose paths are JSON Pointers.
 
 This boundary is intentionally independent of HTTP and OpenAPI parsing. The artifact embeds the
 compiled graph; the runtime never interprets source schema fragments. See
@@ -109,11 +110,14 @@ compiled graph; the runtime never interprets source schema fragments. See
 ### Runtime primitives: `simile-runtime`
 
 `simile-runtime` reads only validated artifact records. Its request-body entry points locate an
-operation by stable method/path key and negotiate the declared media type. Validation decodes JSON
-and applies the compiled schema. Synthesis selects a valid declared example or constructs a bounded,
-deterministic candidate and sends it back through the same validator. Missing bodies, undeclared
-media types, malformed payloads, schema violations, and exhausted synthesis remain distinct errors
-so a future HTTP adapter can map them deliberately.
+operation by stable method/path key, negotiate the declared media type, decode JSON, and apply the
+compiled schema. Response synthesis selects an exact, ranged, or default response; honors an HCL
+status choice when present; and constructs a valid body from the compiled response schema. When a
+validated request is available, compatible values at the same structural path are projected into
+the response while generated response-only fields remain intact. Every synthesized value is sent
+back through its compiled validator. Missing bodies, undeclared media types, malformed payloads,
+schema violations, and exhausted synthesis remain distinct errors so a future HTTP adapter can map
+them deliberately.
 
 ## Invariants
 
@@ -134,11 +138,15 @@ so a future HTTP adapter can map them deliberately.
 - Request validation never reparses OpenAPI or follows a source reference at runtime.
 - Validation issues use stable JSON Pointer paths and named rules.
 - Request synthesis never returns a candidate that fails the compiled request validator.
+- Response synthesis works without request context and never returns a body that fails the
+  compiled response validator.
+- Request-aware response synthesis only projects same-path values accepted by the response schema;
+  `writeOnly` fields are absent from the response graph.
 
 ## Deliberate next boundaries
 
 The current compiler establishes source ownership, cross-source validation, a runtime artifact
-boundary, compiled JSON request validation, and deterministic JSON request synthesis. Subsequent
-slices can add form and multipart codecs, parameter validation, deterministic response generation,
-state actions, scenario inputs, and executable asynchronous instructions without collapsing these
-boundaries.
+boundary, compiled JSON request validation, deterministic request synthesis, and deterministic
+request-aware response synthesis. Subsequent slices can add form and multipart codecs, parameter
+validation, state actions, scenario inputs, and executable asynchronous instructions without
+collapsing these boundaries.

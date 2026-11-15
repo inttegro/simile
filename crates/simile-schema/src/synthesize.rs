@@ -9,7 +9,7 @@ use crate::{
 const MAX_DEPTH: usize = 64;
 const MAX_VARIANTS: usize = 32;
 
-/// A deterministic request value could not be produced from the compiled schema.
+/// A deterministic JSON value could not be produced from the compiled schema.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SynthesisError {
     #[error("compiled schema contains an invalid node")]
@@ -41,10 +41,96 @@ impl SchemaCatalog {
         }
         Err(SynthesisError::Exhausted { issues: closest })
     }
+
+    pub(crate) fn project(&self, root: SchemaRef, baseline: &Value, request: &Value) -> Value {
+        if !self.contains(root) {
+            return baseline.clone();
+        }
+        let mut active = Vec::new();
+        let candidate = Projector { catalog: self }.node(root.0, baseline, request, 0, &mut active);
+        if validate::value(self, root, &candidate).is_empty() {
+            candidate
+        } else {
+            baseline.clone()
+        }
+    }
 }
 
 struct Synthesizer<'a> {
     catalog: &'a SchemaCatalog,
+}
+
+struct Projector<'a> {
+    catalog: &'a SchemaCatalog,
+}
+
+impl Projector<'_> {
+    fn node(
+        &self,
+        id: SchemaId,
+        baseline: &Value,
+        request: &Value,
+        depth: usize,
+        active: &mut Vec<SchemaId>,
+    ) -> Value {
+        if depth >= MAX_DEPTH || active.contains(&id) {
+            return baseline.clone();
+        }
+        let Some(node) = self.catalog.nodes.get(id as usize) else {
+            return baseline.clone();
+        };
+
+        if !baseline.is_object() || !request.is_object() {
+            return if validate::value(self.catalog, SchemaRef(id), request).is_empty() {
+                request.clone()
+            } else {
+                baseline.clone()
+            };
+        }
+
+        active.push(id);
+        let mut projected = baseline.clone();
+        for (name, schema) in &node.properties {
+            let Some(request_value) = request.get(name) else {
+                continue;
+            };
+            let current = projected.get(name);
+            let replacement = if current.is_some_and(Value::is_object) && request_value.is_object()
+            {
+                current.map(|current| self.node(*schema, current, request_value, depth + 1, active))
+            } else if validate::value(self.catalog, SchemaRef(*schema), request_value).is_empty() {
+                Some(request_value.clone())
+            } else {
+                None
+            };
+            let Some(replacement) = replacement else {
+                continue;
+            };
+            let mut candidate = projected.clone();
+            if let Some(object) = candidate.as_object_mut() {
+                object.insert(name.clone(), replacement);
+            }
+            if validate::value(self.catalog, SchemaRef(id), &candidate).is_empty() {
+                projected = candidate;
+            }
+        }
+
+        for schema in &node.all_of {
+            let candidate = self.node(*schema, &projected, request, depth + 1, active);
+            if validate::value(self.catalog, SchemaRef(id), &candidate).is_empty() {
+                projected = candidate;
+            }
+        }
+        for schema in node.any_of.iter().chain(&node.one_of) {
+            let candidate = self.node(*schema, &projected, request, depth + 1, active);
+            if validate::value(self.catalog, SchemaRef(id), &candidate).is_empty() {
+                projected = candidate;
+                break;
+            }
+        }
+        active.pop();
+        projected
+    }
 }
 
 impl Synthesizer<'_> {

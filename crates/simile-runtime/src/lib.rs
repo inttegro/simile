@@ -1,9 +1,13 @@
 #![forbid(unsafe_code)]
 
+mod response;
+
 use serde_json::Value;
 use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
+
+pub use response::{ResponseSynthesisRequest, SynthesizedResponse, synthesize_response};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -55,11 +59,17 @@ impl SynthesizedBody {
 /// A body that has been decoded and checked against its compiled OpenAPI schema.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedBody {
+    operation: String,
     media_type: String,
     value: Value,
 }
 
 impl ValidatedBody {
+    #[must_use]
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
     #[must_use]
     pub fn media_type(&self) -> &str {
         &self.media_type
@@ -108,14 +118,55 @@ pub enum Error {
         expected: Vec<String>,
     },
 
+    #[error("operation `{operation}` does not declare a response matching HTTP {status}")]
+    ResponseNotDeclared { operation: String, status: u16 },
+
+    #[error("operation `{operation}` has no concrete response status to synthesize")]
+    NoResponseStatus { operation: String },
+
+    #[error(
+        "validated request context belongs to `{request_operation}`, not `{response_operation}`"
+    )]
+    RequestContextMismatch {
+        request_operation: String,
+        response_operation: String,
+    },
+
+    #[error("operation `{operation}` has no declared JSON response media type to synthesize")]
+    NoResponseMediaType {
+        operation: String,
+        expected: Vec<String>,
+    },
+
+    #[error(
+        "response Content-Type `{content_type}` is not declared for `{operation}`; expected one of {expected:?}"
+    )]
+    UnsupportedResponseMediaType {
+        operation: String,
+        content_type: String,
+        expected: Vec<String>,
+    },
+
+    #[error("response Content-Type `{content_type}` does not yet have an encoder")]
+    UnsupportedResponseEncoding { content_type: String },
+
     #[error("could not synthesize a request body: {source}")]
     Synthesis {
         #[source]
         source: SynthesisError,
     },
 
+    #[error("could not synthesize a response body: {source}")]
+    ResponseSynthesis {
+        #[source]
+        source: SynthesisError,
+    },
+
     #[error("could not encode a synthesized JSON request body: {message}")]
     EncodeJson { message: String },
+
+    #[error("could not encode a synthesized JSON response body: {message}")]
+    EncodeResponseJson { message: String },
 
     #[error("request body is not valid JSON at line {line}, column {column}: {message}")]
     MalformedJson {
@@ -126,13 +177,16 @@ pub enum Error {
 
     #[error("request body failed schema validation with {} issue(s)", .issues.len())]
     InvalidBody { issues: Vec<ValidationIssue> },
+
+    #[error("synthesized response body failed schema validation with {} issue(s)", .issues.len())]
+    InvalidResponseBody { issues: Vec<ValidationIssue> },
 }
 
 impl Error {
     #[must_use]
     pub fn issues(&self) -> &[ValidationIssue] {
         match self {
-            Self::InvalidBody { issues } => issues,
+            Self::InvalidBody { issues } | Self::InvalidResponseBody { issues } => issues,
             _ => &[],
         }
     }
@@ -190,6 +244,7 @@ pub fn validate_request_body(
         return Err(Error::InvalidBody { issues });
     }
     Ok(Some(ValidatedBody {
+        operation: request.operation.to_owned(),
         media_type: selected.requested().to_owned(),
         value,
     }))

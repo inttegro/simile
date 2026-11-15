@@ -5,5 +5,6 @@ mod format;
 
 pub use error::{Error, Result};
 pub use format::{
-    Artifact, ArtifactOperation, ArtifactSummary, EXTENSION, FORMAT_VERSION, decode, encode,
+    Artifact, ArtifactOperation, ArtifactResponse, ArtifactSummary, EXTENSION, FORMAT_VERSION,
+    decode, encode,
 };

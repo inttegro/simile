@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::{Map, Value};
 use simile_spec::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
-    RequestBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
+    RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
 };
 
 use crate::{Error, Result};
@@ -134,6 +134,7 @@ fn operation(
     let responses = responses
         .iter()
         .map(|(status, definition)| {
+            let response_field = format!("{field}.responses.{status}");
             Ok(ResponseContract {
                 status: response_status(status).ok_or_else(|| Error::InvalidResponseStatus {
                     method: method.to_string(),
@@ -141,6 +142,7 @@ fn operation(
                     status: status.clone(),
                 })?,
                 definition: definition.clone(),
+                body: response_body(document, definition, &response_field)?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -160,6 +162,21 @@ fn operation(
         request,
         responses,
     })
+}
+
+fn response_body(
+    document: &Value,
+    value: &Value,
+    field: &str,
+) -> Result<Option<ResponseBodyContract>> {
+    let resolved = resolve_local_reference(document, value, field, 0)?;
+    let response = object(resolved, field)?;
+    let Some(content) = response.get("content") else {
+        return Ok(None);
+    };
+    let content_field = format!("{field}.content");
+    let content = media_types(object(content, &content_field)?, &content_field)?;
+    Ok((!content.is_empty()).then_some(ResponseBodyContract { content }))
 }
 
 fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestBodyContract> {
@@ -183,10 +200,21 @@ fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestB
             expected: "a non-empty object",
         });
     }
-    let content = content
+    let content = media_types(content, &content_field)?;
+    Ok(RequestBodyContract {
+        required: is_required,
+        content,
+    })
+}
+
+fn media_types(
+    content: &Map<String, Value>,
+    field: &str,
+) -> Result<BTreeMap<String, MediaTypeContract>> {
+    content
         .iter()
         .map(|(media_type, definition)| {
-            let media_field = format!("{field}.content.{media_type}");
+            let media_field = format!("{field}.{media_type}");
             let definition = object(definition, &media_field)?;
             Ok((
                 media_type.to_ascii_lowercase(),
@@ -196,11 +224,7 @@ fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestB
                 },
             ))
         })
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    Ok(RequestBodyContract {
-        required: is_required,
-        content,
-    })
+        .collect()
 }
 
 fn media_example(definition: &Map<String, Value>) -> Option<Value> {
