@@ -571,6 +571,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "simile-schema",
  "simile-spec",
  "thiserror",
 ]
@@ -629,6 +630,27 @@ dependencies = [
  "semver",
  "serde_json",
  "serde_norway",
+ "simile-spec",
+ "thiserror",
+]
+
+[[package]]
+name = "simile-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "simile-artifact",
+ "simile-compiler",
+ "simile-schema",
+ "thiserror",
+]
+
+[[package]]
+name = "simile-schema"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "simile-spec",
  "thiserror",
 ]

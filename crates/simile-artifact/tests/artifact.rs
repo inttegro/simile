@@ -4,8 +4,8 @@ use serde_json::json;
 use simile_artifact::{Error, decode, encode};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorOrigin, CompiledOperation, CompiledService,
-    HttpMethod, OpenApiFeature, OpenApiVersion, Operation, OperationKey, Resource, ResourceKind,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation, OperationKey,
+    RequestBodyContract, Resource, ResourceKind, ResponseContract, ResponseStatus, ServiceInfo,
 };
 
 #[test]
@@ -17,11 +17,13 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 1);
+    assert_eq!(summary.format_version, 2);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
     assert_eq!(summary.operations, 1);
+    assert_eq!(summary.request_bodies, 1);
+    assert!(summary.request_schema_nodes > 0);
     assert_eq!(summary.responses, 1);
     assert_eq!(summary.resources, 1);
     assert_eq!(summary.async_operations, 1);
@@ -87,10 +89,10 @@ fn rejects_changed_payload_bytes() {
 fn rejects_wrong_format_and_trailing_bytes() {
     let encoded = encode(&example_service()).unwrap_or_else(|error| panic!("{error}"));
     let mut wrong_format = encoded.clone();
-    wrong_format[8..10].copy_from_slice(&2_u16.to_be_bytes());
+    wrong_format[8..10].copy_from_slice(&1_u16.to_be_bytes());
     assert!(matches!(
         decode(&wrong_format),
-        Err(Error::UnsupportedFormat(2))
+        Err(Error::UnsupportedFormat(1))
     ));
 
     let mut trailing = encoded;
@@ -108,6 +110,19 @@ fn example_service() -> CompiledService {
         path: "/orders".to_owned(),
         summary: Some("Create an order".to_owned()),
         request_body: Some(json!({"required": true, "schema": {"type": "object"}})),
+        request: Some(RequestBodyContract {
+            required: true,
+            content: BTreeMap::from([(
+                "application/json".to_owned(),
+                MediaTypeContract {
+                    schema: Some(json!({
+                        "type": "object",
+                        "required": ["customerId"],
+                        "properties": {"customerId": {"type": "string"}}
+                    })),
+                },
+            )]),
+        }),
         responses: vec![ResponseContract {
             status: ResponseStatus::Exact(201),
             definition: json!({"description": "Created"}),
@@ -143,6 +158,7 @@ fn example_service() -> CompiledService {
                 description: None,
             },
             operations: BTreeMap::from([(key.clone(), operation)]),
+            schemas: BTreeMap::new(),
         },
         operations: BTreeMap::from([(key, compiled)]),
         resources: BTreeMap::from([(resource_ref, resource)]),

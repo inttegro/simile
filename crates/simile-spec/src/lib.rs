@@ -8,6 +8,6 @@ pub use behavior::{
     Resource, ResourceKind, ResourceRef,
 };
 pub use contract::{
-    ApiContract, HttpMethod, OpenApiFeature, OpenApiVersion, Operation, OperationKey,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
+    OperationKey, RequestBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
 };

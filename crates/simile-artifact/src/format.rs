@@ -6,6 +6,7 @@ use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use simile_schema::{BoundRequestBody, RequestBodyPlan, RequestSchemaCompiler, SchemaCatalog};
 use simile_spec::{
     BehaviorOrigin, CompiledService, HttpMethod, OpenApiFeature, ResourceKind, ResourceRef,
     ResponseStatus,
@@ -13,7 +14,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -35,6 +36,8 @@ pub struct ArtifactSummary {
     pub service_version: String,
     pub openapi_version: String,
     pub operations: usize,
+    pub request_bodies: usize,
+    pub request_schema_nodes: usize,
     pub responses: usize,
     pub value_nodes: usize,
     pub resources: usize,
@@ -48,6 +51,27 @@ pub struct Artifact {
     payload: Payload,
     encoded_bytes: usize,
     digest: [u8; DIGEST_LENGTH],
+}
+
+/// The runtime-facing portion of one compiled operation.
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactOperation<'a> {
+    key: &'a str,
+    request_body: Option<&'a RequestBodyPlan>,
+    schemas: &'a SchemaCatalog,
+}
+
+impl<'a> ArtifactOperation<'a> {
+    #[must_use]
+    pub const fn key(&self) -> &'a str {
+        self.key
+    }
+
+    #[must_use]
+    pub fn request_body(&self) -> Option<BoundRequestBody<'a>> {
+        self.request_body
+            .map(|plan| BoundRequestBody::new(plan, self.schemas))
+    }
 }
 
 impl Artifact {
@@ -66,6 +90,13 @@ impl Artifact {
             service_version: self.string(self.payload.2.1).to_owned(),
             openapi_version: self.string(self.payload.2.3).to_owned(),
             operations: self.payload.3.len(),
+            request_bodies: self
+                .payload
+                .3
+                .iter()
+                .filter(|operation| operation.6.is_some())
+                .count(),
+            request_schema_nodes: self.payload.7.len(),
             responses,
             value_nodes: self.payload.4.len(),
             resources: self.payload.5.len(),
@@ -73,6 +104,23 @@ impl Artifact {
             encoded_bytes: self.encoded_bytes,
             payload_sha256: encode_hex(&self.digest),
         }
+    }
+
+    /// Find a compiled operation by its stable `METHOD /path` key.
+    #[must_use]
+    pub fn operation(&self, key: &str) -> Option<ArtifactOperation<'_>> {
+        self.payload
+            .3
+            .binary_search_by(|operation| self.string(operation.0).cmp(key))
+            .ok()
+            .map(|index| {
+                let operation = &self.payload.3[index];
+                ArtifactOperation {
+                    key: self.string(operation.0),
+                    request_body: operation.6.as_ref(),
+                    schemas: &self.payload.7,
+                }
+            })
     }
 
     fn string(&self, id: StringId) -> &str {
@@ -174,6 +222,7 @@ struct Payload(
     Vec<ValueRecord>,
     Vec<ResourceRecord>,
     Vec<AsyncRecord>,
+    SchemaCatalog,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -187,7 +236,7 @@ struct OperationRecord(
     StringId,
     Option<StringId>,
     Option<StringId>,
-    Option<ValueId>,
+    Option<RequestBodyPlan>,
     Vec<ResponseRecord>,
     u8,
     Option<BehaviorRecord>,
@@ -322,6 +371,8 @@ impl Payload {
         let resource_ids = index_resources(service)?;
         let async_ids = index_async_operations(service)?;
         let mut values = ValueArena::default();
+        let mut schema_compiler =
+            RequestSchemaCompiler::new(&service.contract.schemas, service.contract.openapi.feature);
 
         let service_record = ServiceRecord(
             strings.id(&service.contract.info.title)?,
@@ -336,9 +387,9 @@ impl Payload {
             let operation = &compiled.contract;
             let (method, additional_method) = encode_method(&operation.method, &strings)?;
             let request_body = operation
-                .request_body
+                .request
                 .as_ref()
-                .map(|value| values.push(value, &strings))
+                .map(|body| schema_compiler.compile_body(body))
                 .transpose()?;
             let mut ordered_responses = operation.responses.iter().collect::<Vec<_>>();
             ordered_responses.sort_by(|left, right| left.status.cmp(&right.status));
@@ -370,7 +421,7 @@ impl Payload {
                                 })
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    Ok(BehaviorRecord(behavior.response_status, triggers))
+                    Ok::<_, Error>(BehaviorRecord(behavior.response_status, triggers))
                 })
                 .transpose()?;
             operations.push(OperationRecord(
@@ -417,6 +468,8 @@ impl Payload {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let schemas = schema_compiler.finish()?;
+
         Ok(Self(
             strings.id(env!("CARGO_PKG_VERSION"))?,
             strings.values,
@@ -425,6 +478,7 @@ impl Payload {
             values.records,
             resources,
             async_operations,
+            schemas,
         ))
     }
 
@@ -457,7 +511,13 @@ impl Payload {
             validate_index(operation.3, strings, "operation path")?;
             validate_optional_index(operation.4, strings, "operation id")?;
             validate_optional_index(operation.5, strings, "operation summary")?;
-            validate_optional_index(operation.6, values, "request body")?;
+            if operation
+                .6
+                .as_ref()
+                .is_some_and(|request| !BoundRequestBody::new(request, &self.7).is_well_formed())
+            {
+                return Err(Error::Invalid("request schema"));
+            }
             if operation.8 > 1 {
                 return Err(Error::Invalid("behavior origin"));
             }
@@ -474,6 +534,13 @@ impl Payload {
                 for trigger in &behavior.1 {
                     validate_index(*trigger, async_operations, "async operation")?;
                 }
+            }
+        }
+        for operations in self.3.windows(2) {
+            let left = &self.1[operations[0].0 as usize];
+            let right = &self.1[operations[1].0 as usize];
+            if left >= right {
+                return Err(Error::Invalid("operation ordering"));
             }
         }
         for value in &self.4 {
@@ -509,6 +576,9 @@ impl Payload {
                 validate_index(*resource, resources, "resource")?;
             }
         }
+        if !self.7.is_well_formed() {
+            return Err(Error::Invalid("request schema catalog"));
+        }
         Ok(())
     }
 }
@@ -540,9 +610,6 @@ impl StringTable {
             }
             if let Some(summary) = &operation.summary {
                 values.insert(summary.clone());
-            }
-            if let Some(request_body) = &operation.request_body {
-                collect_value_strings(request_body, &mut values);
             }
             for response in &operation.responses {
                 collect_value_strings(&response.definition, &mut values);
@@ -766,6 +833,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            SchemaCatalog::default(),
         );
 
         assert!(matches!(

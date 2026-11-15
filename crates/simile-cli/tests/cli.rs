@@ -103,7 +103,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "contract OpenAPI 3.2.1 · 1 operations\n",
                 "behavior 0 OpenAPI defaults · 1 HCL overlays\n",
                 "runtime 1 async operations · 1 resources\n",
-                "artifact {} · format 1 · [..] bytes\n",
+                "artifact {} · format 2 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             artifact_path
@@ -115,12 +115,14 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 1,\n",
+            "  \"formatVersion\": 2,\n",
             "  \"compilerVersion\": \"0.1.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",
             "  \"operations\": 1,\n",
+            "  \"requestBodies\": 0,\n",
+            "  \"requestSchemaNodes\": 0,\n",
             "  \"responses\": 1,\n",
             "  \"valueNodes\": [..],\n",
             "  \"resources\": 1,\n",

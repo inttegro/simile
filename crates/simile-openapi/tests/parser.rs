@@ -47,6 +47,51 @@ fn accepts_json_and_yaml_documents() {
 }
 
 #[test]
+fn normalizes_request_bodies_and_component_schemas() {
+    let source = r#"
+openapi: 3.1.2
+info:
+  title: Orders
+  version: 1.0.0
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        $ref: '#/components/requestBodies/CreateOrder'
+      responses:
+        "201": { description: Created }
+components:
+  requestBodies:
+    CreateOrder:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrderInput'
+  schemas:
+    OrderInput:
+      type: object
+      required: [customerId]
+"#;
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let operation = contract
+        .operation_by_id("createOrder")
+        .unwrap_or_else(|| panic!("operation missing"));
+    let request = operation
+        .request
+        .as_ref()
+        .unwrap_or_else(|| panic!("request body missing"));
+
+    assert!(request.required);
+    assert_eq!(
+        request.content["application/json"].schema,
+        Some(serde_json::json!({"$ref": "#/components/schemas/OrderInput"}))
+    );
+    assert_eq!(contract.schemas["OrderInput"]["type"], "object");
+}
+
+#[test]
 fn query_is_only_an_operation_in_openapi_3_2() {
     let old =
         simile_openapi::parse(&fixture("3.1.2", "query")).unwrap_or_else(|error| panic!("{error}"));

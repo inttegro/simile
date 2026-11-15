@@ -50,4 +50,13 @@ pub enum Error {
 
     #[error("additional operation `{method}` duplicates a standard Path Item operation")]
     DuplicateStandardMethod { method: String },
+
+    #[error("OpenAPI `{field}` uses unsupported external reference `{reference}`")]
+    UnsupportedReference { field: String, reference: String },
+
+    #[error("OpenAPI `{field}` references unknown component `{reference}`")]
+    UnknownReference { field: String, reference: String },
+
+    #[error("OpenAPI `{field}` exceeds the local reference depth limit")]
+    ReferenceDepth { field: String },
 }

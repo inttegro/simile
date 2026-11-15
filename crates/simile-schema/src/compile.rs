@@ -1,0 +1,473 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::{Map, Value};
+use simile_spec::{OpenApiFeature, RequestBodyContract};
+
+use crate::{
+    AdditionalProperties, CompileError, JsonType, MediaTypePlan, NumberBound, RequestBodyPlan,
+    Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
+};
+
+/// Compiles every request body in a service into one shared schema catalog.
+pub struct RequestSchemaCompiler<'a> {
+    components: &'a BTreeMap<String, Value>,
+    feature: OpenApiFeature,
+    nodes: Vec<Option<SchemaNode>>,
+    references: BTreeMap<String, SchemaId>,
+}
+
+impl<'a> RequestSchemaCompiler<'a> {
+    #[must_use]
+    pub fn new(components: &'a BTreeMap<String, Value>, feature: OpenApiFeature) -> Self {
+        Self {
+            components,
+            feature,
+            nodes: Vec::new(),
+            references: BTreeMap::new(),
+        }
+    }
+
+    pub fn compile_body(&mut self, body: &RequestBodyContract) -> Result<RequestBodyPlan> {
+        let content = body
+            .content
+            .iter()
+            .map(|(media_type, contract)| {
+                let schema = contract
+                    .schema
+                    .as_ref()
+                    .map(|schema| {
+                        self.compile_schema(schema, "requestBody.schema")
+                            .map(SchemaRef)
+                    })
+                    .transpose()?;
+                Ok((media_type.to_ascii_lowercase(), MediaTypePlan { schema }))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        Ok(RequestBodyPlan {
+            required: body.required,
+            content,
+        })
+    }
+
+    pub fn finish(self) -> Result<SchemaCatalog> {
+        let nodes = self
+            .nodes
+            .into_iter()
+            .map(|node| node.ok_or(CompileError::IncompleteNode))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(SchemaCatalog { nodes })
+    }
+
+    fn compile_schema(&mut self, schema: &Value, field: &str) -> Result<SchemaId> {
+        match schema {
+            Value::Bool(allowed) => self.push(SchemaNode {
+                allowed: Some(*allowed),
+                ..SchemaNode::default()
+            }),
+            Value::Object(object) => self.compile_object(object, field),
+            _ => Err(CompileError::InvalidField {
+                field: field.to_owned(),
+                expected: "an object or boolean",
+            }),
+        }
+    }
+
+    fn compile_object(&mut self, schema: &Map<String, Value>, field: &str) -> Result<SchemaId> {
+        if let Some(reference) = schema.get("$ref") {
+            let reference = reference
+                .as_str()
+                .ok_or_else(|| CompileError::InvalidField {
+                    field: format!("{field}.$ref"),
+                    expected: "a string",
+                })?;
+            let target = self.compile_reference(reference, field)?;
+            if self.feature == OpenApiFeature::V3_0 || schema.len() == 1 {
+                return Ok(target);
+            }
+            let id = self.reserve()?;
+            let mut node = self.node(schema, field)?;
+            node.all_of.insert(0, target);
+            self.fill(id, node);
+            return Ok(id);
+        }
+
+        let id = self.reserve()?;
+        let node = self.node(schema, field)?;
+        self.fill(id, node);
+        Ok(id)
+    }
+
+    fn compile_reference(&mut self, reference: &str, field: &str) -> Result<SchemaId> {
+        if let Some(id) = self.references.get(reference) {
+            return Ok(*id);
+        }
+        let name = component_name(reference).ok_or_else(|| CompileError::UnsupportedReference {
+            field: field.to_owned(),
+            reference: reference.to_owned(),
+        })?;
+        let schema = self
+            .components
+            .get(&name)
+            .ok_or_else(|| CompileError::UnknownReference {
+                field: field.to_owned(),
+                reference: reference.to_owned(),
+            })?;
+        let id = self.reserve()?;
+        self.references.insert(reference.to_owned(), id);
+        let node = match schema {
+            Value::Bool(allowed) => SchemaNode {
+                allowed: Some(*allowed),
+                ..SchemaNode::default()
+            },
+            Value::Object(object) => {
+                if let Some(nested) = object.get("$ref").and_then(Value::as_str) {
+                    let target =
+                        self.compile_reference(nested, &format!("components.schemas.{name}"))?;
+                    let mut node = if self.feature == OpenApiFeature::V3_0 || object.len() == 1 {
+                        SchemaNode::default()
+                    } else {
+                        self.node(object, &format!("components.schemas.{name}"))?
+                    };
+                    node.all_of.insert(0, target);
+                    node
+                } else {
+                    self.node(object, &format!("components.schemas.{name}"))?
+                }
+            }
+            _ => {
+                return Err(CompileError::InvalidField {
+                    field: format!("components.schemas.{name}"),
+                    expected: "an object or boolean",
+                });
+            }
+        };
+        self.fill(id, node);
+        Ok(id)
+    }
+
+    fn node(&mut self, schema: &Map<String, Value>, field: &str) -> Result<SchemaNode> {
+        let mut types = self.types(schema, field)?;
+        if self.feature == OpenApiFeature::V3_0
+            && !types.is_empty()
+            && schema.get("nullable").and_then(Value::as_bool) == Some(true)
+        {
+            types.insert(JsonType::Null);
+        }
+        Ok(SchemaNode {
+            allowed: None,
+            types,
+            enum_values: optional_array(schema, "enum", field)?.cloned(),
+            const_value: schema.get("const").cloned(),
+            properties: self.properties(schema, field)?,
+            required: request_required(schema, field)?,
+            additional: self.additional_properties(schema, field)?,
+            items: schema
+                .get("items")
+                .map(|value| self.compile_schema(value, &format!("{field}.items")))
+                .transpose()?,
+            all_of: self.schema_array(schema, "allOf", field)?,
+            any_of: self.schema_array(schema, "anyOf", field)?,
+            one_of: self.schema_array(schema, "oneOf", field)?,
+            not: schema
+                .get("not")
+                .map(|value| self.compile_schema(value, &format!("{field}.not")))
+                .transpose()?,
+            minimum: lower_bound(schema, self.feature, field)?,
+            maximum: upper_bound(schema, self.feature, field)?,
+            multiple_of: positive_number(schema, "multipleOf", field)?,
+            min_length: nonnegative_integer(schema, "minLength", field)?,
+            max_length: nonnegative_integer(schema, "maxLength", field)?,
+            min_items: nonnegative_integer(schema, "minItems", field)?,
+            max_items: nonnegative_integer(schema, "maxItems", field)?,
+            unique_items: optional_bool(schema, "uniqueItems", field)?.unwrap_or(false),
+            min_properties: nonnegative_integer(schema, "minProperties", field)?,
+            max_properties: nonnegative_integer(schema, "maxProperties", field)?,
+        })
+    }
+
+    fn types(&self, schema: &Map<String, Value>, field: &str) -> Result<BTreeSet<JsonType>> {
+        let Some(value) = schema.get("type") else {
+            return Ok(BTreeSet::new());
+        };
+        let values = match value {
+            Value::String(value) => vec![value.as_str()],
+            Value::Array(values) if self.feature != OpenApiFeature::V3_0 && !values.is_empty() => {
+                values
+                    .iter()
+                    .map(|value| {
+                        value.as_str().ok_or_else(|| CompileError::InvalidField {
+                            field: format!("{field}.type"),
+                            expected: "a string or an array of strings",
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
+            _ => {
+                return Err(CompileError::InvalidField {
+                    field: format!("{field}.type"),
+                    expected: "a string or an array of strings",
+                });
+            }
+        };
+        values
+            .into_iter()
+            .map(|value| json_type(value, field))
+            .collect()
+    }
+
+    fn properties(
+        &mut self,
+        schema: &Map<String, Value>,
+        field: &str,
+    ) -> Result<BTreeMap<String, SchemaId>> {
+        let Some(value) = schema.get("properties") else {
+            return Ok(BTreeMap::new());
+        };
+        let properties = value
+            .as_object()
+            .ok_or_else(|| CompileError::InvalidField {
+                field: format!("{field}.properties"),
+                expected: "an object",
+            })?;
+        properties
+            .iter()
+            .map(|(name, value)| {
+                Ok((
+                    name.clone(),
+                    self.compile_schema(value, &format!("{field}.properties.{name}"))?,
+                ))
+            })
+            .collect()
+    }
+
+    fn additional_properties(
+        &mut self,
+        schema: &Map<String, Value>,
+        field: &str,
+    ) -> Result<AdditionalProperties> {
+        match schema.get("additionalProperties") {
+            None | Some(Value::Bool(true)) => Ok(AdditionalProperties::Allow),
+            Some(Value::Bool(false)) => Ok(AdditionalProperties::Deny),
+            Some(value @ Value::Object(_)) => Ok(AdditionalProperties::Schema(
+                self.compile_schema(value, &format!("{field}.additionalProperties"))?,
+            )),
+            Some(_) => Err(CompileError::InvalidField {
+                field: format!("{field}.additionalProperties"),
+                expected: "a boolean or schema",
+            }),
+        }
+    }
+
+    fn schema_array(
+        &mut self,
+        schema: &Map<String, Value>,
+        name: &str,
+        field: &str,
+    ) -> Result<Vec<SchemaId>> {
+        let Some(value) = schema.get(name) else {
+            return Ok(Vec::new());
+        };
+        let values = value
+            .as_array()
+            .filter(|values| !values.is_empty())
+            .ok_or_else(|| CompileError::InvalidField {
+                field: format!("{field}.{name}"),
+                expected: "a non-empty array of schemas",
+            })?;
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| self.compile_schema(value, &format!("{field}.{name}.{index}")))
+            .collect()
+    }
+
+    fn reserve(&mut self) -> Result<SchemaId> {
+        let id = u32::try_from(self.nodes.len()).map_err(|_| CompileError::TooManyNodes)?;
+        self.nodes.push(None);
+        Ok(id)
+    }
+
+    fn push(&mut self, node: SchemaNode) -> Result<SchemaId> {
+        let id = self.reserve()?;
+        self.fill(id, node);
+        Ok(id)
+    }
+
+    fn fill(&mut self, id: SchemaId, node: SchemaNode) {
+        self.nodes[id as usize] = Some(node);
+    }
+}
+
+fn component_name(reference: &str) -> Option<String> {
+    let encoded = reference.strip_prefix("#/components/schemas/")?;
+    if encoded.is_empty() || encoded.contains('/') {
+        return None;
+    }
+    Some(encoded.replace("~1", "/").replace("~0", "~"))
+}
+
+fn json_type(value: &str, field: &str) -> Result<JsonType> {
+    match value {
+        "null" => Ok(JsonType::Null),
+        "boolean" => Ok(JsonType::Boolean),
+        "object" => Ok(JsonType::Object),
+        "array" => Ok(JsonType::Array),
+        "number" => Ok(JsonType::Number),
+        "integer" => Ok(JsonType::Integer),
+        "string" => Ok(JsonType::String),
+        _ => Err(CompileError::InvalidField {
+            field: format!("{field}.type"),
+            expected: "a JSON Schema type",
+        }),
+    }
+}
+
+fn optional_array<'a>(
+    object: &'a Map<String, Value>,
+    name: &str,
+    field: &str,
+) -> Result<Option<&'a Vec<Value>>> {
+    object
+        .get(name)
+        .map(|value| {
+            value.as_array().ok_or_else(|| CompileError::InvalidField {
+                field: format!("{field}.{name}"),
+                expected: "an array",
+            })
+        })
+        .transpose()
+}
+
+fn string_set(object: &Map<String, Value>, name: &str, field: &str) -> Result<BTreeSet<String>> {
+    let Some(values) = optional_array(object, name, field)? else {
+        return Ok(BTreeSet::new());
+    };
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| CompileError::InvalidField {
+                    field: format!("{field}.{name}"),
+                    expected: "an array of strings",
+                })
+        })
+        .collect()
+}
+
+fn request_required(object: &Map<String, Value>, field: &str) -> Result<BTreeSet<String>> {
+    let mut required = string_set(object, "required", field)?;
+    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+        required.retain(|name| {
+            properties
+                .get(name)
+                .and_then(Value::as_object)
+                .and_then(|schema| schema.get("readOnly"))
+                .and_then(Value::as_bool)
+                != Some(true)
+        });
+    }
+    Ok(required)
+}
+
+fn optional_bool(object: &Map<String, Value>, name: &str, field: &str) -> Result<Option<bool>> {
+    object
+        .get(name)
+        .map(|value| {
+            value.as_bool().ok_or_else(|| CompileError::InvalidField {
+                field: format!("{field}.{name}"),
+                expected: "a boolean",
+            })
+        })
+        .transpose()
+}
+
+fn nonnegative_integer(
+    object: &Map<String, Value>,
+    name: &str,
+    field: &str,
+) -> Result<Option<usize>> {
+    object
+        .get(name)
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| CompileError::InvalidField {
+                    field: format!("{field}.{name}"),
+                    expected: "a non-negative integer",
+                })
+        })
+        .transpose()
+}
+
+fn positive_number(object: &Map<String, Value>, name: &str, field: &str) -> Result<Option<f64>> {
+    object
+        .get(name)
+        .map(|value| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .ok_or_else(|| CompileError::InvalidField {
+                    field: format!("{field}.{name}"),
+                    expected: "a positive number",
+                })
+        })
+        .transpose()
+}
+
+fn lower_bound(
+    object: &Map<String, Value>,
+    feature: OpenApiFeature,
+    field: &str,
+) -> Result<Option<NumberBound>> {
+    number_bound(object, "minimum", "exclusiveMinimum", feature, field)
+}
+
+fn upper_bound(
+    object: &Map<String, Value>,
+    feature: OpenApiFeature,
+    field: &str,
+) -> Result<Option<NumberBound>> {
+    number_bound(object, "maximum", "exclusiveMaximum", feature, field)
+}
+
+fn number_bound(
+    object: &Map<String, Value>,
+    inclusive_name: &str,
+    exclusive_name: &str,
+    feature: OpenApiFeature,
+    field: &str,
+) -> Result<Option<NumberBound>> {
+    if feature != OpenApiFeature::V3_0 {
+        if let Some(value) = object.get(exclusive_name) {
+            return finite_number(value, &format!("{field}.{exclusive_name}")).map(|value| {
+                Some(NumberBound {
+                    value,
+                    exclusive: true,
+                })
+            });
+        }
+    }
+    let Some(value) = object.get(inclusive_name) else {
+        return Ok(None);
+    };
+    let value = finite_number(value, &format!("{field}.{inclusive_name}"))?;
+    let exclusive = if feature == OpenApiFeature::V3_0 {
+        optional_bool(object, exclusive_name, field)?.unwrap_or(false)
+    } else {
+        false
+    };
+    Ok(Some(NumberBound { value, exclusive }))
+}
+
+fn finite_number(value: &Value, field: &str) -> Result<f64> {
+    value
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| CompileError::InvalidField {
+            field: field.to_owned(),
+            expected: "a finite number",
+        })
+}

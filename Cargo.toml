@@ -6,6 +6,8 @@ members = [
     "crates/simile-core",
     "crates/simile-hcl",
     "crates/simile-openapi",
+    "crates/simile-runtime",
+    "crates/simile-schema",
     "crates/simile-spec",
 ]
 resolver = "2"
@@ -34,6 +36,8 @@ simile-compiler = { version = "=0.1.0", path = "crates/simile-compiler" }
 simile-core = { version = "=0.1.0", path = "crates/simile-core" }
 simile-hcl = { version = "=0.1.0", path = "crates/simile-hcl" }
 simile-openapi = { version = "=0.1.0", path = "crates/simile-openapi" }
+simile-runtime = { version = "=0.1.0", path = "crates/simile-runtime" }
+simile-schema = { version = "=0.1.0", path = "crates/simile-schema" }
 simile-spec = { version = "=0.1.0", path = "crates/simile-spec" }
 snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"

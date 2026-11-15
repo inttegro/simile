@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Map, Value};
 use simile_spec::{
-    ApiContract, HttpMethod, OpenApiVersion, Operation, OperationKey, ResponseContract,
-    ResponseStatus, ServiceInfo,
+    ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
+    RequestBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
 };
 
 use crate::{Error, Result};
@@ -32,7 +32,7 @@ pub(crate) fn contract(
             entries.extend(additional_operation_entries(path_item)?);
         }
         for (method_name, method, value) in entries {
-            let operation = operation(path, method_name, method, value)?;
+            let operation = operation(document, path, method_name, method, value)?;
             register_operation_id(&mut operation_ids, &operation)?;
             operations.insert(operation.key.clone(), operation);
         }
@@ -42,6 +42,7 @@ pub(crate) fn contract(
         openapi: version,
         info,
         operations,
+        schemas: component_schemas(root)?,
     })
 }
 
@@ -107,6 +108,7 @@ fn method(value: &str, supports_extended_methods: bool) -> Option<HttpMethod> {
 }
 
 fn operation(
+    document: &Value,
     path: &str,
     method_name: &str,
     method: HttpMethod,
@@ -142,6 +144,11 @@ fn operation(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let raw_request_body = body.get("requestBody").cloned();
+    let request = body
+        .get("requestBody")
+        .map(|value| request_body(document, value, &format!("{field}.requestBody")))
+        .transpose()?;
 
     Ok(Operation {
         key: OperationKey::new(&method, path),
@@ -149,9 +156,95 @@ fn operation(
         method,
         path: path.to_owned(),
         summary,
-        request_body: body.get("requestBody").cloned(),
+        request_body: raw_request_body,
+        request,
         responses,
     })
+}
+
+fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestBodyContract> {
+    let resolved = resolve_local_reference(document, value, field, 0)?;
+    let body = object(resolved, field)?;
+    let is_required = match body.get("required") {
+        Some(Value::Bool(required)) => *required,
+        Some(_) => {
+            return Err(Error::InvalidField {
+                field: format!("{field}.required"),
+                expected: "a boolean",
+            });
+        }
+        None => false,
+    };
+    let content_field = format!("{field}.content");
+    let content = object(required(body, "content")?, &content_field)?;
+    if content.is_empty() {
+        return Err(Error::InvalidField {
+            field: content_field,
+            expected: "a non-empty object",
+        });
+    }
+    let content = content
+        .iter()
+        .map(|(media_type, definition)| {
+            let media_field = format!("{field}.content.{media_type}");
+            let definition = object(definition, &media_field)?;
+            Ok((
+                media_type.to_ascii_lowercase(),
+                MediaTypeContract {
+                    schema: definition.get("schema").cloned(),
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    Ok(RequestBodyContract {
+        required: is_required,
+        content,
+    })
+}
+
+fn resolve_local_reference<'a>(
+    document: &'a Value,
+    value: &'a Value,
+    field: &str,
+    depth: usize,
+) -> Result<&'a Value> {
+    if depth >= 64 {
+        return Err(Error::ReferenceDepth {
+            field: field.to_owned(),
+        });
+    }
+    let Some(reference) = value.get("$ref").and_then(Value::as_str) else {
+        return Ok(value);
+    };
+    let pointer = reference
+        .strip_prefix('#')
+        .filter(|pointer| pointer.starts_with('/'))
+        .ok_or_else(|| Error::UnsupportedReference {
+            field: field.to_owned(),
+            reference: reference.to_owned(),
+        })?;
+    let resolved = document
+        .pointer(pointer)
+        .ok_or_else(|| Error::UnknownReference {
+            field: field.to_owned(),
+            reference: reference.to_owned(),
+        })?;
+    resolve_local_reference(document, resolved, field, depth + 1)
+}
+
+fn component_schemas(root: &Map<String, Value>) -> Result<BTreeMap<String, Value>> {
+    let Some(components) = root.get("components") else {
+        return Ok(BTreeMap::new());
+    };
+    let components = object(components, "components")?;
+    let Some(schemas) = components.get("schemas") else {
+        return Ok(BTreeMap::new());
+    };
+    let schemas = object(schemas, "components.schemas")?;
+    Ok(schemas
+        .iter()
+        .map(|(name, schema)| (name.clone(), schema.clone()))
+        .collect())
 }
 
 fn response_status(value: &str) -> Option<ResponseStatus> {

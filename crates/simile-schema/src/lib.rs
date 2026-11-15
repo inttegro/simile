@@ -1,0 +1,332 @@
+#![forbid(unsafe_code)]
+
+mod compile;
+mod error;
+mod validate;
+
+use std::collections::{BTreeMap, BTreeSet};
+
+pub use compile::RequestSchemaCompiler;
+pub use error::{CompileError, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+pub use validate::{ValidationIssue, ValidationRule};
+
+type SchemaId = u32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct SchemaRef(SchemaId);
+
+/// A request-body contract reduced to the information needed by the runtime.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RequestBodyPlan {
+    required: bool,
+    content: BTreeMap<String, MediaTypePlan>,
+}
+
+impl RequestBodyPlan {
+    #[must_use]
+    pub const fn is_required(&self) -> bool {
+        self.required
+    }
+
+    pub fn media_types(&self) -> impl Iterator<Item = &str> {
+        self.content.keys().map(String::as_str)
+    }
+
+    /// Match a Content-Type value, ignoring parameters and honoring OpenAPI wildcards.
+    #[must_use]
+    pub fn select(&self, content_type: &str) -> Option<SelectedMediaType<'_>> {
+        let essence = content_type
+            .split(';')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if essence.is_empty() {
+            return None;
+        }
+        let exact = self.content.get_key_value(&essence);
+        let wildcard = essence
+            .split_once('/')
+            .and_then(|(kind, _)| self.content.get_key_value(&format!("{kind}/*")));
+        let fallback = self.content.get_key_value("*/*");
+        exact
+            .or(wildcard)
+            .or(fallback)
+            .map(|(declared, plan)| SelectedMediaType {
+                requested: essence,
+                declared,
+                schema: plan.schema,
+            })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    fn is_well_formed(&self, schemas: &SchemaCatalog) -> bool {
+        !self.content.is_empty()
+            && self.content.keys().all(|media_type| !media_type.is_empty())
+            && self
+                .content
+                .values()
+                .all(|media| media.schema.is_none_or(|schema| schemas.contains(schema)))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+struct MediaTypePlan {
+    schema: Option<SchemaRef>,
+}
+
+/// The declared media type and optional schema selected for an incoming body.
+#[derive(Clone, Debug)]
+pub struct SelectedMediaType<'a> {
+    requested: String,
+    declared: &'a str,
+    schema: Option<SchemaRef>,
+}
+
+impl<'a> SelectedMediaType<'a> {
+    #[must_use]
+    pub fn requested(&self) -> &str {
+        &self.requested
+    }
+
+    #[must_use]
+    pub const fn declared(&self) -> &'a str {
+        self.declared
+    }
+
+    #[must_use]
+    const fn schema(&self) -> Option<SchemaRef> {
+        self.schema
+    }
+}
+
+/// The shared schema graph embedded once in a compiled artifact.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SchemaCatalog {
+    nodes: Vec<SchemaNode>,
+}
+
+impl SchemaCatalog {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    #[must_use]
+    fn validate(&self, root: SchemaRef, value: &Value) -> Vec<ValidationIssue> {
+        validate::value(self, root, value)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        let length = self.nodes.len();
+        self.nodes.iter().all(|node| {
+            node.properties.values().all(|id| valid_id(*id, length))
+                && node.items.is_none_or(|id| valid_id(id, length))
+                && node.all_of.iter().all(|id| valid_id(*id, length))
+                && node.any_of.iter().all(|id| valid_id(*id, length))
+                && node.one_of.iter().all(|id| valid_id(*id, length))
+                && node.not.is_none_or(|id| valid_id(id, length))
+                && match node.additional {
+                    AdditionalProperties::Schema(id) => valid_id(id, length),
+                    AdditionalProperties::Allow | AdditionalProperties::Deny => true,
+                }
+        })
+    }
+
+    fn contains(&self, schema: SchemaRef) -> bool {
+        valid_id(schema.0, self.nodes.len())
+    }
+}
+
+/// A selected media type bound to the shared compiled schema catalog.
+#[derive(Clone, Debug)]
+pub struct BoundMediaType<'a> {
+    selected: SelectedMediaType<'a>,
+    schemas: &'a SchemaCatalog,
+}
+
+impl<'a> BoundMediaType<'a> {
+    #[must_use]
+    pub fn requested(&self) -> &str {
+        self.selected.requested()
+    }
+
+    #[must_use]
+    pub const fn declared(&self) -> &'a str {
+        self.selected.declared()
+    }
+
+    #[must_use]
+    pub fn validate(&self, value: &Value) -> Vec<ValidationIssue> {
+        self.selected
+            .schema()
+            .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
+    }
+}
+
+/// A request-body plan bound to the shared schema catalog that owns its roots.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundRequestBody<'a> {
+    plan: &'a RequestBodyPlan,
+    schemas: &'a SchemaCatalog,
+}
+
+impl<'a> BoundRequestBody<'a> {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(plan: &'a RequestBodyPlan, schemas: &'a SchemaCatalog) -> Self {
+        Self { plan, schemas }
+    }
+
+    #[must_use]
+    pub const fn is_required(&self) -> bool {
+        self.plan.is_required()
+    }
+
+    pub fn media_types(&self) -> impl Iterator<Item = &str> {
+        self.plan.media_types()
+    }
+
+    #[must_use]
+    pub fn select(&self, content_type: &str) -> Option<BoundMediaType<'a>> {
+        self.plan
+            .select(content_type)
+            .map(|selected| BoundMediaType {
+                selected,
+                schemas: self.schemas,
+            })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        self.plan.is_well_formed(self.schemas)
+    }
+}
+
+fn valid_id(id: SchemaId, length: usize) -> bool {
+    usize::try_from(id).is_ok_and(|id| id < length)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct SchemaNode {
+    #[serde(rename = "a", skip_serializing_if = "Option::is_none")]
+    allowed: Option<bool>,
+    #[serde(rename = "t", skip_serializing_if = "BTreeSet::is_empty")]
+    types: BTreeSet<JsonType>,
+    #[serde(rename = "e", skip_serializing_if = "Option::is_none")]
+    enum_values: Option<Vec<Value>>,
+    #[serde(rename = "c", skip_serializing_if = "Option::is_none")]
+    const_value: Option<Value>,
+    #[serde(rename = "p", skip_serializing_if = "BTreeMap::is_empty")]
+    properties: BTreeMap<String, SchemaId>,
+    #[serde(rename = "r", skip_serializing_if = "BTreeSet::is_empty")]
+    required: BTreeSet<String>,
+    #[serde(rename = "x", skip_serializing_if = "additional_is_allow")]
+    additional: AdditionalProperties,
+    #[serde(rename = "i", skip_serializing_if = "Option::is_none")]
+    items: Option<SchemaId>,
+    #[serde(rename = "l", skip_serializing_if = "Vec::is_empty")]
+    all_of: Vec<SchemaId>,
+    #[serde(rename = "y", skip_serializing_if = "Vec::is_empty")]
+    any_of: Vec<SchemaId>,
+    #[serde(rename = "o", skip_serializing_if = "Vec::is_empty")]
+    one_of: Vec<SchemaId>,
+    #[serde(rename = "n", skip_serializing_if = "Option::is_none")]
+    not: Option<SchemaId>,
+    #[serde(rename = "m", skip_serializing_if = "Option::is_none")]
+    minimum: Option<NumberBound>,
+    #[serde(rename = "M", skip_serializing_if = "Option::is_none")]
+    maximum: Option<NumberBound>,
+    #[serde(rename = "d", skip_serializing_if = "Option::is_none")]
+    multiple_of: Option<f64>,
+    #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
+    min_length: Option<usize>,
+    #[serde(rename = "S", skip_serializing_if = "Option::is_none")]
+    max_length: Option<usize>,
+    #[serde(rename = "q", skip_serializing_if = "Option::is_none")]
+    min_items: Option<usize>,
+    #[serde(rename = "Q", skip_serializing_if = "Option::is_none")]
+    max_items: Option<usize>,
+    #[serde(rename = "u", skip_serializing_if = "is_false")]
+    unique_items: bool,
+    #[serde(rename = "z", skip_serializing_if = "Option::is_none")]
+    min_properties: Option<usize>,
+    #[serde(rename = "Z", skip_serializing_if = "Option::is_none")]
+    max_properties: Option<usize>,
+}
+
+impl Default for SchemaNode {
+    fn default() -> Self {
+        Self {
+            allowed: None,
+            types: BTreeSet::new(),
+            enum_values: None,
+            const_value: None,
+            properties: BTreeMap::new(),
+            required: BTreeSet::new(),
+            additional: AdditionalProperties::Allow,
+            items: None,
+            all_of: Vec::new(),
+            any_of: Vec::new(),
+            one_of: Vec::new(),
+            not: None,
+            minimum: None,
+            maximum: None,
+            multiple_of: None,
+            min_length: None,
+            max_length: None,
+            min_items: None,
+            max_items: None,
+            unique_items: false,
+            min_properties: None,
+            max_properties: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+enum JsonType {
+    Null,
+    Boolean,
+    Object,
+    Array,
+    Number,
+    Integer,
+    String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+struct NumberBound {
+    value: f64,
+    exclusive: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+enum AdditionalProperties {
+    #[default]
+    Allow,
+    Deny,
+    Schema(SchemaId),
+}
+
+fn additional_is_allow(value: &AdditionalProperties) -> bool {
+    *value == AdditionalProperties::Allow
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
+}

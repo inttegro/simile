@@ -4,6 +4,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("could not compile a request schema: {0}")]
+    Schema(#[from] simile_schema::CompileError),
+
     #[error("could not encode the compiled artifact: {0}")]
     Encode(String),
 

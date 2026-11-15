@@ -139,6 +139,18 @@ pub struct ResponseContract {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MediaTypeContract {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RequestBodyContract {
+    pub required: bool,
+    pub content: BTreeMap<String, MediaTypeContract>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     pub key: OperationKey,
@@ -150,6 +162,8 @@ pub struct Operation {
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<RequestBodyContract>,
     pub responses: Vec<ResponseContract>,
 }
 
@@ -168,6 +182,8 @@ pub struct ApiContract {
     pub openapi: OpenApiVersion,
     pub info: ServiceInfo,
     pub operations: BTreeMap<OperationKey, Operation>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub schemas: BTreeMap<String, Value>,
 }
 
 impl ApiContract {
