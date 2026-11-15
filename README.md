@@ -36,8 +36,10 @@ parse behavior modules written in HCL, compile both into one validated service m
 versioned `.similec` runtime artifact. Request and response schemas are compiled into the artifact.
 The runtime can validate JSON requests, synthesize valid JSON requests, and synthesize valid JSON
 responses either from the contract alone or with compatible values projected from a validated
-request. HTTP serving, state, and asynchronous execution remain subsequent runtime layers; the
-current CLI does not yet serve the compiled service.
+request. A protocol-neutral runtime coordinates request validation, response synthesis,
+and the declared asynchronous work for one operation. HTTP serving, state, and asynchronous
+resource execution remain subsequent runtime layers; the current CLI does not yet serve the
+compiled service.
 
 The available foundation commands are:
 
@@ -57,7 +59,8 @@ ordered before encoding, so identical compiler input produces identical artifact
 [compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
 The supported request-validation boundary is documented in
 [request validation](docs/request-validation.md). Response selection and synthesis are documented
-in [response synthesis](docs/response-synthesis.md).
+in [response synthesis](docs/response-synthesis.md). The transport-independent execution boundary
+is documented in [operation execution](docs/operation-execution.md).
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile will derive its
 default deterministic behavior from the OpenAPI operation. HCL is used only when a provider needs
@@ -95,8 +98,8 @@ Simile follows a pipeline of narrow ownership boundaries:
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
 - `simile-runtime` loads an operation from an artifact, applies HTTP body semantics, validates
-  requests, synthesizes responses, and reports protocol or schema failures without depending on
-  source formats.
+  requests, synthesizes responses, plans declared asynchronous work, and reports protocol or
+  schema failures without depending on source formats or a server framework.
 - `simile-spec` contains only the version-neutral model shared by compilation units.
 - Files under `commands/` are thin adapters. Behaviour belongs under `ops/`.
 - Human output goes to stdout, diagnostics go to stderr, and JSON never contains ANSI colour.

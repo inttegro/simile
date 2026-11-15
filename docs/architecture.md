@@ -119,6 +119,13 @@ back through its compiled validator. Missing bodies, undeclared media types, mal
 schema violations, and exhausted synthesis remain distinct errors so a future HTTP adapter can map
 them deliberately.
 
+`Runtime::execute` is the protocol-neutral coordination boundary. It validates the incoming
+body, supplies the validated value to request-aware response synthesis, and returns both the
+immediate response and a plan of the HCL-declared asynchronous operations and abstract resources.
+It does not listen on a socket or execute those resources. A future HTTP adapter will own route
+matching, wire limits, and response writing, then delegate the selected operation to this runtime.
+See [operation execution](operation-execution.md).
+
 ## Invariants
 
 - OpenAPI remains the single source of truth for the HTTP wire contract.
@@ -146,7 +153,7 @@ them deliberately.
 ## Deliberate next boundaries
 
 The current compiler establishes source ownership, cross-source validation, a runtime artifact
-boundary, compiled JSON request validation, deterministic request synthesis, and deterministic
-request-aware response synthesis. Subsequent slices can add form and multipart codecs, parameter
-validation, state actions, scenario inputs, and executable asynchronous instructions without
-collapsing these boundaries.
+boundary, compiled JSON request validation, deterministic request synthesis, deterministic
+request-aware response synthesis, and protocol-neutral operation coordination. Subsequent slices
+can add form and multipart codecs, parameter validation, state actions, scenario inputs,
+executable asynchronous instructions, and HTTP serving without collapsing these boundaries.

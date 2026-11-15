@@ -64,6 +64,10 @@ pub struct ArtifactOperation<'a> {
     request_body: Option<&'a RequestBodyPlan>,
     responses: &'a [ResponseRecord],
     behavior_response_status: Option<u16>,
+    triggers: &'a [AsyncId],
+    strings: &'a [String],
+    resources: &'a [ResourceRecord],
+    async_operations: &'a [AsyncRecord],
     schemas: &'a SchemaCatalog,
 }
 
@@ -72,6 +76,22 @@ pub struct ArtifactOperation<'a> {
 pub struct ArtifactResponse<'a> {
     status: ResponseStatus,
     body: Option<BoundResponseBody<'a>>,
+}
+
+/// One asynchronous operation triggered by a compiled behavior.
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactAsyncOperation<'a> {
+    name: &'a str,
+    uses: &'a [ResourceId],
+    strings: &'a [String],
+    resources: &'a [ResourceRecord],
+}
+
+/// One abstract resource used by an asynchronous operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArtifactResource<'a> {
+    kind: ResourceKind,
+    name: &'a str,
 }
 
 impl<'a> ArtifactOperation<'a> {
@@ -100,6 +120,22 @@ impl<'a> ArtifactOperation<'a> {
     pub const fn behavior_response_status(&self) -> Option<u16> {
         self.behavior_response_status
     }
+
+    /// Return the asynchronous operations attached to this operation's behavior.
+    pub fn triggers(&self) -> impl Iterator<Item = ArtifactAsyncOperation<'a>> + 'a {
+        let operations = self.async_operations;
+        let resources = self.resources;
+        let strings = self.strings;
+        self.triggers.iter().map(move |id| {
+            let operation = &operations[*id as usize];
+            ArtifactAsyncOperation {
+                name: &strings[operation.0 as usize],
+                uses: &operation.1,
+                strings,
+                resources,
+            }
+        })
+    }
 }
 
 impl<'a> ArtifactResponse<'a> {
@@ -111,6 +147,43 @@ impl<'a> ArtifactResponse<'a> {
     #[must_use]
     pub const fn body(&self) -> Option<BoundResponseBody<'a>> {
         self.body
+    }
+}
+
+impl<'a> ArtifactAsyncOperation<'a> {
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// Return the abstract resources declared by this asynchronous operation.
+    pub fn resources(&self) -> impl Iterator<Item = ArtifactResource<'a>> + 'a {
+        let resources = self.resources;
+        let strings = self.strings;
+        self.uses.iter().map(move |id| {
+            let resource = &resources[*id as usize];
+            ArtifactResource {
+                kind: decode_resource_kind(resource.0),
+                name: &strings[resource.1 as usize],
+            }
+        })
+    }
+}
+
+impl<'a> ArtifactResource<'a> {
+    #[must_use]
+    pub const fn kind(&self) -> ResourceKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    #[must_use]
+    pub fn reference(&self) -> ResourceRef {
+        ResourceRef::new(self.kind, self.name)
     }
 }
 
@@ -167,6 +240,13 @@ impl Artifact {
                     request_body: operation.6.as_ref(),
                     responses: &operation.7,
                     behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
+                    triggers: operation
+                        .9
+                        .as_ref()
+                        .map_or(&[], |behavior| behavior.1.as_slice()),
+                    strings: &self.payload.1,
+                    resources: &self.payload.5,
+                    async_operations: &self.payload.6,
                     schemas: &self.payload.7,
                 }
             })
@@ -855,6 +935,20 @@ const fn encode_resource_kind(kind: ResourceKind) -> u8 {
         ResourceKind::EventBus => 5,
         ResourceKind::Scheduler => 6,
         ResourceKind::Http => 7,
+    }
+}
+
+fn decode_resource_kind(kind: u8) -> ResourceKind {
+    match kind {
+        0 => ResourceKind::Db,
+        1 => ResourceKind::Cache,
+        2 => ResourceKind::Queue,
+        3 => ResourceKind::Mail,
+        4 => ResourceKind::ObjectStore,
+        5 => ResourceKind::EventBus,
+        6 => ResourceKind::Scheduler,
+        7 => ResourceKind::Http,
+        _ => unreachable!("artifact validation rejects unknown resource kinds"),
     }
 }
 

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod operation;
 mod response;
 
 use serde_json::Value;
@@ -7,6 +8,9 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
+pub use operation::{
+    ExecutionOptions, OperationCall, OperationOutcome, PlannedAsyncOperation, Runtime,
+};
 pub use response::{ResponseSynthesisRequest, SynthesizedResponse, synthesize_response};
 
 pub type Result<T> = std::result::Result<T, Error>;
