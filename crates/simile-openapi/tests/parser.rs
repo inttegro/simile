@@ -67,6 +67,9 @@ components:
       required: true
       content:
         application/json:
+          examples:
+            minimal:
+              value: { customerId: cus_123 }
           schema:
             $ref: '#/components/schemas/OrderInput'
   schemas:
@@ -87,6 +90,10 @@ components:
     assert_eq!(
         request.content["application/json"].schema,
         Some(serde_json::json!({"$ref": "#/components/schemas/OrderInput"}))
+    );
+    assert_eq!(
+        request.content["application/json"].example,
+        Some(serde_json::json!({"customerId": "cus_123"}))
     );
     assert_eq!(contract.schemas["OrderInput"]["type"], "object");
 }

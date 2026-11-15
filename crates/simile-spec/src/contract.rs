@@ -142,6 +142,8 @@ pub struct ResponseContract {
 pub struct MediaTypeContract {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

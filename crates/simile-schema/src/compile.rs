@@ -40,7 +40,13 @@ impl<'a> RequestSchemaCompiler<'a> {
                             .map(SchemaRef)
                     })
                     .transpose()?;
-                Ok((media_type.to_ascii_lowercase(), MediaTypePlan { schema }))
+                Ok((
+                    media_type.to_ascii_lowercase(),
+                    MediaTypePlan {
+                        schema,
+                        example: contract.example.clone(),
+                    },
+                ))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         Ok(RequestBodyPlan {
@@ -158,6 +164,7 @@ impl<'a> RequestSchemaCompiler<'a> {
             types,
             enum_values: optional_array(schema, "enum", field)?.cloned(),
             const_value: schema.get("const").cloned(),
+            hint: schema_hint(schema),
             properties: self.properties(schema, field)?,
             required: request_required(schema, field)?,
             additional: self.additional_properties(schema, field)?,
@@ -336,6 +343,19 @@ fn optional_array<'a>(
             })
         })
         .transpose()
+}
+
+fn schema_hint(schema: &Map<String, Value>) -> Option<Value> {
+    schema
+        .get("example")
+        .cloned()
+        .or_else(|| {
+            schema
+                .get("examples")
+                .and_then(Value::as_array)
+                .and_then(|examples| examples.first().cloned())
+        })
+        .or_else(|| schema.get("default").cloned())
 }
 
 fn string_set(object: &Map<String, Value>, name: &str, field: &str) -> Result<BTreeSet<String>> {

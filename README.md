@@ -33,9 +33,9 @@ Read the [service charter](CHARTER.md) for the product boundary and design princ
 
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
 parse behavior modules written in HCL, compile both into one validated service model, and emit a
-versioned `.similec` runtime artifact. Request-body schemas are compiled into the artifact and the
-first runtime primitive can decode JSON requests and return structured JSON-pointer validation
-errors. HTTP serving, response synthesis, state, and asynchronous execution remain subsequent
+versioned `.similec` runtime artifact. Request-body schemas are compiled into the artifact, and the
+runtime can validate JSON requests or deterministically synthesize a valid JSON request for an
+operation. HTTP serving, response synthesis, state, and asynchronous execution remain subsequent
 runtime layers; the current CLI does not yet serve the compiled service.
 
 The available foundation commands are:

@@ -1,7 +1,9 @@
 use serde_json::json;
 use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
-use simile_runtime::{Error, IncomingBody, validate_request_body};
+use simile_runtime::{
+    Error, IncomingBody, SynthesisRequest, synthesize_request_body, validate_request_body,
+};
 
 #[test]
 fn validates_nested_json_and_returns_structured_paths() {
@@ -78,6 +80,49 @@ fn distinguishes_protocol_and_schema_failures() {
     ));
 }
 
+#[test]
+fn synthesizes_a_body_that_round_trips_through_validation() {
+    let artifact = artifact();
+    let body = synthesize_request_body(
+        &artifact,
+        SynthesisRequest {
+            operation: "POST /orders",
+            content_type: None,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(body.media_type(), "application/json");
+    assert_eq!(body.value()["customer"]["email"], "example");
+    assert_eq!(body.value()["items"][0]["quantity"], 1.0);
+    let validated = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /orders",
+            content_type: Some(body.media_type()),
+            bytes: body.bytes(),
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("synthesized body should be present"));
+    assert_eq!(validated.value(), body.value());
+}
+
+#[test]
+fn prefers_a_valid_declared_media_example() {
+    let artifact = artifact_with_example();
+    let body = synthesize_request_body(
+        &artifact,
+        SynthesisRequest {
+            operation: "POST /messages",
+            content_type: Some("application/json"),
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(body.value(), &json!({"text": "hello"}));
+}
+
 fn artifact() -> simile_artifact::Artifact {
     let source = r#"
 openapi: 3.1.2
@@ -135,4 +180,35 @@ components:
     );
     assert_eq!(json!(artifact.summary().operations), json!(1));
     artifact
+}
+
+fn artifact_with_example() -> simile_artifact::Artifact {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Messages, version: 1.0.0 }
+paths:
+  /messages:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { text: hello }
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1 }
+      responses:
+        "201": { description: Created }
+"#;
+    let service = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("messages.yaml", source),
+            behaviors: Vec::new(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"))
 }

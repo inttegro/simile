@@ -3,7 +3,7 @@
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
 
-## Envelope version 2
+## Envelope version 3
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -11,7 +11,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 2 |
+| 10 | 2 | unsigned big-endian flags; zero in version 3 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -22,14 +22,14 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 2 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 3 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
 3. service metadata;
 4. operations in stable operation-key order;
 5. an indexed value arena used by response definitions;
-6. resources in stable resource-reference order; and
+6. resources in stable resource-reference order;
 7. asynchronous operations in stable name order; and
 8. one shared request-schema catalog.
 
@@ -39,14 +39,16 @@ those records point directly to abstract resources. The runtime does not repeate
 allocate names to follow those edges.
 
 Each operation embeds a compact request-body plan containing its declared media types and schema
-root identifiers. Those roots point into the shared catalog, where component schemas are compiled
-once and recursive references remain graph edges. The catalog contains only the constraints needed
-by request validation. The runtime therefore validates a request without parsing OpenAPI,
+root identifiers and an optional declared media example. Those roots point into the shared catalog,
+where component schemas are compiled once and recursive references remain graph edges. The catalog
+contains request constraints plus compact example and default hints used by deterministic request
+synthesis. The runtime therefore validates or synthesizes a request without parsing OpenAPI,
 interpreting arbitrary source JSON, or copying common schemas into every operation.
 
-JSON values retained from an OpenAPI source are lowered into tagged value nodes: null, boolean,
-signed integer, unsigned integer, floating point, string identifier, child-node array, or sorted
-object fields. The original JSON text and object-key repetition are not stored in the artifact.
+Response-definition JSON retained from an OpenAPI source is lowered into tagged value nodes: null,
+boolean, signed integer, unsigned integer, floating point, string identifier, child-node array, or
+sorted object fields. Schema and media synthesis hints are encoded as CBOR values inside their
+catalog records. The original JSON text is never stored in the artifact.
 
 ## Determinism and compatibility
 

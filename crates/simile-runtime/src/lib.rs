@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use simile_artifact::Artifact;
-use simile_schema::ValidationIssue;
+use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -13,6 +13,43 @@ pub struct IncomingBody<'a> {
     pub operation: &'a str,
     pub content_type: Option<&'a str>,
     pub bytes: &'a [u8],
+}
+
+/// Selects an operation and, optionally, one of its declared request media types.
+#[derive(Clone, Copy, Debug)]
+pub struct SynthesisRequest<'a> {
+    pub operation: &'a str,
+    pub content_type: Option<&'a str>,
+}
+
+/// A deterministic request body synthesized from a compiled OpenAPI contract.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SynthesizedBody {
+    media_type: String,
+    bytes: Vec<u8>,
+    value: Value,
+}
+
+impl SynthesizedBody {
+    #[must_use]
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &Value {
+        &self.value
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, Vec<u8>, Value) {
+        (self.media_type, self.bytes, self.value)
+    }
 }
 
 /// A body that has been decoded and checked against its compiled OpenAPI schema.
@@ -64,6 +101,21 @@ pub enum Error {
 
     #[error("Content-Type `{content_type}` does not yet have a request decoder")]
     UnsupportedEncoding { content_type: String },
+
+    #[error("operation `{operation}` has no declared JSON media type to synthesize")]
+    NoSynthesisMediaType {
+        operation: String,
+        expected: Vec<String>,
+    },
+
+    #[error("could not synthesize a request body: {source}")]
+    Synthesis {
+        #[source]
+        source: SynthesisError,
+    },
+
+    #[error("could not encode a synthesized JSON request body: {message}")]
+    EncodeJson { message: String },
 
     #[error("request body is not valid JSON at line {line}, column {column}: {message}")]
     MalformedJson {
@@ -141,6 +193,72 @@ pub fn validate_request_body(
         media_type: selected.requested().to_owned(),
         value,
     }))
+}
+
+/// Synthesize a deterministic JSON body and verify it against the same compiled request schema.
+pub fn synthesize_request_body(
+    artifact: &Artifact,
+    request: SynthesisRequest<'_>,
+) -> Result<SynthesizedBody> {
+    let operation =
+        artifact
+            .operation(request.operation)
+            .ok_or_else(|| Error::UnknownOperation {
+                operation: request.operation.to_owned(),
+            })?;
+    let plan = operation
+        .request_body()
+        .ok_or_else(|| Error::BodyNotDeclared {
+            operation: request.operation.to_owned(),
+        })?;
+    let content_type = request
+        .content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| preferred_json_media_type(&plan));
+    let content_type = content_type.ok_or_else(|| Error::NoSynthesisMediaType {
+        operation: request.operation.to_owned(),
+        expected: plan.media_types().map(str::to_owned).collect(),
+    })?;
+    let selected = plan
+        .select(&content_type)
+        .ok_or_else(|| Error::UnsupportedMediaType {
+            operation: request.operation.to_owned(),
+            content_type: content_type.clone(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        })?;
+    if !is_json(selected.requested()) {
+        return Err(Error::UnsupportedEncoding {
+            content_type: selected.requested().to_owned(),
+        });
+    }
+    let value = selected
+        .synthesize()
+        .map_err(|source| Error::Synthesis { source })?;
+    let issues = selected.validate(&value);
+    if !issues.is_empty() {
+        return Err(Error::InvalidBody { issues });
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|error| Error::EncodeJson {
+        message: error.to_string(),
+    })?;
+    Ok(SynthesizedBody {
+        media_type: selected.requested().to_owned(),
+        bytes,
+        value,
+    })
+}
+
+fn preferred_json_media_type(plan: &simile_schema::BoundRequestBody<'_>) -> Option<String> {
+    plan.media_types()
+        .find(|media_type| is_json(media_type))
+        .map(str::to_owned)
+        .or_else(|| {
+            plan.media_types()
+                .any(|media_type| media_type == "application/*" || media_type == "*/*")
+                .then(|| "application/json".to_owned())
+        })
 }
 
 fn is_json(media_type: &str) -> bool {

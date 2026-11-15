@@ -2,6 +2,7 @@
 
 mod compile;
 mod error;
+mod synthesize;
 mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +11,7 @@ pub use compile::RequestSchemaCompiler;
 pub use error::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use synthesize::SynthesisError;
 pub use validate::{ValidationIssue, ValidationRule};
 
 type SchemaId = u32;
@@ -58,6 +60,7 @@ impl RequestBodyPlan {
                 requested: essence,
                 declared,
                 schema: plan.schema,
+                example: plan.example.as_ref(),
             })
     }
 
@@ -74,9 +77,11 @@ impl RequestBodyPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
 struct MediaTypePlan {
+    #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
     schema: Option<SchemaRef>,
+    #[serde(rename = "e", skip_serializing_if = "Option::is_none")]
+    example: Option<Value>,
 }
 
 /// The declared media type and optional schema selected for an incoming body.
@@ -85,6 +90,7 @@ pub struct SelectedMediaType<'a> {
     requested: String,
     declared: &'a str,
     schema: Option<SchemaRef>,
+    example: Option<&'a Value>,
 }
 
 impl<'a> SelectedMediaType<'a> {
@@ -174,6 +180,19 @@ impl<'a> BoundMediaType<'a> {
             .schema()
             .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
     }
+
+    /// Produce a deterministic JSON value accepted by this media type's schema.
+    pub fn synthesize(&self) -> std::result::Result<Value, SynthesisError> {
+        if let Some(example) = self.selected.example {
+            if self.validate(example).is_empty() {
+                return Ok(example.clone());
+            }
+        }
+        self.selected.schema().map_or_else(
+            || Ok(Value::Object(serde_json::Map::new())),
+            |schema| self.schemas.synthesize(schema),
+        )
+    }
 }
 
 /// A request-body plan bound to the shared schema catalog that owns its roots.
@@ -231,6 +250,8 @@ struct SchemaNode {
     enum_values: Option<Vec<Value>>,
     #[serde(rename = "c", skip_serializing_if = "Option::is_none")]
     const_value: Option<Value>,
+    #[serde(rename = "h", skip_serializing_if = "Option::is_none")]
+    hint: Option<Value>,
     #[serde(rename = "p", skip_serializing_if = "BTreeMap::is_empty")]
     properties: BTreeMap<String, SchemaId>,
     #[serde(rename = "r", skip_serializing_if = "BTreeSet::is_empty")]
@@ -276,6 +297,7 @@ impl Default for SchemaNode {
             types: BTreeSet::new(),
             enum_values: None,
             const_value: None,
+            hint: None,
             properties: BTreeMap::new(),
             required: BTreeSet::new(),
             additional: AdditionalProperties::Allow,

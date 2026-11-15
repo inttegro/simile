@@ -108,11 +108,12 @@ compiled graph; the runtime never interprets source schema fragments. See
 
 ### Runtime primitives: `simile-runtime`
 
-`simile-runtime` reads only validated artifact records. Its request-body entry point locates an
-operation by stable method/path key, enforces whether a body is allowed or required, negotiates the
-declared media type, decodes JSON, and applies the compiled schema. Missing bodies, undeclared
-media types, malformed payloads, and schema violations remain distinct errors so a future HTTP
-adapter can map them deliberately.
+`simile-runtime` reads only validated artifact records. Its request-body entry points locate an
+operation by stable method/path key and negotiate the declared media type. Validation decodes JSON
+and applies the compiled schema. Synthesis selects a valid declared example or constructs a bounded,
+deterministic candidate and sends it back through the same validator. Missing bodies, undeclared
+media types, malformed payloads, schema violations, and exhausted synthesis remain distinct errors
+so a future HTTP adapter can map them deliberately.
 
 ## Invariants
 
@@ -132,11 +133,12 @@ adapter can map them deliberately.
   truncated files, and trailing bytes.
 - Request validation never reparses OpenAPI or follows a source reference at runtime.
 - Validation issues use stable JSON Pointer paths and named rules.
+- Request synthesis never returns a candidate that fails the compiled request validator.
 
 ## Deliberate next boundaries
 
 The current compiler establishes source ownership, cross-source validation, a runtime artifact
-boundary, and compiled JSON request validation. Subsequent slices can add form and multipart
-decoders, parameter validation, example selection, deterministic response generation, state
-actions, scenario inputs, and executable asynchronous instructions without collapsing these
+boundary, compiled JSON request validation, and deterministic JSON request synthesis. Subsequent
+slices can add form and multipart codecs, parameter validation, deterministic response generation,
+state actions, scenario inputs, and executable asynchronous instructions without collapsing these
 boundaries.

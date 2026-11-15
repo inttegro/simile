@@ -21,9 +21,17 @@ undeclared media type is not a schema error; and malformed JSON has a source lin
 Schema failures contain a bounded list of issues with a JSON Pointer `path`, a stable `rule`, and a
 human-readable `message`.
 
+The same compiled graph can synthesize a deterministic request body. Simile prefers a valid media
+example, schema example or default, constant, or enum value before constructing the smallest finite
+value that satisfies required properties, item counts, scalar bounds, and combinators. Synthesis is
+bounded, reports when it cannot find a valid finite value, and always validates the candidate through
+the normal request validator before returning bytes to a caller.
+
 Form URL encoding, multipart bodies, and non-JSON codecs are not decoded yet. If their media type
 is declared, the runtime reports an unsupported decoder rather than claiming that the body was
 validated.
+
+JSON synthesis selects a declared JSON media type unless the caller requests one explicitly.
 
 ## Compiled schema support
 

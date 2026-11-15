@@ -192,6 +192,7 @@ fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestB
                 media_type.to_ascii_lowercase(),
                 MediaTypeContract {
                     schema: definition.get("schema").cloned(),
+                    example: media_example(definition),
                 },
             ))
         })
@@ -199,6 +200,19 @@ fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestB
     Ok(RequestBodyContract {
         required: is_required,
         content,
+    })
+}
+
+fn media_example(definition: &Map<String, Value>) -> Option<Value> {
+    definition.get("example").cloned().or_else(|| {
+        definition
+            .get("examples")
+            .and_then(Value::as_object)
+            .and_then(|examples| {
+                examples
+                    .values()
+                    .find_map(|example| example.get("value").cloned())
+            })
     })
 }
 
