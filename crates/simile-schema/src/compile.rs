@@ -210,6 +210,7 @@ impl<'a> BodySchemaCompiler<'a> {
             enum_values: optional_array(schema, "enum", field)?.cloned(),
             const_value: schema.get("const").cloned(),
             hint: schema_hint(schema),
+            format: optional_string(schema, "format", field)?.map(str::to_owned),
             properties: self.properties(schema, field, direction)?,
             required: self.direction_required(schema, field, direction)?,
             additional: self.additional_properties(schema, field, direction)?,
@@ -500,6 +501,22 @@ fn optional_bool(object: &Map<String, Value>, name: &str, field: &str) -> Result
             value.as_bool().ok_or_else(|| CompileError::InvalidField {
                 field: format!("{field}.{name}"),
                 expected: "a boolean",
+            })
+        })
+        .transpose()
+}
+
+fn optional_string<'a>(
+    object: &'a Map<String, Value>,
+    name: &str,
+    field: &str,
+) -> Result<Option<&'a str>> {
+    object
+        .get(name)
+        .map(|value| {
+            value.as_str().ok_or_else(|| CompileError::InvalidField {
+                field: format!("{field}.{name}"),
+                expected: "a string",
             })
         })
         .transpose()

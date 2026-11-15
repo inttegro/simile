@@ -357,6 +357,9 @@ fn candidate_types(node: &SchemaNode) -> Vec<JsonType> {
 }
 
 fn string(node: &SchemaNode, variant: usize) -> Option<String> {
+    if let Some(value) = node.format.as_deref().and_then(formatted_string) {
+        return Some(value.to_owned());
+    }
     let minimum = node.min_length.unwrap_or(0);
     let maximum = node.max_length.unwrap_or(usize::MAX);
     if minimum > maximum {
@@ -409,7 +412,45 @@ fn number(node: &SchemaNode, variant: usize, integer: bool) -> Option<Value> {
     {
         return None;
     }
-    Number::from_f64(value).map(Value::Number)
+    if integer {
+        integer_number(value).map(Value::Number)
+    } else {
+        Number::from_f64(value).map(Value::Number)
+    }
+}
+
+fn integer_number(value: f64) -> Option<Number> {
+    if value >= 0.0 {
+        let integer = value as u64;
+        ((integer as f64) == value).then(|| Number::from(integer))
+    } else {
+        let integer = value as i64;
+        ((integer as f64) == value).then(|| Number::from(integer))
+    }
+}
+
+fn formatted_string(format: &str) -> Option<&'static str> {
+    match format {
+        "date" => Some("1970-01-01"),
+        "date-time" => Some("1970-01-01T00:00:00Z"),
+        "time" => Some("00:00:00Z"),
+        "duration" => Some("PT0S"),
+        "email" | "idn-email" => Some("user@example.com"),
+        "hostname" | "idn-hostname" => Some("example.com"),
+        "ipv4" => Some("192.0.2.1"),
+        "ipv6" => Some("2001:db8::1"),
+        "uuid" => Some("00000000-0000-0000-0000-000000000000"),
+        "uri" | "uri-reference" | "iri" | "iri-reference" => Some("https://example.com/"),
+        "uri-template" => Some("https://example.com/{id}"),
+        "json-pointer" => Some("/example"),
+        "relative-json-pointer" => Some("0"),
+        "regex" => Some(".*"),
+        "byte" => Some("AA=="),
+        "binary" | "password" => Some("example"),
+        "currency" => Some("usd"),
+        "decimal" => Some("0"),
+        _ => None,
+    }
 }
 
 fn merge_objects(mut seed: Value, values: &[Value]) -> Option<Value> {

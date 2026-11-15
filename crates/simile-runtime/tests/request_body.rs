@@ -94,7 +94,7 @@ fn synthesizes_a_body_that_round_trips_through_validation() {
 
     assert_eq!(body.media_type(), "application/json");
     assert_eq!(body.value()["customer"]["email"], "example");
-    assert_eq!(body.value()["items"][0]["quantity"], 1.0);
+    assert_eq!(body.value()["items"][0]["quantity"], 1);
     let validated = validate_request_body(
         &artifact,
         IncomingBody {

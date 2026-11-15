@@ -333,6 +333,8 @@ struct SchemaNode {
     const_value: Option<Value>,
     #[serde(rename = "h", skip_serializing_if = "Option::is_none")]
     hint: Option<Value>,
+    #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
     #[serde(rename = "p", skip_serializing_if = "BTreeMap::is_empty")]
     properties: BTreeMap<String, SchemaId>,
     #[serde(rename = "r", skip_serializing_if = "BTreeSet::is_empty")]
@@ -379,6 +381,7 @@ impl Default for SchemaNode {
             enum_values: None,
             const_value: None,
             hint: None,
+            format: None,
             properties: BTreeMap::new(),
             required: BTreeSet::new(),
             additional: AdditionalProperties::Allow,

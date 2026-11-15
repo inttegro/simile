@@ -40,6 +40,52 @@ fn synthesizes_a_valid_response_without_request_context() {
 }
 
 #[test]
+fn preserves_explicit_formats_in_the_compiled_artifact() {
+    let openapi = r#"
+openapi: 3.0.0
+info: { title: Events, version: 1.0.0 }
+paths:
+  /events:
+    post:
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [created, available_at, note]
+                properties:
+                  created:
+                    type: integer
+                    format: unix-time
+                    description: Seconds since the Unix epoch
+                  available_at: { type: string, format: date-time }
+                  note:
+                    type: string
+                    description: An email address
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let response = synthesize_response(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /events",
+            status: None,
+            content_type: None,
+            request_body: None,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let value = response
+        .value()
+        .unwrap_or_else(|| panic!("response body should be present"));
+
+    assert_eq!(value["created"], 0);
+    assert_eq!(value["available_at"], "1970-01-01T00:00:00Z");
+    assert_eq!(value["note"], "example");
+}
+
+#[test]
 fn carries_compatible_request_values_into_the_response() {
     let artifact = artifact();
     let request = validate_request_body(

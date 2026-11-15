@@ -319,7 +319,56 @@ fn synthesizes_nested_required_values_and_combinators() {
 
     let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(value["customer"]["email"], "example");
-    assert_eq!(value["quantity"], 2.0);
+    assert_eq!(value["quantity"], 2);
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
+fn synthesizes_explicit_formats_without_reading_descriptions() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": [
+                "created",
+                "available_at",
+                "currency",
+                "decimal",
+                "email",
+                "identifier",
+                "description_only"
+            ],
+            "properties": {
+                "created": {
+                    "type": "integer",
+                    "format": "unix-time",
+                    "description": "Seconds since the Unix epoch"
+                },
+                "available_at": {"type": "string", "format": "date-time"},
+                "currency": {"type": "string", "format": "currency"},
+                "decimal": {"type": "string", "format": "decimal"},
+                "email": {"type": "string", "format": "email"},
+                "identifier": {"type": "string", "format": "uuid"},
+                "description_only": {
+                    "type": "string",
+                    "description": "An email address"
+                }
+            }
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(value["created"], 0);
+    assert_eq!(value["available_at"], "1970-01-01T00:00:00Z");
+    assert_eq!(value["currency"], "usd");
+    assert_eq!(value["decimal"], "0");
+    assert_eq!(value["email"], "user@example.com");
+    assert_eq!(value["identifier"], "00000000-0000-0000-0000-000000000000");
+    assert_eq!(value["description_only"], "example");
     assert!(media.validate(&value).is_empty());
 }
 

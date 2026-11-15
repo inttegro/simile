@@ -29,6 +29,10 @@ one explicitly. It prefers a valid media example, schema example or default, con
 value before constructing the smallest finite value accepted by the compiled response schema. The
 candidate is always validated again before it is encoded.
 
+Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits deterministic
+format-valid values for supported standard formats and the provider formats it understands, while
+JSON integers remain integer-shaped on the wire. It does not infer formats from descriptions.
+
 This spec-only path is the baseline and works without request context.
 
 ## Request-aware values

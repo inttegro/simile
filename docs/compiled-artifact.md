@@ -3,7 +3,7 @@
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
 
-## Envelope version 4
+## Envelope version 5
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -11,7 +11,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 4 |
+| 10 | 2 | unsigned big-endian flags; zero in version 5 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -22,7 +22,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 4 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 5 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -43,10 +43,11 @@ content. Plans contain declared media types, schema root identifiers, and option
 examples. Those roots point into the shared catalog, where component schemas are compiled once per
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
-response graphs. The catalog also contains compact schema example and default hints used by
-deterministic synthesis. The runtime therefore validates requests and synthesizes requests or
-responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common schemas
-into every operation.
+response graphs. The catalog also contains compact schema example and default hints, plus explicit
+OpenAPI `format` annotations used by deterministic synthesis. Description prose is deliberately not
+interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
+or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
+schemas into every operation.
 
 Response-definition JSON retained from an OpenAPI source is lowered into tagged value nodes: null,
 boolean, signed integer, unsigned integer, floating point, string identifier, child-node array, or
