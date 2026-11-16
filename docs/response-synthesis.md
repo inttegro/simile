@@ -1,7 +1,7 @@
 # Response synthesis
 
 Simile synthesizes responses from the compiled `.similec` artifact. It does not parse OpenAPI or
-HCL at runtime, and it does not require an incoming request to produce a schema-valid response.
+HCL at runtime, and it does not require an incoming request to produce a contract-sound response.
 
 ## Selection
 
@@ -31,7 +31,8 @@ The candidate is always validated again before it is encoded.
 
 That final validation includes compiled cross-field relationships. A response is returned only when
 the complete candidate is sound under both the supported OpenAPI schema rules and every recognized
-`x-simile-constraints` declaration. See [payload soundness](payload-soundness.md).
+`x-simile-constraints` declaration. This includes typed ordering, implication, equality, equation,
+aggregate, template, and lifecycle proofs. See [payload soundness](payload-soundness.md).
 
 Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits varying
 format-valid values for supported standard formats and the provider formats it understands, while

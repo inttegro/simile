@@ -34,12 +34,15 @@ Read the [service charter](CHARTER.md) for the product boundary and design princ
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
 parse behavior modules written in HCL, compile both into one validated service model, and emit a
 versioned `.similec` runtime artifact. Request and response schemas are compiled into the artifact.
-The runtime can validate decoded request values, synthesize varied schema-valid requests, and
-synthesize valid JSON responses either from the contract alone or with compatible values projected
-from a validated request. A protocol-neutral runtime coordinates request validation, response synthesis,
-and the declared asynchronous work for one operation. HTTP serving, state, and asynchronous
-resource execution remain subsequent runtime layers; the current CLI does not yet serve the
-compiled service. It can execute one operation directly from a local or hosted OpenAPI contract.
+The runtime can validate decoded request values, synthesize varied contract-sound requests, and
+synthesize sound JSON responses either from the contract alone or with compatible values projected
+from a validated request. Provider-authored `x-simile-constraints` can prove and construct field
+ordering, conditional implications, equality across array items, numeric equations and aggregates,
+derived string templates, and finite lifecycle snapshots. A protocol-neutral runtime coordinates request validation, response
+synthesis, and the declared asynchronous work for one operation. HTTP serving, state, and
+asynchronous resource execution remain subsequent runtime layers; the current CLI does not yet
+serve the compiled service. It can execute one operation directly from a local or hosted OpenAPI
+contract.
 
 The available foundation commands are:
 
@@ -115,7 +118,7 @@ Simile follows a pipeline of narrow ownership boundaries:
   versioned `.similec` envelope.
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
 - `simile-schema` compiles request and response schemas into portable graphs, validates decoded
-  values and cross-field relationships, and performs seeded contract-sound synthesis.
+  values and typed cross-field relationships, and performs seeded contract-sound synthesis.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
 - `simile-runtime` loads an operation from an artifact, validates normalized values independently

@@ -110,8 +110,9 @@ synthesizer delegate those responsibilities rather than implementing relation-sp
 This boundary is intentionally independent of HTTP and OpenAPI parsing. The artifact embeds the
 compiled graph; the runtime never interprets source schema fragments. See
 [request validation](request-validation.md) for the supported keywords and failure model.
-Cross-field relationships use the same graph and validator; the soundness contract and first
-ordered relationship are described in [payload soundness](payload-soundness.md).
+Cross-field relationships use the same graph and validator. Ordering, implications, equality,
+equations, aggregates, templates, and lifecycle snapshots are described in
+[payload soundness](payload-soundness.md).
 
 ### Runtime primitives: `simile-runtime`
 
@@ -153,8 +154,9 @@ See [operation execution](operation-execution.md).
 - Request synthesis never returns a candidate that fails the compiled request validator.
 - Response synthesis works without request context and never returns a body that fails the
   compiled response validator.
-- A cross-field relationship is executable only after the compiler resolves its paths and value
-  kinds; unsupported relationships fail compilation instead of becoming inert annotations.
+- A cross-field relationship is executable only after the compiler resolves its selectors, value
+  kinds, constructive witnesses, and relationship-specific graph or expression; unsupported or
+  unconstructible relationships fail compilation instead of becoming inert annotations.
 - Request-aware response synthesis only projects same-path values accepted by the response schema;
   `writeOnly` fields are absent from the response graph.
 

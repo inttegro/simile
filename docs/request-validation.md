@@ -45,8 +45,13 @@ The schema compiler supports the request constraints needed for the first runtim
 - `items`, `minItems`, `maxItems`, and `uniqueItems`;
 - `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and `multipleOf`;
 - `minLength` and `maxLength`; and
-- `allOf`, `anyOf`, `oneOf`, and `not`; and
-- numeric and RFC 3339 date-time ordering declared with `x-simile-constraints`.
+- `allOf`, `anyOf`, `oneOf`, and `not`;
+- numeric and RFC 3339 date-time ordering declared with `x-simile-constraints`;
+- conditional implications with field, membership, or path-comparison antecedents and a
+  conjunctive consequence set;
+- scalar equality across fields and array items, numeric equations, and guarded collection sums;
+  and
+- derived string templates and finite acyclic lifecycle snapshots.
 
 For request validation, a property marked `readOnly` is removed from the object's required set, as
 required read-only properties apply to responses rather than requests.
@@ -58,7 +63,7 @@ enforced. Keywords and relationships that Simile claims to support are type-chec
 compilation; malformed definitions fail the build rather than weakening those compiled constraints
 silently.
 
-See [payload soundness](payload-soundness.md) for the exact proof boundary and ordered-field
+See [payload soundness](payload-soundness.md) for the exact proof boundary and relationship
 semantics.
 
 The validation pass caps both traversal depth and reported issue count. Those bounds protect the
