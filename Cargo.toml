@@ -42,6 +42,7 @@ simile-schema = { version = "=0.1.0", path = "crates/simile-schema" }
 simile-spec = { version = "=0.1.0", path = "crates/simile-spec" }
 snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"
+time = { version = "0.3.44", features = ["parsing"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 ureq = "3.5.2"

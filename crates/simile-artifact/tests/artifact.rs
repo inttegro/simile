@@ -38,6 +38,22 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
     assert_eq!(operation.key(), "POST /orders");
     assert_eq!(operation.operation_id(), Some("createOrder"));
     assert!(artifact.operation_by_id("CreateOrder").is_none());
+
+    let request = operation
+        .request_body()
+        .and_then(|body| body.select("application/json"))
+        .unwrap_or_else(|| panic!("request body should be compiled into the artifact"));
+    assert!(
+        request
+            .validate(&json!({"customerId": "cus_1", "startsAt": 1, "endsAt": 2}))
+            .is_empty()
+    );
+    assert_eq!(
+        request.validate(&json!({"customerId": "cus_1", "startsAt": 2, "endsAt": 1}))[0]
+            .rule
+            .to_string(),
+        "ordered"
+    );
 }
 
 #[test]
@@ -128,7 +144,14 @@ fn example_service() -> CompiledService {
                     schema: Some(json!({
                         "type": "object",
                         "required": ["customerId"],
-                        "properties": {"customerId": {"type": "string"}}
+                        "properties": {
+                            "customerId": {"type": "string"},
+                            "startsAt": {"type": "integer"},
+                            "endsAt": {"type": "integer"}
+                        },
+                        "x-simile-constraints": [
+                            {"ordered": {"paths": ["/startsAt", "/endsAt"]}}
+                        ]
                     })),
                     example: None,
                 },

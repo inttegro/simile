@@ -96,7 +96,7 @@ impl SynthesizedBody {
     }
 }
 
-/// A body that has been decoded and checked against its compiled OpenAPI schema.
+/// A body proven sound against its compiled OpenAPI schema and cross-field relationships.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedBody {
     operation: String,

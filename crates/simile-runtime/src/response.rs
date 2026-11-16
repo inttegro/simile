@@ -14,7 +14,7 @@ pub struct ResponseSynthesisRequest<'a> {
     pub request_body: Option<&'a ValidatedBody>,
 }
 
-/// An HTTP response synthesized from a compiled OpenAPI contract.
+/// An HTTP response synthesized and proven sound against a compiled OpenAPI contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthesizedResponse {
     status: u16,

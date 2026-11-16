@@ -5,7 +5,7 @@ use simile_spec::{OpenApiFeature, RequestBodyContract, ResponseBodyContract};
 
 use crate::{
     AdditionalProperties, CompileError, JsonType, MediaTypePlan, NumberBound, RequestBodyPlan,
-    ResponseBodyPlan, Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
+    ResponseBodyPlan, Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef, soundness,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -20,6 +20,7 @@ pub struct BodySchemaCompiler<'a> {
     feature: OpenApiFeature,
     nodes: Vec<Option<SchemaNode>>,
     references: BTreeMap<(SchemaDirection, String), SchemaId>,
+    pending_constraints: BTreeMap<SchemaId, Vec<soundness::PendingConstraint>>,
 }
 
 impl<'a> BodySchemaCompiler<'a> {
@@ -30,6 +31,7 @@ impl<'a> BodySchemaCompiler<'a> {
             feature,
             nodes: Vec::new(),
             references: BTreeMap::new(),
+            pending_constraints: BTreeMap::new(),
         }
     }
 
@@ -82,7 +84,19 @@ impl<'a> BodySchemaCompiler<'a> {
             .into_iter()
             .map(|node| node.ok_or(CompileError::IncompleteNode))
             .collect::<Result<Vec<_>>>()?;
-        Ok(SchemaCatalog { nodes })
+        let mut catalog = SchemaCatalog { nodes };
+        for (id, constraints) in self.pending_constraints {
+            let compiled = constraints
+                .into_iter()
+                .map(|constraint| soundness::compile(&catalog, id, constraint))
+                .collect::<Result<Vec<_>>>()?;
+            let node = catalog
+                .nodes
+                .get_mut(id as usize)
+                .ok_or(CompileError::IncompleteNode)?;
+            node.constraints = compiled;
+        }
+        Ok(catalog)
     }
 
     fn compile_schema(
@@ -123,14 +137,18 @@ impl<'a> BodySchemaCompiler<'a> {
             }
             let id = self.reserve()?;
             let mut node = self.node(schema, field, direction)?;
+            let constraints = soundness::parse(schema, field)?;
             node.all_of.insert(0, target);
             self.fill(id, node);
+            self.pending_constraints.insert(id, constraints);
             return Ok(id);
         }
 
         let id = self.reserve()?;
         let node = self.node(schema, field, direction)?;
+        let constraints = soundness::parse(schema, field)?;
         self.fill(id, node);
+        self.pending_constraints.insert(id, constraints);
         Ok(id)
     }
 
@@ -157,6 +175,7 @@ impl<'a> BodySchemaCompiler<'a> {
             })?;
         let id = self.reserve()?;
         self.references.insert(key, id);
+        let mut constraints = Vec::new();
         let node = match schema {
             Value::Bool(allowed) => SchemaNode {
                 allowed: Some(*allowed),
@@ -172,11 +191,14 @@ impl<'a> BodySchemaCompiler<'a> {
                     let mut node = if self.feature == OpenApiFeature::V3_0 || object.len() == 1 {
                         SchemaNode::default()
                     } else {
+                        constraints =
+                            soundness::parse(object, &format!("components.schemas.{name}"))?;
                         self.node(object, &format!("components.schemas.{name}"), direction)?
                     };
                     node.all_of.insert(0, target);
                     node
                 } else {
+                    constraints = soundness::parse(object, &format!("components.schemas.{name}"))?;
                     self.node(object, &format!("components.schemas.{name}"), direction)?
                 }
             }
@@ -188,6 +210,7 @@ impl<'a> BodySchemaCompiler<'a> {
             }
         };
         self.fill(id, node);
+        self.pending_constraints.insert(id, constraints);
         Ok(id)
     }
 
@@ -235,6 +258,7 @@ impl<'a> BodySchemaCompiler<'a> {
             unique_items: optional_bool(schema, "uniqueItems", field)?.unwrap_or(false),
             min_properties: nonnegative_integer(schema, "minProperties", field)?,
             max_properties: nonnegative_integer(schema, "maxProperties", field)?,
+            constraints: Vec::new(),
         })
     }
 

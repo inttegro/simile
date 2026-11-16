@@ -456,6 +456,225 @@ fn terminates_optional_recursive_schemas() {
     assert!(media.validate(&value).is_empty());
 }
 
+#[test]
+fn proves_ordered_date_times_are_sound() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["created_at", "updated_at"],
+            "properties": {
+                "created_at": {"type": "string", "format": "date-time"},
+                "published_at": {"type": ["string", "null"], "format": "date-time"},
+                "updated_at": {"type": "string", "format": "date-time"}
+            },
+            "x-simile-constraints": [
+                {"ordered": {"paths": ["/created_at", "/published_at", "/updated_at"]}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "created_at": "2026-01-01T00:00:00Z",
+                "published_at": "2026-01-02T00:00:00Z",
+                "updated_at": "2026-01-03T00:00:00Z"
+            }))
+            .is_empty()
+    );
+    assert!(
+        media
+            .validate(&json!({
+                "created_at": "2026-01-01T00:00:00Z",
+                "published_at": null,
+                "updated_at": "2026-01-01T00:00:00Z"
+            }))
+            .is_empty()
+    );
+
+    let issues = media.validate(&json!({
+        "created_at": "2026-01-03T00:00:00Z",
+        "published_at": "2026-01-02T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+    }));
+    assert_eq!(issues.len(), 2);
+    assert_eq!(issues[0].path, "/published_at");
+    assert_eq!(issues[0].rule, ValidationRule::Ordered);
+    assert_eq!(issues[1].path, "/updated_at");
+    assert_eq!(issues[1].rule, ValidationRule::Ordered);
+}
+
+#[test]
+fn proves_nested_numeric_ordering_and_decodes_json_pointers() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["window"],
+            "properties": {
+                "window": {
+                    "type": "object",
+                    "required": ["starts~here", "ends/here"],
+                    "properties": {
+                        "starts~here": {"type": "integer"},
+                        "ends/here": {"type": "number"}
+                    }
+                }
+            },
+            "x-simile-constraints": [
+                {"ordered": {"paths": ["/window/starts~0here", "/window/ends~1here"]}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({"window": {"starts~here": 4, "ends/here": 4.5}}))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({"window": {"starts~here": 5, "ends/here": 4.5}}));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].path, "/window/ends~1here");
+    assert_eq!(issues[0].rule, ValidationRule::Ordered);
+}
+
+#[test]
+fn fuzz_synthesis_is_proven_against_ordered_relationships() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["created_at", "published_at", "updated_at"],
+            "properties": {
+                "created_at": {"type": "string", "format": "date-time"},
+                "published_at": {"type": "string", "format": "date-time"},
+                "updated_at": {"type": "string", "format": "date-time"}
+            },
+            "x-simile-constraints": [
+                {"ordered": {"paths": ["/created_at", "/published_at", "/updated_at"]}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    for seed in 0..64 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(
+            media.validate(&value).is_empty(),
+            "seed {seed} produced an unsound value: {value}"
+        );
+    }
+}
+
+#[test]
+fn response_synthesis_is_proven_against_ordered_relationships() {
+    let response = ResponseBodyContract {
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "required": ["created_at", "published_at", "updated_at"],
+                    "properties": {
+                        "created_at": {"type": "string", "format": "date-time"},
+                        "published_at": {"type": "string", "format": "date-time"},
+                        "updated_at": {"type": "string", "format": "date-time"}
+                    },
+                    "x-simile-constraints": [
+                        {"ordered": {"paths": ["/created_at", "/published_at", "/updated_at"]}}
+                    ]
+                })),
+                example: None,
+            },
+        )]),
+    };
+    let components = BTreeMap::new();
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let plan = compiler
+        .compile_response(&response)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
+    let media = BoundResponseBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    for seed in 0..64 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(
+            media.validate(&value).is_empty(),
+            "seed {seed} produced an unsound response: {value}"
+        );
+    }
+}
+
+#[test]
+fn rejects_constraints_that_cannot_be_proven() {
+    let unsupported = compile_error(json!({
+        "type": "object",
+        "x-simile-constraints": [{"implies": {}}]
+    }));
+    assert!(unsupported.contains("unsupported constraint kind `implies`"));
+
+    let unknown_path = compile_error(json!({
+        "type": "object",
+        "properties": {"created_at": {"type": "string", "format": "date-time"}},
+        "x-simile-constraints": [
+            {"ordered": {"paths": ["/created_at", "/missing"]}}
+        ]
+    }));
+    assert!(unknown_path.contains("does not resolve to a property"));
+
+    let incompatible = compile_error(json!({
+        "type": "object",
+        "properties": {
+            "created_at": {"type": "string", "format": "date-time"},
+            "sequence": {"type": "integer"}
+        },
+        "x-simile-constraints": [
+            {"ordered": {"paths": ["/created_at", "/sequence"]}}
+        ]
+    }));
+    assert!(incompatible.contains("compatible value types"));
+}
+
+fn compile_error(schema: serde_json::Value) -> String {
+    let body = RequestBodyContract {
+        required: true,
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(schema),
+                example: None,
+            },
+        )]),
+    };
+    let components = BTreeMap::new();
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    match compiler
+        .compile_request(&body)
+        .and_then(|_| compiler.finish())
+    {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("constraint should fail compilation"),
+    }
+}
+
 fn plan(
     schema: serde_json::Value,
     components: BTreeMap<String, serde_json::Value>,

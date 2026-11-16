@@ -82,6 +82,35 @@ fn distinguishes_protocol_and_schema_failures() {
 }
 
 #[test]
+fn proves_cross_field_relationships_from_openapi() {
+    let artifact = artifact();
+    let error = match validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /orders",
+            content_type: Some("application/json"),
+            bytes: br#"{
+                "customer": {"email": "buyer@example.com"},
+                "items": [{"quantity": 1}],
+                "created_at": "2026-01-03T00:00:00Z",
+                "published_at": "2026-01-02T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            }"#,
+        },
+    ) {
+        Err(error) => error,
+        Ok(body) => panic!("unsound body should be rejected, got {body:?}"),
+    };
+
+    let issues = error.issues();
+    assert_eq!(issues.len(), 2);
+    assert_eq!(issues[0].path, "/published_at");
+    assert_eq!(issues[0].rule.to_string(), "ordered");
+    assert_eq!(issues[1].path, "/updated_at");
+    assert_eq!(issues[1].rule.to_string(), "ordered");
+}
+
+#[test]
 fn synthesizes_a_body_that_round_trips_through_validation() {
     let artifact = artifact();
     let body = synthesize_request_body(
@@ -191,6 +220,12 @@ components:
             required: [quantity]
             properties:
               quantity: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        published_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+      x-simile-constraints:
+        - ordered:
+            paths: [/created_at, /published_at, /updated_at]
 "#;
     let service = Compiler::new()
         .compile(CompileRequest {

@@ -29,6 +29,10 @@ one explicitly. Fresh synthesis varies unconstrained values instead of pinning e
 published example or default. Constants remain fixed and enums stay within their declared values.
 The candidate is always validated again before it is encoded.
 
+That final validation includes compiled cross-field relationships. A response is returned only when
+the complete candidate is sound under both the supported OpenAPI schema rules and every recognized
+`x-simile-constraints` declaration. See [payload soundness](payload-soundness.md).
+
 Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits varying
 format-valid values for supported standard formats and the provider formats it understands, while
 JSON integers remain integer-shaped on the wire. It does not infer formats from descriptions. A

@@ -103,9 +103,15 @@ component references once per request/response direction, and preserves recursiv
 without copying their source trees. Validation operates on a decoded JSON value and returns
 bounded, structured issues whose paths are JSON Pointers.
 
+Within that crate, the `soundness` module owns cross-field relationship syntax, compiled relation
+types, proof evaluation, and synthesis establishment. The general compiler, validator, and
+synthesizer delegate those responsibilities rather than implementing relation-specific branches.
+
 This boundary is intentionally independent of HTTP and OpenAPI parsing. The artifact embeds the
 compiled graph; the runtime never interprets source schema fragments. See
 [request validation](request-validation.md) for the supported keywords and failure model.
+Cross-field relationships use the same graph and validator; the soundness contract and first
+ordered relationship are described in [payload soundness](payload-soundness.md).
 
 ### Runtime primitives: `simile-runtime`
 
@@ -147,6 +153,8 @@ See [operation execution](operation-execution.md).
 - Request synthesis never returns a candidate that fails the compiled request validator.
 - Response synthesis works without request context and never returns a body that fails the
   compiled response validator.
+- A cross-field relationship is executable only after the compiler resolves its paths and value
+  kinds; unsupported relationships fail compilation instead of becoming inert annotations.
 - Request-aware response synthesis only projects same-path values accepted by the response schema;
   `writeOnly` fields are absent from the response graph.
 

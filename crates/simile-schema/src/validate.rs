@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::{
     AdditionalProperties, JsonType, NumberBound, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
+    soundness,
 };
 
 const MAX_ISSUES: usize = 100;
@@ -37,6 +38,7 @@ pub enum ValidationRule {
     UniqueItems,
     MinProperties,
     MaxProperties,
+    Ordered,
     AllOf,
     AnyOf,
     OneOf,
@@ -63,6 +65,7 @@ impl fmt::Display for ValidationRule {
             Self::UniqueItems => "uniqueItems",
             Self::MinProperties => "minProperties",
             Self::MaxProperties => "maxProperties",
+            Self::Ordered => "ordered",
             Self::AllOf => "allOf",
             Self::AnyOf => "anyOf",
             Self::OneOf => "oneOf",
@@ -139,7 +142,28 @@ impl Validator<'_> {
         self.scalar_constraints(node, value, path, issues);
         self.object_constraints(node, value, path, depth, issues);
         self.array_constraints(node, value, path, depth, issues);
+        self.relationship_constraints(node, value, path, issues);
         self.combinators(node, value, path, depth, issues);
+    }
+
+    fn relationship_constraints(
+        &self,
+        node: &SchemaNode,
+        value: &Value,
+        path: &str,
+        issues: &mut Vec<ValidationIssue>,
+    ) {
+        for violation in soundness::prove(node, value) {
+            let rule = match violation.kind {
+                soundness::ViolationKind::Ordered => ValidationRule::Ordered,
+            };
+            push(
+                issues,
+                &relationship_path(path, &violation.path),
+                rule,
+                violation.message,
+            );
+        }
     }
 
     fn scalar_constraints(
@@ -495,6 +519,10 @@ fn check_maximum_count(
 
 fn child_path(path: &str, child: &str) -> String {
     format!("{path}/{}", child.replace('~', "~0").replace('/', "~1"))
+}
+
+fn relationship_path(path: &str, relative: &str) -> String {
+    format!("{path}{relative}")
 }
 
 fn push(

@@ -45,15 +45,21 @@ The schema compiler supports the request constraints needed for the first runtim
 - `items`, `minItems`, `maxItems`, and `uniqueItems`;
 - `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and `multipleOf`;
 - `minLength` and `maxLength`; and
-- `allOf`, `anyOf`, `oneOf`, and `not`.
+- `allOf`, `anyOf`, `oneOf`, and `not`; and
+- numeric and RFC 3339 date-time ordering declared with `x-simile-constraints`.
 
 For request validation, a property marked `readOnly` is removed from the object's required set, as
 required read-only properties apply to responses rather than requests.
 
-Annotation and extension keywords do not affect validation. Validation keywords outside the
-supported list are not applied in this first slice and must not be treated as enforced. Keywords
-that Simile claims to support are type-checked during artifact compilation; malformed definitions
-fail the build rather than weakening those compiled constraints silently.
+Annotation keywords and unrecognized extension keywords do not affect validation. The recognized
+`x-simile-constraints` extension is compiled into executable typed relationships. Validation
+keywords outside the supported list are not applied in this first slice and must not be treated as
+enforced. Keywords and relationships that Simile claims to support are type-checked during artifact
+compilation; malformed definitions fail the build rather than weakening those compiled constraints
+silently.
+
+See [payload soundness](payload-soundness.md) for the exact proof boundary and ordered-field
+semantics.
 
 The validation pass caps both traversal depth and reported issue count. Those bounds protect the
 runtime and keep an invalid request response useful. A future HTTP server must additionally apply a

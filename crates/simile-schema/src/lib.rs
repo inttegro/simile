@@ -2,6 +2,7 @@
 
 mod compile;
 mod error;
+mod soundness;
 mod synthesize;
 mod validate;
 
@@ -174,7 +175,7 @@ impl SchemaCatalog {
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
         let length = self.nodes.len();
-        self.nodes.iter().all(|node| {
+        self.nodes.iter().enumerate().all(|(index, node)| {
             node.properties.values().all(|id| valid_id(*id, length))
                 && node.items.is_none_or(|id| valid_id(id, length))
                 && node.all_of.iter().all(|id| valid_id(*id, length))
@@ -185,6 +186,8 @@ impl SchemaCatalog {
                     AdditionalProperties::Schema(id) => valid_id(id, length),
                     AdditionalProperties::Allow | AdditionalProperties::Deny => true,
                 }
+                && u32::try_from(index)
+                    .is_ok_and(|id| soundness::is_well_formed(self, id, &node.constraints))
         })
     }
 
@@ -218,7 +221,7 @@ impl<'a> BoundMediaType<'a> {
             .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
     }
 
-    /// Produce a deterministic JSON value accepted by this media type's schema.
+    /// Produce a deterministic JSON value proven sound by this media type's compiled contract.
     pub fn synthesize(&self) -> std::result::Result<Value, SynthesisError> {
         if let Some(example) = self.selected.example {
             if self.validate(example).is_empty() {
@@ -244,7 +247,7 @@ impl<'a> BoundMediaType<'a> {
         )
     }
 
-    /// Produce a schema-valid value whose unconstrained fields vary with `seed`.
+    /// Produce a contract-sound value whose unconstrained fields vary with `seed`.
     pub fn synthesize_fuzz(&self, seed: u64) -> std::result::Result<Value, SynthesisError> {
         self.selected.schema().map_or_else(
             || Ok(Value::Object(serde_json::Map::new())),
@@ -417,6 +420,8 @@ struct SchemaNode {
     min_properties: Option<usize>,
     #[serde(rename = "Z", skip_serializing_if = "Option::is_none")]
     max_properties: Option<usize>,
+    #[serde(rename = "C", skip_serializing_if = "Vec::is_empty")]
+    constraints: Vec<soundness::Constraint>,
 }
 
 impl Default for SchemaNode {
@@ -446,6 +451,7 @@ impl Default for SchemaNode {
             unique_items: false,
             min_properties: None,
             max_properties: None,
+            constraints: Vec::new(),
         }
     }
 }

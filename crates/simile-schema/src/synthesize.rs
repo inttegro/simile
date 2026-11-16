@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     AdditionalProperties, JsonType, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
-    ValidationIssue, validate,
+    ValidationIssue, soundness, validate,
 };
 
 const MAX_DEPTH: usize = 64;
@@ -190,6 +190,7 @@ impl Randomizer<'_> {
                 break;
             }
         }
+        soundness::establish(&node, &mut candidate);
         active.pop();
         candidate
     }
@@ -284,9 +285,12 @@ impl Synthesizer<'_> {
         let candidates = self.candidates(node, variant, depth, active);
         active.pop();
 
-        candidates
-            .into_iter()
-            .find(|candidate| validate::value(self.catalog, SchemaRef(id), candidate).is_empty())
+        candidates.into_iter().find_map(|mut candidate| {
+            soundness::establish(node, &mut candidate);
+            validate::value(self.catalog, SchemaRef(id), &candidate)
+                .is_empty()
+                .then_some(candidate)
+        })
     }
 
     fn candidates(

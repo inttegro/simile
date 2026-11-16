@@ -77,7 +77,9 @@ ordered before encoding, so identical compiler input produces identical artifact
 The supported request-validation boundary is documented in
 [request validation](docs/request-validation.md). Response selection and synthesis are documented
 in [response synthesis](docs/response-synthesis.md). The transport-independent execution boundary
-is documented in [operation execution](docs/operation-execution.md).
+is documented in [operation execution](docs/operation-execution.md). The shared proof boundary for
+OpenAPI rules and cross-field relationships is documented in
+[payload soundness](docs/payload-soundness.md).
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
 default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a
@@ -113,7 +115,7 @@ Simile follows a pipeline of narrow ownership boundaries:
   versioned `.similec` envelope.
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
 - `simile-schema` compiles request and response schemas into portable graphs, validates decoded
-  values, and performs seeded schema-valid synthesis.
+  values and cross-field relationships, and performs seeded contract-sound synthesis.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
 - `simile-runtime` loads an operation from an artifact, validates normalized values independently

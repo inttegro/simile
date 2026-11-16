@@ -16,6 +16,9 @@ pub enum CompileError {
     #[error("schema `{field}` references unknown component `{reference}`")]
     UnknownReference { field: String, reference: String },
 
+    #[error("schema constraint `{field}` is invalid: {reason}")]
+    InvalidConstraint { field: String, reason: String },
+
     #[error("compiled schema contains too many nodes")]
     TooManyNodes,
 

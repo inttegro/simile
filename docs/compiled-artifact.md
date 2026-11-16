@@ -49,6 +49,10 @@ interpreted as schema metadata. The runtime therefore validates requests and syn
 or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
 schemas into every operation.
 
+Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
+same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
+rejects relationship paths or comparison kinds that do not match the embedded graph.
+
 Response-definition JSON retained from an OpenAPI source is lowered into tagged value nodes: null,
 boolean, signed integer, unsigned integer, floating point, string identifier, child-node array, or
 sorted object fields. Schema and media synthesis hints are encoded as CBOR values inside their
