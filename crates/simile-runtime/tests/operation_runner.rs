@@ -361,6 +361,7 @@ behavior "createOrder" {
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", openapi),
             behaviors: vec![Source::new("orders.hcl", behavior)],
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
     decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))

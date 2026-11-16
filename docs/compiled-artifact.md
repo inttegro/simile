@@ -3,7 +3,7 @@
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
 
-## Envelope version 7
+## Envelope version 8
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -11,7 +11,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 7 |
+| 10 | 2 | unsigned big-endian flags; zero in version 8 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -22,7 +22,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 7 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 8 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -52,9 +52,13 @@ schemas into every operation.
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 7 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 8 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their OpenAPI extension syntax.
+
+Version 8 also carries typed provider-neutral generation plans. Every plan records a stable rule
+identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
+plans without re-running name inference. Provider-specific profiles are not part of this version.
 
 Response-definition JSON retained from an OpenAPI source is lowered into tagged value nodes: null,
 boolean, signed integer, unsigned integer, floating point, string identifier, child-node array, or

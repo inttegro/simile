@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
+use simile_heuristics::{Plan as HeuristicPlan, Policy as HeuristicPolicy};
 use simile_spec::{OpenApiFeature, RequestBodyContract, ResponseBodyContract};
 
 use crate::{
@@ -21,17 +22,28 @@ pub struct BodySchemaCompiler<'a> {
     nodes: Vec<Option<SchemaNode>>,
     references: BTreeMap<(SchemaDirection, String), SchemaId>,
     pending_constraints: BTreeMap<SchemaId, Vec<soundness::PendingConstraint>>,
+    heuristic_policy: HeuristicPolicy,
 }
 
 impl<'a> BodySchemaCompiler<'a> {
     #[must_use]
     pub fn new(components: &'a BTreeMap<String, Value>, feature: OpenApiFeature) -> Self {
+        Self::with_heuristics(components, feature, HeuristicPolicy::default())
+    }
+
+    #[must_use]
+    pub fn with_heuristics(
+        components: &'a BTreeMap<String, Value>,
+        feature: OpenApiFeature,
+        heuristic_policy: HeuristicPolicy,
+    ) -> Self {
         Self {
             components,
             feature,
             nodes: Vec::new(),
             references: BTreeMap::new(),
             pending_constraints: BTreeMap::new(),
+            heuristic_policy,
         }
     }
 
@@ -259,6 +271,7 @@ impl<'a> BodySchemaCompiler<'a> {
             min_properties: nonnegative_integer(schema, "minProperties", field)?,
             max_properties: nonnegative_integer(schema, "maxProperties", field)?,
             constraints: Vec::new(),
+            heuristics: HeuristicPlan::compile(schema, self.heuristic_policy),
         })
     }
 

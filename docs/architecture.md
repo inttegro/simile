@@ -115,6 +115,15 @@ implications, equality, equations, aggregates, distinct selectors, scalar set re
 templates, and lifecycle snapshots are described in
 [payload soundness](payload-soundness.md).
 
+### Generation inference: `simile-heuristics`
+
+`simile-heuristics` owns provider-neutral, best-effort inference from exact field names and
+compatible OpenAPI types. The schema compiler stores its typed plans in the artifact; synthesis
+applies them transactionally and accepts the result only when the authoritative schema validator
+still succeeds. The crate has no role in validating incoming payloads. Explicit
+`x-simile-constraints` declarations suppress overlapping hints and remain the only cross-field
+proof language. See [generation heuristics](generation-heuristics.md).
+
 ### Runtime primitives: `simile-runtime`
 
 `simile-runtime` reads only validated artifact records. Its request-body entry points locate an

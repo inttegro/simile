@@ -343,6 +343,7 @@ fn compile_artifact(openapi: &str, behavior: Option<&str>) -> simile_artifact::A
         .compile(CompileRequest {
             openapi: Source::new("service.yaml", openapi),
             behaviors,
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
     decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))

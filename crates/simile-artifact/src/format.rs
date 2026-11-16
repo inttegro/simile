@@ -6,6 +6,7 @@ use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use simile_heuristics::Policy;
 use simile_schema::{
     BodySchemaCompiler, BoundRequestBody, BoundResponseBody, RequestBodyPlan, ResponseBodyPlan,
     SchemaCatalog,
@@ -17,7 +18,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 7;
+pub const FORMAT_VERSION: u16 = 8;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -38,10 +39,12 @@ pub struct ArtifactSummary {
     pub service: String,
     pub service_version: String,
     pub openapi_version: String,
+    pub heuristic_policy: Policy,
     pub operations: usize,
     pub request_bodies: usize,
     pub response_bodies: usize,
     pub schema_nodes: usize,
+    pub heuristic_rules: usize,
     pub responses: usize,
     pub value_nodes: usize,
     pub resources: usize,
@@ -208,6 +211,7 @@ impl Artifact {
             service: self.string(self.payload.2.0).to_owned(),
             service_version: self.string(self.payload.2.1).to_owned(),
             openapi_version: self.string(self.payload.2.3).to_owned(),
+            heuristic_policy: decode_heuristic_policy(self.payload.2.5),
             operations: self.payload.3.len(),
             request_bodies: self
                 .payload
@@ -223,6 +227,7 @@ impl Artifact {
                 .filter(|response| response.3.is_some())
                 .count(),
             schema_nodes: self.payload.7.len(),
+            heuristic_rules: self.payload.7.heuristic_rules(),
             responses,
             value_nodes: self.payload.4.len(),
             resources: self.payload.5.len(),
@@ -378,7 +383,7 @@ struct Payload(
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ServiceRecord(StringId, StringId, Option<StringId>, StringId, u8);
+struct ServiceRecord(StringId, StringId, Option<StringId>, StringId, u8, u8);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct OperationRecord(
@@ -523,8 +528,11 @@ impl Payload {
         let resource_ids = index_resources(service)?;
         let async_ids = index_async_operations(service)?;
         let mut values = ValueArena::default();
-        let mut schema_compiler =
-            BodySchemaCompiler::new(&service.contract.schemas, service.contract.openapi.feature);
+        let mut schema_compiler = BodySchemaCompiler::with_heuristics(
+            &service.contract.schemas,
+            service.contract.openapi.feature,
+            service.heuristic_policy,
+        );
 
         let service_record = ServiceRecord(
             strings.id(&service.contract.info.title)?,
@@ -532,6 +540,7 @@ impl Payload {
             strings.optional(service.contract.info.description.as_deref())?,
             strings.id(&service.contract.openapi.exact)?,
             encode_openapi_feature(service.contract.openapi.feature),
+            encode_heuristic_policy(service.heuristic_policy),
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -651,6 +660,9 @@ impl Payload {
         validate_index(self.2.3, strings, "OpenAPI version")?;
         if self.2.4 > 2 {
             return Err(Error::Invalid("OpenAPI feature line"));
+        }
+        if self.2.5 > 3 {
+            return Err(Error::Invalid("heuristic policy"));
         }
 
         for operation in &self.3 {
@@ -924,6 +936,25 @@ const fn encode_openapi_feature(feature: OpenApiFeature) -> u8 {
     }
 }
 
+const fn encode_heuristic_policy(policy: Policy) -> u8 {
+    match policy {
+        Policy::Off => 0,
+        Policy::Conservative => 1,
+        Policy::Standard => 2,
+        Policy::Aggressive => 3,
+    }
+}
+
+fn decode_heuristic_policy(policy: u8) -> Policy {
+    match policy {
+        0 => Policy::Off,
+        1 => Policy::Conservative,
+        2 => Policy::Standard,
+        3 => Policy::Aggressive,
+        _ => unreachable!("artifact validation rejects unknown heuristic policies"),
+    }
+}
+
 const fn encode_status(status: &ResponseStatus) -> (u8, u16) {
     match status {
         ResponseStatus::Exact(status) => (0, *status),
@@ -1004,7 +1035,7 @@ mod tests {
                 "3.2.1".to_owned(),
                 "/orders".to_owned(),
             ],
-            ServiceRecord(1, 2, None, 3, 2),
+            ServiceRecord(1, 2, None, 3, 2, 2),
             vec![OperationRecord(
                 99,
                 2,

@@ -19,6 +19,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 simile-compiler.workspace = true
+simile-heuristics.workspace = true
 
 [lints]
 workspace = true

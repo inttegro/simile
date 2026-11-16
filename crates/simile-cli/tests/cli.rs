@@ -74,7 +74,8 @@ fn compiles_a_service_contract_as_json() {
             "  \"openapiDefaults\": 0,\n",
             "  \"hclBehaviors\": 1,\n",
             "  \"asyncOperations\": 1,\n",
-            "  \"resources\": 1\n",
+            "  \"resources\": 1,\n",
+            "  \"heuristicPolicy\": \"standard\"\n",
             "}\n"
         ))
         .stderr_eq("");
@@ -107,7 +108,8 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "contract OpenAPI 3.2.1 · 1 operations\n",
                 "behavior 0 OpenAPI defaults · 1 HCL overlays\n",
                 "runtime 1 async operations · 1 resources\n",
-                "artifact {} · format 7 · [..] bytes\n",
+                "heuristics standard\n",
+                "artifact {} · format 8 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -119,15 +121,17 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 7,\n",
+            "  \"formatVersion\": 8,\n",
             "  \"compilerVersion\": \"0.1.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",
+            "  \"heuristicPolicy\": \"standard\",\n",
             "  \"operations\": 1,\n",
             "  \"requestBodies\": 0,\n",
             "  \"responseBodies\": 0,\n",
             "  \"schemaNodes\": 0,\n",
+            "  \"heuristicRules\": 0,\n",
             "  \"responses\": 1,\n",
             "  \"valueNodes\": [..],\n",
             "  \"resources\": 1,\n",

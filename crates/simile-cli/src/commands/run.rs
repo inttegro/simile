@@ -34,6 +34,7 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
         operation,
         body: arguments.body,
         content_type: arguments.content_type,
+        heuristic_policy: arguments.heuristics.into(),
     })?;
 
     if !terminal.is_verbose() {

@@ -12,6 +12,7 @@ pub use compile::BodySchemaCompiler;
 pub use error::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use simile_heuristics::Plan as HeuristicPlan;
 pub use synthesize::SynthesisError;
 pub use validate::{ValidationIssue, ValidationRule};
 
@@ -167,6 +168,11 @@ impl SchemaCatalog {
     }
 
     #[must_use]
+    pub fn heuristic_rules(&self) -> usize {
+        self.nodes.iter().map(|node| node.heuristics.len()).sum()
+    }
+
+    #[must_use]
     fn validate(&self, root: SchemaRef, value: &Value) -> Vec<ValidationIssue> {
         validate::value(self, root, value)
     }
@@ -188,6 +194,7 @@ impl SchemaCatalog {
                 }
                 && u32::try_from(index)
                     .is_ok_and(|id| soundness::is_well_formed(self, id, &node.constraints))
+                && node.heuristics.is_well_formed()
         })
     }
 
@@ -422,6 +429,8 @@ struct SchemaNode {
     max_properties: Option<usize>,
     #[serde(rename = "C", skip_serializing_if = "Vec::is_empty")]
     constraints: Vec<soundness::Constraint>,
+    #[serde(rename = "H", skip_serializing_if = "HeuristicPlan::is_empty")]
+    heuristics: HeuristicPlan,
 }
 
 impl Default for SchemaNode {
@@ -452,6 +461,7 @@ impl Default for SchemaNode {
             min_properties: None,
             max_properties: None,
             constraints: Vec::new(),
+            heuristics: HeuristicPlan::default(),
         }
     }
 }

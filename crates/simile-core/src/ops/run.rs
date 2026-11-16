@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+use simile_heuristics::Policy;
 use simile_runtime::{OperationValueCall, Runtime, SynthesisRequest, synthesize_request_value};
 
 use super::compile::compile_service;
@@ -30,6 +31,7 @@ pub struct RunRequest {
     pub operation: OperationSelector,
     pub body: Option<PathBuf>,
     pub content_type: Option<String>,
+    pub heuristic_policy: Policy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -83,7 +85,12 @@ pub struct RunReport {
 /// Compile a service source in memory and execute one selected operation.
 pub fn run(request: &RunRequest) -> Result<RunReport> {
     let (source_name, source) = read_spec(&request.spec)?;
-    let compiled = compile_service(&source_name, &source, &request.behaviors)?;
+    let compiled = compile_service(
+        &source_name,
+        &source,
+        &request.behaviors,
+        request.heuristic_policy,
+    )?;
     let service = compiled.contract.info.title.clone();
     let service_version = compiled.contract.info.version.clone();
     let encoded = simile_artifact::encode(&compiled)?;
@@ -248,6 +255,7 @@ mod tests {
             operation: OperationSelector::Id("createOrder".to_owned()),
             body: None,
             content_type: None,
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -292,6 +300,7 @@ mod tests {
             operation: OperationSelector::Id("createOrder".to_owned()),
             body: Some(body.clone()),
             content_type: None,
+            heuristic_policy: Policy::Standard,
         });
         fs::remove_file(body).unwrap_or_else(|error| panic!("{error}"));
         let report = result.unwrap_or_else(|error| panic!("{error}"));
@@ -319,6 +328,7 @@ mod tests {
             operation: OperationSelector::Key("GET /health".to_owned()),
             body: None,
             content_type: None,
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -336,6 +346,7 @@ mod tests {
             operation: OperationSelector::Id("optionalForm".to_owned()),
             body: None,
             content_type: None,
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -384,6 +395,7 @@ mod tests {
             operation: OperationSelector::Id("createOrder".to_owned()),
             body: None,
             content_type: None,
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
         server

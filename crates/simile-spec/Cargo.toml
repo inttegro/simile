@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+simile-heuristics.workspace = true
 
 [lints]
 workspace = true

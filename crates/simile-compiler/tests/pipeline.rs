@@ -7,6 +7,7 @@ fn openapi_is_a_complete_default_behavior_source() {
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", openapi()),
             behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -40,6 +41,7 @@ behavior "createOrder" {
 }
 "#,
             )],
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -77,6 +79,7 @@ paths:
         .compile(CompileRequest {
             openapi: Source::new("health.yaml", source),
             behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 

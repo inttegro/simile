@@ -40,6 +40,9 @@ from a validated request. Provider-authored `x-simile-constraints` can prove and
 ordering, conditional implications, equality across array items, numeric equations and aggregates,
 relative bounds, distinct selectors, scalar set relationships, derived string templates, and finite
 lifecycle snapshots. Constraints declared on array item schemas apply independently to every item.
+For contracts without those extensions, a separately compiled provider-neutral heuristic plan can
+repair a small, curated set of obvious generation inconsistencies. Heuristics improve generated
+examples only; they never become request-validation rules or proof obligations.
 A protocol-neutral runtime coordinates request validation, response
 synthesis, and the declared asynchronous work for one operation. HTTP serving, state, and
 asynchronous resource execution remain subsequent runtime layers; the current CLI does not yet
@@ -56,6 +59,7 @@ $ simile compile openapi.yaml --behavior orders.hcl --artifact service.similec
 $ simile inspect service.similec
 $ simile run openapi.yaml --operation-id createOrder
 $ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
+$ simile run openapi.yaml --operation-id createOrder --heuristics conservative
 ```
 
 `run` accepts exactly one contract source and one operation selector. A positional source path is
@@ -85,6 +89,8 @@ in [response synthesis](docs/response-synthesis.md). The transport-independent e
 is documented in [operation execution](docs/operation-execution.md). The shared proof boundary for
 OpenAPI rules and cross-field relationships is documented in
 [payload soundness](docs/payload-soundness.md).
+The deliberately weaker generation-only inference boundary is documented in
+[generation heuristics](docs/generation-heuristics.md).
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
 default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a
@@ -121,6 +127,8 @@ Simile follows a pipeline of narrow ownership boundaries:
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
 - `simile-schema` compiles request and response schemas into portable graphs, validates decoded
   values and typed cross-field relationships, and performs seeded contract-sound synthesis.
+- `simile-heuristics` compiles provider-neutral, evidence-bearing generation hints without owning
+  validation or provider-specific profiles.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
 - `simile-runtime` loads an operation from an artifact, validates normalized values independently

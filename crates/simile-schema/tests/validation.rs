@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::json;
+use simile_heuristics::Policy;
 use simile_schema::{
     BodySchemaCompiler, BoundRequestBody, BoundResponseBody, RequestBodyPlan, SchemaCatalog,
     ValidationRule,
@@ -141,6 +142,48 @@ fn shares_component_nodes_across_request_bodies() {
     assert_eq!(schemas.len(), 2);
     assert!(BoundRequestBody::new(&first, &schemas).is_well_formed());
     assert!(BoundRequestBody::new(&second, &schemas).is_well_formed());
+}
+
+#[test]
+fn heuristics_repair_synthesis_without_becoming_validation_rules() {
+    let schema = json!({
+        "type": "object",
+        "required": ["items", "item_count"],
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "string"}
+            },
+            "item_count": {"type": "integer", "minimum": 0, "maximum": 20}
+        }
+    });
+    let (standard_plan, standard_schemas) = plan_with_policy(schema.clone(), Policy::Standard);
+    let (off_plan, off_schemas) = plan_with_policy(schema, Policy::Off);
+    let standard = BoundRequestBody::new(&standard_plan, &standard_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let off = BoundRequestBody::new(&off_plan, &off_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    for seed in 0..32 {
+        let value = standard
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(value["item_count"], 2);
+    }
+    assert!((0..32).any(|seed| {
+        off.synthesize_fuzz(seed)
+            .is_ok_and(|value| value["item_count"] != 2)
+    }));
+
+    assert!(
+        standard
+            .validate(&json!({"items": ["a", "b"], "item_count": 9}))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1799,6 +1842,27 @@ fn plan(
         )]),
     };
     let mut compiler = BodySchemaCompiler::new(&components, feature);
+    let plan = compiler
+        .compile_request(&body)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
+    (plan, schemas)
+}
+
+fn plan_with_policy(schema: serde_json::Value, policy: Policy) -> (RequestBodyPlan, SchemaCatalog) {
+    let body = RequestBodyContract {
+        required: true,
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(schema),
+                example: None,
+            },
+        )]),
+    };
+    let components = BTreeMap::new();
+    let mut compiler =
+        BodySchemaCompiler::with_heuristics(&components, OpenApiFeature::V3_1, policy);
     let plan = compiler
         .compile_request(&body)
         .unwrap_or_else(|error| panic!("{error}"));

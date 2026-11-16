@@ -62,7 +62,8 @@ impl SchemaCatalog {
                 rng: StdRng::seed_from_u64(attempt_seed),
             };
             let mut active = Vec::new();
-            let candidate = randomizer.node(root.0, &baseline, 0, &mut active);
+            let mut candidate = randomizer.node(root.0, &baseline, 0, &mut active);
+            self.establish_heuristics(root, &mut candidate);
             if validate::value(self, root, &candidate).is_empty() {
                 return Ok(candidate);
             }
@@ -90,12 +91,13 @@ impl SchemaCatalog {
         let mut closest = Vec::new();
         for variant in 0..MAX_VARIANTS {
             let mut active = Vec::new();
-            if let Some(value) = (Synthesizer {
+            if let Some(mut value) = (Synthesizer {
                 catalog: self,
                 mode,
             })
             .node(root.0, variant, 0, &mut active)
             {
+                self.establish_heuristics(root, &mut value);
                 let issues = validate::value(self, root, &value);
                 if issues.is_empty() && predicate(&value) {
                     return Ok(value);
@@ -113,13 +115,66 @@ impl SchemaCatalog {
             return baseline.clone();
         }
         let mut active = Vec::new();
-        let candidate = Projector { catalog: self }.node(root.0, baseline, request, 0, &mut active);
+        let mut candidate =
+            Projector { catalog: self }.node(root.0, baseline, request, 0, &mut active);
+        self.establish_heuristics(root, &mut candidate);
         if validate::value(self, root, &candidate).is_empty() {
             candidate
         } else {
             baseline.clone()
         }
     }
+
+    /// Run generation hints as a transaction. A hint can improve a synthesized candidate, but
+    /// the complete candidate is retained only when the authoritative schema still accepts it.
+    fn establish_heuristics(&self, root: SchemaRef, value: &mut Value) {
+        let original = value.clone();
+        let mut active = Vec::new();
+        apply_heuristics(self, root.0, value, 0, &mut active);
+        if !validate::value(self, root, value).is_empty() {
+            *value = original;
+        }
+    }
+}
+
+fn apply_heuristics(
+    catalog: &SchemaCatalog,
+    id: SchemaId,
+    value: &mut Value,
+    depth: usize,
+    active: &mut Vec<SchemaId>,
+) {
+    if depth >= MAX_DEPTH || active.contains(&id) {
+        return;
+    }
+    let Some(node) = catalog.nodes.get(id as usize).cloned() else {
+        return;
+    };
+    active.push(id);
+
+    if let Some(object) = value.as_object_mut() {
+        for (name, child) in &node.properties {
+            if let Some(value) = object.get_mut(name) {
+                apply_heuristics(catalog, *child, value, depth + 1, active);
+            }
+        }
+    }
+    if let (Some(items), Some(values)) = (node.items, value.as_array_mut()) {
+        for value in values {
+            apply_heuristics(catalog, items, value, depth + 1, active);
+        }
+    }
+    for child in &node.all_of {
+        apply_heuristics(catalog, *child, value, depth + 1, active);
+    }
+    for child in node.any_of.iter().chain(&node.one_of) {
+        if validate::value(catalog, SchemaRef(*child), value).is_empty() {
+            apply_heuristics(catalog, *child, value, depth + 1, active);
+            break;
+        }
+    }
+    let _ = node.heuristics.apply(value);
+    active.pop();
 }
 
 struct Synthesizer<'a> {

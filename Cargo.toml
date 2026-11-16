@@ -5,6 +5,7 @@ members = [
     "crates/simile-compiler",
     "crates/simile-core",
     "crates/simile-hcl",
+    "crates/simile-heuristics",
     "crates/simile-openapi",
     "crates/simile-runtime",
     "crates/simile-schema",
@@ -36,6 +37,7 @@ simile-artifact = { version = "=0.1.0", path = "crates/simile-artifact" }
 simile-compiler = { version = "=0.1.0", path = "crates/simile-compiler" }
 simile-core = { version = "=0.1.0", path = "crates/simile-core" }
 simile-hcl = { version = "=0.1.0", path = "crates/simile-hcl" }
+simile-heuristics = { version = "=0.1.0", path = "crates/simile-heuristics" }
 simile-openapi = { version = "=0.1.0", path = "crates/simile-openapi" }
 simile-runtime = { version = "=0.1.0", path = "crates/simile-runtime" }
 simile-schema = { version = "=0.1.0", path = "crates/simile-schema" }

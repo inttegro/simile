@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use simile_artifact::ArtifactSummary;
 use simile_compiler::{Compiler, Source};
+use simile_heuristics::Policy;
 use simile_spec::{BehaviorOrigin, CompiledService};
 
 use crate::{Error, Result};
@@ -15,6 +16,7 @@ pub struct CompileRequest {
     pub openapi: PathBuf,
     pub behaviors: Vec<PathBuf>,
     pub artifact: Option<PathBuf>,
+    pub heuristic_policy: Policy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -37,6 +39,7 @@ pub struct CompileReport {
     pub hcl_behaviors: usize,
     pub async_operations: usize,
     pub resources: usize,
+    pub heuristic_policy: Policy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact: Option<WrittenArtifact>,
 }
@@ -45,7 +48,12 @@ pub struct CompileReport {
 pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
     let openapi = read(&request.openapi)?;
     let openapi_name = request.openapi.to_string_lossy().into_owned();
-    let compiled = compile_service(&openapi_name, &openapi, &request.behaviors)?;
+    let compiled = compile_service(
+        &openapi_name,
+        &openapi,
+        &request.behaviors,
+        request.heuristic_policy,
+    )?;
     let hcl_behaviors = compiled
         .operations
         .values()
@@ -66,6 +74,7 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
         hcl_behaviors,
         async_operations: compiled.async_operations.len(),
         resources: compiled.resources.len(),
+        heuristic_policy: compiled.heuristic_policy,
         artifact,
     })
 }
@@ -74,6 +83,7 @@ pub(crate) fn compile_service(
     openapi_name: &str,
     openapi: &str,
     behavior_paths: &[PathBuf],
+    heuristic_policy: Policy,
 ) -> Result<CompiledService> {
     let behavior_contents = behavior_paths
         .iter()
@@ -92,6 +102,7 @@ pub(crate) fn compile_service(
         .compile(simile_compiler::CompileRequest {
             openapi: Source::new(openapi_name, openapi),
             behaviors,
+            heuristic_policy,
         })
         .map_err(Into::into)
 }
@@ -167,6 +178,7 @@ mod tests {
             openapi: fixtures.join("orders.yaml"),
             behaviors: vec![fixtures.join("orders.hcl")],
             artifact: None,
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -193,6 +205,7 @@ mod tests {
             openapi: fixtures.join("orders.yaml"),
             behaviors: vec![fixtures.join("orders.hcl")],
             artifact: Some(artifact.clone()),
+            heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
         let bytes = fs::read(&artifact).unwrap_or_else(|error| panic!("{error}"));

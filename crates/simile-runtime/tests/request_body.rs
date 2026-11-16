@@ -340,6 +340,7 @@ components:
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", source),
             behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
     let encoded = encode(&service).unwrap_or_else(|error| panic!("{error}"));
@@ -381,6 +382,7 @@ paths:
         .compile(CompileRequest {
             openapi: Source::new("messages.yaml", source),
             behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
     decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))
@@ -465,6 +467,7 @@ components:
         .compile(CompileRequest {
             openapi: Source::new("invoices.yaml", source),
             behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
     decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))

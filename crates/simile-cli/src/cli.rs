@@ -17,6 +17,26 @@ pub enum ColorChoice {
     Never,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum HeuristicChoice {
+    Off,
+    Conservative,
+    #[default]
+    Standard,
+    Aggressive,
+}
+
+impl From<HeuristicChoice> for simile_heuristics::Policy {
+    fn from(value: HeuristicChoice) -> Self {
+        match value {
+            HeuristicChoice::Off => Self::Off,
+            HeuristicChoice::Conservative => Self::Conservative,
+            HeuristicChoice::Standard => Self::Standard,
+            HeuristicChoice::Aggressive => Self::Aggressive,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "simile",
@@ -84,6 +104,10 @@ pub struct CompileArgs {
     /// Write the compiled runtime artifact to this path.
     #[arg(short, long, value_name = "FILE")]
     pub artifact: Option<PathBuf>,
+
+    /// Control provider-neutral synthesis inference embedded in the artifact.
+    #[arg(long, value_enum, default_value_t, env = "SIMILE_HEURISTICS")]
+    pub heuristics: HeuristicChoice,
 }
 
 #[derive(Debug, Args)]
@@ -135,4 +159,8 @@ pub struct RunArgs {
     /// Select the request media type.
     #[arg(long, value_name = "TYPE")]
     pub content_type: Option<String>,
+
+    /// Control provider-neutral synthesis inference for this run.
+    #[arg(long, value_enum, default_value_t, env = "SIMILE_HEURISTICS")]
+    pub heuristics: HeuristicChoice,
 }

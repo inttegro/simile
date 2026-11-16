@@ -3,6 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::Serialize;
+use simile_heuristics::Policy;
 
 use crate::{ApiContract, Operation, OperationKey};
 
@@ -141,6 +142,7 @@ pub struct CompiledOperation {
 #[serde(rename_all = "camelCase")]
 pub struct CompiledService {
     pub contract: ApiContract,
+    pub heuristic_policy: Policy,
     pub operations: BTreeMap<OperationKey, CompiledOperation>,
     pub resources: BTreeMap<ResourceRef, Resource>,
     pub async_operations: BTreeMap<String, AsyncOperation>,

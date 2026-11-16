@@ -13,6 +13,7 @@ publish = false
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+simile-heuristics.workspace = true
 simile-spec.workspace = true
 thiserror.workspace = true
 time.workspace = true

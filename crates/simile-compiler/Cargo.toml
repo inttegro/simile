@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 simile-hcl.workspace = true
+simile-heuristics.workspace = true
 simile-openapi.workspace = true
 simile-spec.workspace = true
 thiserror.workspace = true

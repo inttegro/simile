@@ -18,10 +18,14 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 7);
+    assert_eq!(summary.format_version, 8);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
+    assert_eq!(
+        summary.heuristic_policy,
+        simile_heuristics::Policy::Standard
+    );
     assert_eq!(summary.operations, 1);
     assert_eq!(summary.request_bodies, 1);
     assert_eq!(summary.response_bodies, 1);
@@ -363,6 +367,7 @@ fn example_service() -> CompiledService {
             operations: BTreeMap::from([(key.clone(), operation)]),
             schemas: BTreeMap::new(),
         },
+        heuristic_policy: simile_heuristics::Policy::Standard,
         operations: BTreeMap::from([(key, compiled)]),
         resources: BTreeMap::from([(resource_ref, resource)]),
         async_operations: BTreeMap::from([(asynchronous.name.clone(), asynchronous)]),

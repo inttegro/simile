@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use simile_heuristics::Policy;
 use simile_spec::{BehaviorOrigin, CompiledOperation, CompiledService};
 use thiserror::Error;
 
@@ -22,6 +23,7 @@ impl<'a> Source<'a> {
 pub struct CompileRequest<'a> {
     pub openapi: Source<'a>,
     pub behaviors: Vec<Source<'a>>,
+    pub heuristic_policy: Policy,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -73,6 +75,7 @@ impl Compiler {
 
         Ok(CompiledService {
             contract,
+            heuristic_policy: request.heuristic_policy,
             operations,
             resources: behaviors.resources,
             async_operations: behaviors.async_operations,

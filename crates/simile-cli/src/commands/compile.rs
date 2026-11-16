@@ -14,6 +14,7 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
         openapi: arguments.openapi,
         behaviors: arguments.behavior,
         artifact: arguments.artifact,
+        heuristic_policy: arguments.heuristics.into(),
     })?;
     match terminal.output() {
         OutputFormat::Human => {
@@ -32,6 +33,10 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
             terminal.line(format_args!(
                 "{MUTED}runtime{MUTED:#} {} async operations · {} resources",
                 report.async_operations, report.resources
+            ))?;
+            terminal.line(format_args!(
+                "{MUTED}heuristics{MUTED:#} {}",
+                report.heuristic_policy
             ))?;
             if let Some(artifact) = &report.artifact {
                 terminal.line(format_args!(
