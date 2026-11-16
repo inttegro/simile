@@ -66,8 +66,8 @@ with a different validated request is an error. A repeated `Resource` identity i
 a GET operation and returns the first outcome for that operation and resource. Different identities,
 or calls without an identity, generate fresh outcomes.
 
-The runtime deliberately does not inspect headers, route templates, or parameter names. A future
-HTTP adapter must normalize the idempotency header or addressed resource into `ReplayIdentity`.
+The runtime deliberately does not inspect headers, route templates, or parameter names. The HTTP
+adapter normalizes the idempotency header or addressed resource into `ReplayIdentity`.
 This keeps HTTP policy out of the schema and operation layers, and prevents route names from being
 mistaken for storage semantics.
 
@@ -82,16 +82,18 @@ lookups through the compiled service graph.
 OpenAPI-only operations produce an empty asynchronous plan. Simile does not infer storage or
 effects from route names.
 
-## Future HTTP adapter
+## HTTP adapter
 
-The server layer remains deliberately absent. When it is added, it should remain a wire adapter:
+`simile-server` remains a wire adapter:
 
 1. listen on the configured local port;
 2. match the incoming method and path to a compiled operation key;
 3. apply transport limits and gather the request values;
-4. decode the wire body into a normalized value and call `Runtime::execute_value`; and
+4. pass the wire body to `Runtime::execute`; and
 5. translate the result or runtime error into an HTTP response.
 
-Route-template matching, parameters, headers, authentication, and request-size enforcement belong
-to that HTTP boundary or to later runtime primitives. They are not silently treated as implemented
-by the current body-oriented runtime.
+It currently matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, extracts
+`Content-Type` and `Idempotency-Key`, and preserves GET replay by full URI. Path, query, and header
+schema validation, authentication behavior, form and multipart codecs, durable state, and execution
+of asynchronous plans remain later runtime slices. They are not silently treated as implemented by
+the current body-oriented runtime.

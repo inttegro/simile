@@ -64,6 +64,8 @@ pub struct Artifact {
 #[derive(Clone, Copy, Debug)]
 pub struct ArtifactOperation<'a> {
     key: &'a str,
+    method: &'a str,
+    path: &'a str,
     operation_id: Option<&'a str>,
     request_body: Option<&'a RequestBodyPlan>,
     responses: &'a [ResponseRecord],
@@ -102,6 +104,16 @@ impl<'a> ArtifactOperation<'a> {
     #[must_use]
     pub const fn key(&self) -> &'a str {
         self.key
+    }
+
+    #[must_use]
+    pub const fn method(&self) -> &'a str {
+        self.method
+    }
+
+    #[must_use]
+    pub const fn path(&self) -> &'a str {
+        self.path
     }
 
     #[must_use]
@@ -261,10 +273,17 @@ impl Artifact {
             .map(|index| self.operation_at(index))
     }
 
+    /// Iterate over every compiled operation in stable structural-key order.
+    pub fn operations(&self) -> impl Iterator<Item = ArtifactOperation<'_>> {
+        (0..self.payload.3.len()).map(|index| self.operation_at(index))
+    }
+
     fn operation_at(&self, index: usize) -> ArtifactOperation<'_> {
         let operation = &self.payload.3[index];
         ArtifactOperation {
             key: self.string(operation.0),
+            method: decode_method(operation.1, operation.2.map(|id| self.string(id))),
+            path: self.string(operation.3),
             operation_id: operation.4.map(|id| self.string(id)),
             request_body: operation.6.as_ref(),
             responses: &operation.7,
@@ -283,6 +302,25 @@ impl Artifact {
     fn string(&self, id: StringId) -> &str {
         // Decoding validates every identifier before constructing Artifact.
         &self.payload.1[id as usize]
+    }
+}
+
+fn decode_method(kind: u8, additional: Option<&str>) -> &str {
+    match kind {
+        0 => "GET",
+        1 => "PUT",
+        2 => "POST",
+        3 => "DELETE",
+        4 => "OPTIONS",
+        5 => "HEAD",
+        6 => "PATCH",
+        7 => "TRACE",
+        8 => "QUERY",
+        9 => match additional {
+            Some(method) => method,
+            None => unreachable!("artifact validation requires an additional HTTP method"),
+        },
+        _ => unreachable!("artifact validation rejects unknown HTTP methods"),
     }
 }
 

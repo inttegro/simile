@@ -43,11 +43,11 @@ lifecycle snapshots. Constraints declared on array item schemas apply independen
 For contracts without those extensions, a separately compiled provider-neutral heuristic plan can
 repair a small, curated set of obvious generation inconsistencies. Heuristics improve generated
 examples only; they never become request-validation rules or proof obligations.
-A protocol-neutral runtime coordinates request validation, response
-synthesis, and the declared asynchronous work for one operation. HTTP serving, state, and
-asynchronous resource execution remain subsequent runtime layers; the current CLI does not yet
-serve the compiled service. It can execute one operation directly from a local or hosted OpenAPI
-contract.
+A protocol-neutral runtime coordinates request validation, response synthesis, and the declared
+asynchronous work for one operation. A separate HTTP adapter can now compile a runnable service
+configuration, listen on a local port, match its OpenAPI routes, validate JSON request bodies, and
+return generated responses. Durable resource state and asynchronous resource execution remain
+subsequent runtime layers; declared async work is planned but is not yet performed.
 
 The available foundation commands are:
 
@@ -62,6 +62,8 @@ $ simile run openapi.yaml --operation-id createOrder --request request.json
 $ cat request.json | simile run openapi.yaml --operation-id createOrder --request -
 $ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
 $ simile run openapi.yaml --operation-id createOrder --heuristics conservative
+$ simile start inttegro --config inttegro.simile.hcl
+$ simile start inttegro --config inttegro.simile.hcl --port 8484
 ```
 
 `run` accepts exactly one contract source and one operation selector. A positional source path is
@@ -106,6 +108,35 @@ OpenAPI rules and cross-field relationships is documented in
 The deliberately weaker generation-only inference boundary is documented in
 [generation heuristics](docs/generation-heuristics.md).
 
+## Running a service
+
+`simile start` reads one strict HCL service configuration, compiles its OpenAPI contract and
+optional behavior modules in memory, and binds the configured listener. The positional name must
+match the service label. `--port` overrides the configuration for that invocation; the listener
+host remains configuration-owned.
+
+```hcl
+service "inttegro" {
+  listen {
+    host = "127.0.0.1"
+    port = 4242
+  }
+
+  openapi {
+    url = "https://example.com/commerce.yml"
+  }
+
+  behaviors = ["./orders.hcl"]
+}
+```
+
+Use exactly one of `path` or `url` inside `openapi`. Relative OpenAPI and behavior paths resolve
+from the service configuration's directory. The default host is `127.0.0.1`; a port from 1 through
+65535 is required. The server prefers literal routes over parameter templates, returns `404` or
+`405` before entering the runtime, limits bodies to 8 MiB, and preserves process-local replay for
+`Idempotency-Key` and repeated GET identities. See
+[service configuration](docs/service-configuration.md) for the complete current boundary.
+
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
 default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a
 long-lived runtime replays an outcome only when its adapter supplies the same idempotency key or
@@ -149,6 +180,8 @@ Simile follows a pipeline of narrow ownership boundaries:
   of their wire encoding, synthesizes responses, replays identified invocations, plans declared
   asynchronous work, and reports protocol or schema failures without depending on source formats
   or a server framework.
+- `simile-server` owns HTTP listener lifecycle, route-template matching, wire limits, replay
+  identity extraction, and translation between HTTP responses and the protocol-neutral runtime.
 - `simile-spec` contains only the version-neutral model shared by compilation units.
 - Files under `commands/` are thin adapters. Behaviour belongs under `ops/`.
 - Human output goes to stdout, diagnostics go to stderr, and JSON never contains ANSI colour.

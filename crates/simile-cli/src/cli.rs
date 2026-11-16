@@ -88,6 +88,8 @@ pub enum Command {
     Inspect(InspectArgs),
     /// Execute one operation from an OpenAPI contract.
     Run(RunArgs),
+    /// Start a configured service emulator.
+    Start(StartArgs),
     /// Print detailed build information.
     Version,
 }
@@ -163,4 +165,22 @@ pub struct RunArgs {
     /// Control provider-neutral synthesis inference for this run.
     #[arg(long, value_enum, default_value_t, env = "SIMILE_HEURISTICS")]
     pub heuristics: HeuristicChoice,
+}
+
+#[derive(Debug, Args)]
+pub struct StartArgs {
+    /// Service name declared by the configuration.
+    pub service: String,
+
+    /// Runnable service HCL configuration.
+    #[arg(long, value_name = "FILE")]
+    pub config: PathBuf,
+
+    /// Override the configured listener port for this invocation.
+    #[arg(
+        long,
+        value_name = "PORT",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub port: Option<u16>,
 }

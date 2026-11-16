@@ -30,7 +30,8 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
-    init_tracing(cli.verbose, cli.quiet);
+    let runs_server = matches!(&cli.command, cli::Command::Start(_));
+    init_tracing(cli.verbose, cli.quiet, runs_server);
     let build = BuildInfo::new(
         env!("CARGO_PKG_VERSION"),
         option_env!("SIMILE_BUILD_COMMIT"),
@@ -41,11 +42,12 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
     commands::execute(cli.command, &ctx, terminal)
 }
 
-fn init_tracing(verbosity: u8, quiet: bool) {
+fn init_tracing(verbosity: u8, quiet: bool, runs_server: bool) {
     let fallback = if quiet {
         "off"
     } else {
         match verbosity {
+            0 if runs_server => "info",
             0 => "warn",
             1 => "info",
             2 => "debug",

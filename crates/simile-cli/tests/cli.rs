@@ -82,6 +82,40 @@ fn compiles_a_service_contract_as_json() {
 }
 
 #[test]
+fn start_rejects_a_name_that_does_not_match_the_service_configuration() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "start",
+            "payments",
+            "--config",
+            &fixture("service-orders.hcl"),
+        ])
+        .assert()
+        .failure()
+        .stderr_eq("service configuration names `orders`, but `payments` was requested\n");
+}
+
+#[test]
+fn start_rejects_port_zero_before_reading_the_configuration() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "start",
+            "orders",
+            "--config",
+            "does-not-exist.hcl",
+            "--port",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr_eq(concat!(
+            "error: invalid value '0' for '--port <PORT>': 0 is not in 1..=65535\n",
+            "\n",
+            "For more information, try '--help'.\n"
+        ));
+}
+
+#[test]
 fn writes_and_inspects_a_compiled_artifact() {
     let artifact = std::env::temp_dir().join(format!(
         "simile-cli-artifact-{}.similec",

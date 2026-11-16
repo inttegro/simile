@@ -33,6 +33,10 @@ complete for HTTP. HCL is optional and additive for behavior.
                       v
                 simile-runtime
        request validation + response synthesis
+                      ^
+                      |
+                simile-server
+        HTTP routing + listener lifecycle
 ```
 
 ## Units of work
@@ -139,9 +143,21 @@ them deliberately.
 `Runtime::execute` is the protocol-neutral coordination boundary. It validates the incoming
 body, supplies the validated value to request-aware response synthesis, and returns both the
 immediate response and a plan of the HCL-declared asynchronous operations and abstract resources.
-It does not listen on a socket or execute those resources. A future HTTP adapter will own route
-matching, wire limits, and response writing, then delegate the selected operation to this runtime.
+It does not listen on a socket or execute those resources. The HTTP adapter owns route matching,
+wire limits, and response writing, then delegates the selected operation to this runtime.
 See [operation execution](operation-execution.md).
+
+### HTTP adapter: `simile-server`
+
+`simile-server` owns the transport boundary for a long-lived emulator. It builds a route table
+from the validated artifact, prefers literal paths over parameter templates, enforces the wire body
+limit, normalizes replay identities, and maps runtime outcomes or errors to HTTP responses. It does
+not parse OpenAPI or HCL, synthesize values, or execute abstract resources.
+
+`simile-core` prepares a service by parsing the service configuration, resolving its relative
+sources, compiling the contract and behavior, and returning an artifact plus a listener report.
+`simile-cli` supplies that artifact to `simile-server`, renders the bound address, and owns the
+process lifetime.
 
 ## Invariants
 
@@ -173,8 +189,9 @@ See [operation execution](operation-execution.md).
 
 ## Deliberate next boundaries
 
-The current compiler establishes source ownership, cross-source validation, a runtime artifact
-boundary, compiled JSON request validation, seeded request and request-aware response synthesis,
-identity-based in-memory replay, and protocol-neutral operation coordination. Subsequent slices can
-add form and multipart codecs, parameter validation, durable state actions, scenario inputs,
-executable asynchronous instructions, and HTTP serving without collapsing these boundaries.
+The current compiler and server establish source ownership, cross-source validation, a runtime
+artifact boundary, compiled JSON request validation, seeded request and request-aware response
+synthesis, identity-based in-memory replay, protocol-neutral operation coordination, and local HTTP
+serving. Subsequent slices can add form and multipart codecs, parameter validation, durable state
+actions, scenario inputs, and executable asynchronous instructions without collapsing these
+boundaries.

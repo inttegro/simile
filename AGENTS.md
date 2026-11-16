@@ -13,6 +13,7 @@ boundaries.
 - `crates/simile-openapi`: JSON/YAML OpenAPI parsing and feature-line adapters.
 - `crates/simile-schema`: compiled JSON Schema graphs, validation and seeded synthesis.
 - `crates/simile-runtime`: protocol-neutral execution primitives over loaded artifacts.
+- `crates/simile-server`: HTTP routing, wire limits, listener lifecycle and runtime adaptation.
 - `crates/simile-spec`: version-neutral API, behavior and compiled-service types.
 - `crates/simile-cli/src/commands`: thin adapters from CLI arguments to core operations.
 - `crates/simile-core/src/ops`: application behaviour, independent of Clap and terminal output.
@@ -29,6 +30,7 @@ boundaries.
 | Change OpenAPI ingestion | `crates/simile-openapi/` |
 | Change body schema compilation, validation or synthesis | `crates/simile-schema/` |
 | Change loaded-artifact execution | `crates/simile-runtime/` |
+| Change HTTP routing or listener behavior | `crates/simile-server/` |
 | Change the HCL language or validation | `crates/simile-hcl/` |
 | Change source coordination | `crates/simile-compiler/` |
 | Add shared application state | `crates/simile-core/src/context.rs` |

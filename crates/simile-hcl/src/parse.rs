@@ -46,7 +46,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
     Ok(module)
 }
 
-fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
+pub(crate) fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
     labels(block, source, 2)?;
     empty_body(block.body(), source, "resource")?;
     let kind = block.labels()[0].as_str();
@@ -61,7 +61,7 @@ fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
     })
 }
 
-fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaration> {
+pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaration> {
     labels(block, source, 1)?;
     reject_attributes(block.body(), source, "behavior", &[])?;
     let mut response_status = None;
@@ -126,7 +126,7 @@ fn response(block: &Block, source: &str) -> Result<u16> {
     Ok(value)
 }
 
-fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclaration> {
+pub(crate) fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclaration> {
     labels(block, source, 1)?;
     reject_blocks(block.body(), source, "async")?;
     reject_attributes(block.body(), source, "async", &["uses"])?;
@@ -144,7 +144,7 @@ fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclaration> {
     })
 }
 
-fn string_array(
+pub(crate) fn string_array(
     attribute: &Attribute,
     source: &str,
     block: &str,
@@ -175,7 +175,7 @@ fn string_array(
         .collect()
 }
 
-fn labels(block: &Block, source: &str, expected: usize) -> Result<()> {
+pub(crate) fn labels(block: &Block, source: &str, expected: usize) -> Result<()> {
     if block.labels().len() == expected {
         return Ok(());
     }
@@ -192,7 +192,12 @@ fn empty_body(body: &Body, source: &str, block: &str) -> Result<()> {
     reject_blocks(body, source, block)
 }
 
-fn reject_attributes(body: &Body, source: &str, block: &str, allowed: &[&str]) -> Result<()> {
+pub(crate) fn reject_attributes(
+    body: &Body,
+    source: &str,
+    block: &str,
+    allowed: &[&str],
+) -> Result<()> {
     if let Some(attribute) = body
         .attributes()
         .find(|attribute| !allowed.contains(&attribute.key()))
@@ -206,7 +211,7 @@ fn reject_attributes(body: &Body, source: &str, block: &str, allowed: &[&str]) -
     Ok(())
 }
 
-fn reject_blocks(body: &Body, source: &str, block: &str) -> Result<()> {
+pub(crate) fn reject_blocks(body: &Body, source: &str, block: &str) -> Result<()> {
     if let Some(nested) = body.blocks().next() {
         return Err(Error::UnknownNestedBlock {
             file: source.to_owned(),
@@ -217,6 +222,6 @@ fn reject_blocks(body: &Body, source: &str, block: &str) -> Result<()> {
     Ok(())
 }
 
-fn attribute<'a>(body: &'a Body, name: &str) -> Option<&'a Attribute> {
+pub(crate) fn attribute<'a>(body: &'a Body, name: &str) -> Option<&'a Attribute> {
     body.attributes().find(|attribute| attribute.key() == name)
 }

@@ -26,6 +26,13 @@ pub struct CompileRequest<'a> {
     pub heuristic_policy: Policy,
 }
 
+#[derive(Debug)]
+pub struct ParsedCompileRequest<'a> {
+    pub openapi: Source<'a>,
+    pub behaviors: Vec<simile_hcl::Module>,
+    pub heuristic_policy: Policy,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Compiler;
 
@@ -36,17 +43,25 @@ impl Compiler {
     }
 
     pub fn compile(&self, request: CompileRequest<'_>) -> Result<CompiledService> {
-        let contract =
-            simile_openapi::parse(request.openapi.contents).map_err(|source| Error::OpenApi {
-                name: request.openapi.name.to_owned(),
-                source,
-            })?;
         let modules = request
             .behaviors
             .into_iter()
             .map(|source| simile_hcl::parse(simile_hcl::Source::new(source.name, source.contents)))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let behaviors = simile_hcl::compile(modules, &contract)?;
+        self.compile_parsed(ParsedCompileRequest {
+            openapi: request.openapi,
+            behaviors: modules,
+            heuristic_policy: request.heuristic_policy,
+        })
+    }
+
+    pub fn compile_parsed(&self, request: ParsedCompileRequest<'_>) -> Result<CompiledService> {
+        let contract =
+            simile_openapi::parse(request.openapi.contents).map_err(|source| Error::OpenApi {
+                name: request.openapi.name.to_owned(),
+                source,
+            })?;
+        let behaviors = simile_hcl::compile(request.behaviors, &contract)?;
 
         let operations = contract
             .operations

@@ -164,7 +164,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
     let operation = selected.key().to_owned();
     let operation_id = selected.operation_id().map(str::to_owned);
     let prepared = prepare_request(&artifact, &operation, request)?;
-    let outcome = Runtime::new(&artifact).execute_value(OperationValueCall {
+    let outcome = Runtime::from_artifact(artifact).execute_value(OperationValueCall {
         operation: &operation,
         content_type: prepared.content_type.as_deref(),
         body: prepared.body.as_ref(),
@@ -302,7 +302,7 @@ fn header<'a>(headers: &'a BTreeMap<String, String>, name: &str) -> Result<Optio
     Ok(value)
 }
 
-fn read_spec(source: &SpecSource) -> Result<(String, String)> {
+pub(crate) fn read_spec(source: &SpecSource) -> Result<(String, String)> {
     match source {
         SpecSource::Path(path) => {
             let contents = fs::read_to_string(path).map_err(|source| Error::ReadSource {

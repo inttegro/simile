@@ -1,0 +1,26 @@
+[package]
+name = "simile-server"
+description = "HTTP transport for running compiled Simile services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+axum.workspace = true
+serde_json.workspace = true
+simile-artifact.workspace = true
+simile-runtime.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+simile-compiler.workspace = true
+simile-heuristics.workspace = true
+
+[lints]
+workspace = true

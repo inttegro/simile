@@ -1,4 +1,5 @@
 use std::io;
+use std::net::AddrParseError;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -37,6 +38,19 @@ pub enum Error {
         source: serde_json::Error,
     },
 
+    #[error("service configuration names `{configured}`, but `{requested}` was requested")]
+    ServiceNameMismatch {
+        requested: String,
+        configured: String,
+    },
+
+    #[error("service listen host `{host}` is not an IP address: {source}")]
+    InvalidListenHost {
+        host: String,
+        #[source]
+        source: AddrParseError,
+    },
+
     #[error("request contains duplicate case-insensitive `{name}` headers")]
     DuplicateRequestHeader { name: String },
 
@@ -68,6 +82,9 @@ pub enum Error {
 
     #[error(transparent)]
     Artifact(#[from] simile_artifact::Error),
+
+    #[error(transparent)]
+    ServiceConfig(#[from] simile_hcl::Error),
 
     #[error(transparent)]
     Compile(#[from] simile_compiler::Error),

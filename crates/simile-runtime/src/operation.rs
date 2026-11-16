@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use simile_artifact::Artifact;
@@ -12,8 +12,8 @@ use crate::{
 
 /// Executes compiled service operations without depending on a transport framework.
 #[derive(Debug)]
-pub struct Runtime<'a> {
-    artifact: &'a Artifact,
+pub struct Runtime {
+    artifact: Arc<Artifact>,
     replays: Mutex<HashMap<ReplayKey, ReplayRecord>>,
 }
 
@@ -78,9 +78,19 @@ struct ReplayRecord {
     outcome: OperationOutcome,
 }
 
-impl<'a> Runtime<'a> {
+impl Runtime {
     #[must_use]
-    pub fn new(artifact: &'a Artifact) -> Self {
+    pub fn new(artifact: &Artifact) -> Self {
+        Self::from_shared(Arc::new(artifact.clone()))
+    }
+
+    #[must_use]
+    pub fn from_artifact(artifact: Artifact) -> Self {
+        Self::from_shared(Arc::new(artifact))
+    }
+
+    #[must_use]
+    pub fn from_shared(artifact: Arc<Artifact>) -> Self {
         Self {
             artifact,
             replays: Mutex::new(HashMap::new()),
@@ -99,7 +109,7 @@ impl<'a> Runtime<'a> {
         options: ExecutionOptions<'_>,
     ) -> Result<OperationOutcome> {
         let request_body = validate_request_body(
-            self.artifact,
+            &self.artifact,
             IncomingBody {
                 operation: call.operation,
                 content_type: call.content_type,
@@ -128,7 +138,7 @@ impl<'a> Runtime<'a> {
                 })?;
         let request_body = match call.body {
             Some(value) => Some(validate_request_value(
-                self.artifact,
+                &self.artifact,
                 IncomingValue {
                     operation: call.operation,
                     content_type: call.content_type,
@@ -194,7 +204,7 @@ impl<'a> Runtime<'a> {
                     operation: operation_key.to_owned(),
                 })?;
         let response = synthesize_response(
-            self.artifact,
+            &self.artifact,
             ResponseSynthesisRequest {
                 operation: operation_key,
                 status: options.response_status,

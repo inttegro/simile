@@ -9,6 +9,7 @@ members = [
     "crates/simile-openapi",
     "crates/simile-runtime",
     "crates/simile-schema",
+    "crates/simile-server",
     "crates/simile-spec",
 ]
 resolver = "2"
@@ -24,6 +25,7 @@ repository = "https://github.com/inttegro/simile"
 [workspace.dependencies]
 anstream = "1.0.0"
 anstyle = "1.0.14"
+axum = "0.8.9"
 ciborium = "0.2.2"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
 hcl-rs = "0.20.0"
@@ -41,10 +43,12 @@ simile-heuristics = { version = "=0.1.0", path = "crates/simile-heuristics" }
 simile-openapi = { version = "=0.1.0", path = "crates/simile-openapi" }
 simile-runtime = { version = "=0.1.0", path = "crates/simile-runtime" }
 simile-schema = { version = "=0.1.0", path = "crates/simile-schema" }
+simile-server = { version = "=0.1.0", path = "crates/simile-server" }
 simile-spec = { version = "=0.1.0", path = "crates/simile-spec" }
 snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"
 time = { version = "0.3.44", features = ["formatting", "parsing"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 ureq = "3.5.2"

@@ -46,3 +46,29 @@ pub struct Module {
     pub behaviors: Vec<BehaviorDeclaration>,
     pub async_operations: Vec<AsyncDeclaration>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceDocument {
+    pub service: ServiceDeclaration,
+    pub inline_behavior: Module,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceDeclaration {
+    pub name: String,
+    pub listen: ListenDeclaration,
+    pub openapi: OpenApiDeclaration,
+    pub behaviors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListenDeclaration {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OpenApiDeclaration {
+    Path(String),
+    Url(String),
+}

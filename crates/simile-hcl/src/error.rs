@@ -17,6 +17,12 @@ pub enum Error {
     #[error("{file}: unknown top-level block `{block}`")]
     UnknownBlock { file: String, block: String },
 
+    #[error("{file}: service configuration requires exactly one `service` block")]
+    MissingService { file: String },
+
+    #[error("{file}: service configuration contains more than one `service` block")]
+    DuplicateService { file: String },
+
     #[error("{file}: {block} block requires {expected} label(s), found {actual}")]
     Labels {
         file: String,
@@ -44,6 +50,27 @@ pub enum Error {
         file: String,
         block: String,
         attribute: &'static str,
+    },
+
+    #[error("{file}: `{block}` requires nested block `{nested}`")]
+    MissingNestedBlock {
+        file: String,
+        block: String,
+        nested: &'static str,
+    },
+
+    #[error("{file}: `{block}` contains more than one `{nested}` block")]
+    DuplicateNestedBlock {
+        file: String,
+        block: String,
+        nested: &'static str,
+    },
+
+    #[error("{file}: `{block}` requires exactly one of attributes {attributes}")]
+    ExclusiveAttributes {
+        file: String,
+        block: String,
+        attributes: &'static str,
     },
 
     #[error("{file}: `{block}.{attribute}` must be {expected}")]

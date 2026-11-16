@@ -17,6 +17,12 @@ pub enum Error {
 
     #[error("could not serialize command output")]
     Serialize(#[source] serde_json::Error),
+
+    #[error("could not initialize the service runtime")]
+    AsyncRuntime(#[source] io::Error),
+
+    #[error(transparent)]
+    Server(#[from] simile_server::Error),
 }
 
 impl Error {
@@ -25,7 +31,9 @@ impl Error {
         match self {
             Self::Output(error) => error.kind() == io::ErrorKind::BrokenPipe,
             Self::Serialize(error) => error.io_error_kind() == Some(io::ErrorKind::BrokenPipe),
-            Self::InvalidArguments(_) | Self::Core(_) => false,
+            Self::InvalidArguments(_) | Self::Core(_) | Self::AsyncRuntime(_) | Self::Server(_) => {
+                false
+            }
         }
     }
 }
