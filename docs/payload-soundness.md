@@ -65,6 +65,27 @@ Seeded synthesis generates values and then establishes the relationship before s
 candidate through the same validator. If no sound finite candidate can be found within the bounded
 search, synthesis fails instead of returning an unsound payload.
 
+## Relative bounds
+
+A bounded constraint compares one constructive target with fields that supply dynamic bounds:
+
+```yaml
+- bounded:
+    path: /amount_paid
+    minimum: { path: /amount_refunded }
+    maximum: { path: /amount_due }
+```
+
+Supported bounds are `minimum`, `maximum`, `exclusive-minimum`, and `exclusive-maximum`. Every
+participant must use the same numeric or RFC 3339 `date-time` kind. Bound sources must be required
+and non-null, while the target may be optional or nullable because synthesis can establish it. An
+inclusive violation copies the boundary. An exclusive violation chooses the next representable
+integer, finite float, or date-time beyond that boundary.
+
+Only the target is mutable. Simile applies all declared bounds to a candidate transactionally and
+commits the result only when the complete relationship is sound. Contradictory bounds therefore
+fail synthesis without leaving a partially repaired payload.
+
 ## Conditional implications
 
 An implication lets one field state constrain several others:
@@ -140,6 +161,35 @@ and finds a value accepted by every participating schema. That common witness ma
 constructive during synthesis. An empty array contributes no selected values; ordinary OpenAPI
 `required` and item-count rules continue to decide whether that collection may be empty.
 
+## Distinct selected values
+
+A distinct constraint rejects repeated scalar values selected across an array:
+
+```yaml
+- distinct:
+    source: /lines/data/*/id
+```
+
+The selector must contain an array wildcard and resolve to a scalar item schema. During synthesis,
+Simile replaces duplicate values from a finite schema-valid witness pool. If the schema and array
+cardinality do not admit enough distinct values, synthesis fails rather than weakening the rule.
+
+## Scalar set relationships
+
+Set constraints relate two arrays of compatible scalar values:
+
+```yaml
+- set:
+    left: /enabled_methods
+    relation: subset-of
+    right: /supported_methods
+```
+
+Relations are `subset-of`, `superset-of`, and `disjoint`. The right-hand array is the required,
+non-null reference. The left-hand array is the constructive target Simile may repair by removing,
+adding, or excluding values. This direction is explicit so generation never has to guess which of
+two peer collections is authoritative.
+
 ## Numeric equations
 
 An equation computes one numeric field from required numeric source fields:
@@ -153,11 +203,12 @@ An equation computes one numeric field from required numeric source fields:
         - { path: /amount_paid }
 ```
 
-The expression language is deliberately finite. A leaf is `{ path: /some/field }`; `add` accepts
-two or more expressions and `subtract` accepts exactly two. Sources must be required, non-null numeric
-properties and an equation may not read its own target. Integer-only arithmetic stays
-integer-shaped when it fits the JSON integer range. Simile proves the computed result during
-validation and writes that result into the target during synthesis.
+The expression language is deliberately finite. A field leaf is `{ path: /some/field }` and a
+constant leaf is `{ literal: 200 }`. `add` and `multiply` accept two or more expressions;
+`subtract` accepts exactly two. Sources must be required, non-null numeric properties and an
+equation may not read its own target. Integer-only arithmetic stays integer-shaped when it fits the
+JSON integer range. Simile proves the computed result during validation and writes that result into
+the target during synthesis.
 
 Equations do not silently apply currency rounding, clamp negative values, or infer accounting
 meaning. Those are separate declared relationships or ordinary schema bounds.
@@ -176,11 +227,40 @@ An aggregate relates a numeric target to values selected from an array:
       equals: false
 ```
 
-`sum` is the currently supported operation. The source must contain an array wildcard and resolve
-to non-null numeric items. An optional `when` uses the same field-predicate language as an implication. This
-is important for paginated representations: a partial page must not claim to prove a whole-list
-total. Without a guard, the selected collection is treated as complete; the sum of an empty
-collection is zero.
+Supported operations are `sum`, `count`, `min`, and `max`. The source must contain an array
+wildcard. `sum`, `min`, and `max` require non-null numeric selected values; `count` accepts any
+selected value kind. An optional `when` uses the same field-predicate language as an implication.
+This is important for paginated representations: a partial page must not claim to prove a
+whole-list aggregate. Without a guard, the selected collection is treated as complete. The sum or
+count of an empty collection is zero; minimum and maximum have no value for an empty collection and
+therefore cannot prove a target.
+
+## Per-item relationships
+
+Relationships declared on an array's `items` schema are compiled and evaluated once for every
+item. No separate loop construct is required:
+
+```yaml
+lines:
+  type: array
+  items:
+    type: object
+    required: [quantity, unit_amount, amount]
+    properties:
+      quantity: { type: integer, minimum: 1 }
+      unit_amount: { type: integer, minimum: 0 }
+      amount: { type: integer, minimum: 0 }
+    x-simile-constraints:
+      - equation:
+          target: /amount
+          value:
+            multiply:
+              - { path: /quantity }
+              - { path: /unit_amount }
+```
+
+Recursive validation reports the concrete item path for a failure, and recursive synthesis
+establishes the relationship independently inside each generated item.
 
 ## Lifecycle snapshots
 
@@ -232,6 +312,6 @@ and constructive synthesis. Unsupported operators, unresolvable selectors, incom
 kinds, dead witnesses, contradictory consequences, cyclic lifecycles, and other declarations that
 cannot be executed safely fail compilation instead of surviving as inert metadata.
 
-Future relationships such as products, minima and maxima, conditional equations, cardinality,
-set membership across collections, and mutually exclusive branches should be added as explicit
-typed variants. Simile will not infer them from property names or description prose.
+Future relationships such as conditional equations, conditional cardinality, and mutually
+exclusive cross-field branches should be added as explicit typed variants. Simile will not infer
+them from property names or description prose.

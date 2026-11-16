@@ -18,3 +18,7 @@ All notable changes to Simile will be documented in this file.
 - Prove and construct equality across array items, numeric equations, guarded collection sums,
   derived string templates, and acyclic finite lifecycle snapshots from typed
   `x-simile-constraints` declarations.
+- Prove and construct relative numeric and date-time bounds, distinct selected values, scalar set
+  relationships, literal and multiplicative equations, and count, minimum, and maximum aggregates.
+- Apply ordinary soundness constraints recursively to array item schemas so each generated or
+  validated item obeys its own local relationships without a separate iteration language.

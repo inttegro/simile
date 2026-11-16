@@ -49,8 +49,10 @@ The schema compiler supports the request constraints needed for the first runtim
 - numeric and RFC 3339 date-time ordering declared with `x-simile-constraints`;
 - conditional implications with field, membership, or path-comparison antecedents and a
   conjunctive consequence set;
-- scalar equality across fields and array items, numeric equations, and guarded collection sums;
-  and
+- scalar equality across fields and array items, relative field bounds, numeric equations, and
+  guarded collection aggregates;
+- distinct selected scalar values, scalar set relationships, and recursively scoped item
+  constraints; and
 - derived string templates and finite acyclic lifecycle snapshots.
 
 For request validation, a property marked `readOnly` is removed from the object's required set, as

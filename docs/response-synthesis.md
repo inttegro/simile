@@ -31,8 +31,9 @@ The candidate is always validated again before it is encoded.
 
 That final validation includes compiled cross-field relationships. A response is returned only when
 the complete candidate is sound under both the supported OpenAPI schema rules and every recognized
-`x-simile-constraints` declaration. This includes typed ordering, implication, equality, equation,
-aggregate, template, and lifecycle proofs. See [payload soundness](payload-soundness.md).
+`x-simile-constraints` declaration. This includes typed ordering, relative bounds, implication,
+equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle proofs. See
+[payload soundness](payload-soundness.md).
 
 Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits varying
 format-valid values for supported standard formats and the provider formats it understands, while

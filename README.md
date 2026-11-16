@@ -38,7 +38,9 @@ The runtime can validate decoded request values, synthesize varied contract-soun
 synthesize sound JSON responses either from the contract alone or with compatible values projected
 from a validated request. Provider-authored `x-simile-constraints` can prove and construct field
 ordering, conditional implications, equality across array items, numeric equations and aggregates,
-derived string templates, and finite lifecycle snapshots. A protocol-neutral runtime coordinates request validation, response
+relative bounds, distinct selectors, scalar set relationships, derived string templates, and finite
+lifecycle snapshots. Constraints declared on array item schemas apply independently to every item.
+A protocol-neutral runtime coordinates request validation, response
 synthesis, and the declared asynchronous work for one operation. HTTP serving, state, and
 asynchronous resource execution remain subsequent runtime layers; the current CLI does not yet
 serve the compiled service. It can execute one operation directly from a local or hosted OpenAPI
