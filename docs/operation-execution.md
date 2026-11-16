@@ -42,14 +42,21 @@ The `simile run` command compiles a local OpenAPI path or an in-memory `--spec-u
 invokes this runtime boundary once. Callers select the operation using either its stable
 `METHOD /path` key or its exact OpenAPI `operationId`. The selectors are mutually exclusive.
 
-If the caller supplies `--body`, Simile reads it as a normalized JSON value and validates it against
-the selected OpenAPI media type before executing. If any request body is declared and no file is
-supplied, Simile synthesizes and validates a fresh value from the compiled schema. This
-also applies to optional request bodies; only an operation with no request-body declaration runs
-without one. By default, stdout is only the pretty-printed JSON response payload; a bodyless
-response is `null`. Passing `--verbose` prints the selected operation, normalized request, response
-metadata, and asynchronous plan. Each invocation is a fresh process and therefore produces fresh
-schema-valid values; it is not an HTTP server or a persistent replay store.
+If the caller supplies `--request`, Simile reads an inline JSON request object, a bare file path
+(`@file` remains supported), or standard input when passed `-`. The object contains a `headers`
+object and an optional `body`. Header names are matched case-insensitively. `Content-Type` selects
+the OpenAPI media type used to validate a provided body; the remaining headers are retained in the
+execution report but are not interpreted as runtime policy. Supplying two case variants of
+`Content-Type` is an error. A present JSON `null` body is distinct from an omitted body.
+
+If any request body is declared and `--request` is absent, Simile synthesizes and validates a fresh
+value from the compiled schema. This also applies to optional request bodies; only an
+operation with no request-body declaration runs without one by default. `--content-type` selects a
+media type for synthesis and cannot be combined with `--request`. By default, stdout is only the
+pretty-printed JSON response payload; a bodyless response is `null`. Passing `--verbose` prints the
+selected operation, normalized request, provided headers, response metadata, and asynchronous
+plan. Each invocation is a fresh process and therefore produces fresh schema-valid values; it is
+not an HTTP server or a persistent replay store.
 
 ## Replay identity
 

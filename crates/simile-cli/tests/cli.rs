@@ -188,6 +188,111 @@ fn runs_an_operation_by_id_with_a_synthesized_request() {
 }
 
 #[test]
+fn runs_an_operation_with_a_complete_request_object() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--output",
+            "json",
+            "--verbose",
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--request",
+            r#"{"headers":{"Content-Type":"application/json"},"body":{"product":"custom_jingle","quantity":4}}"#,
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"service\": \"Orders\",\n",
+            "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"operation\": \"POST /orders\",\n",
+            "  \"operationId\": \"createOrder\",\n",
+            "  \"request\": {\n",
+            "    \"source\": \"provided\",\n",
+            "    \"headers\": {\n",
+            "      \"Content-Type\": \"application/json\"\n",
+            "    },\n",
+            "    \"contentType\": \"application/json\",\n",
+            "    \"body\": {\n",
+            "      \"product\": \"custom_jingle\",\n",
+            "      \"quantity\": 4\n",
+            "    }\n",
+            "  },\n",
+            "  \"response\": {\n",
+            "    \"status\": 201,\n",
+            "    \"contentType\": \"application/json\",\n",
+            "    \"body\": {\n",
+            "      \"id\": \"ord_simile\",\n",
+            "      \"product\": \"custom_jingle\",\n",
+            "      \"quantity\": 4\n",
+            "    }\n",
+            "  },\n",
+            "  \"asyncOperations\": []\n",
+            "}\n"
+        ));
+}
+
+#[test]
+fn reads_a_complete_request_object_from_a_bare_file_path() {
+    let request =
+        std::env::temp_dir().join(format!("simile-cli-request-{}.json", std::process::id()));
+    fs::write(
+        &request,
+        r#"{"headers":{"Content-Type":"application/json"},"body":{"product":"licensed_beat","quantity":2}}"#,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let request_path = request.to_string_lossy().into_owned();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--request",
+            &request_path,
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"id\": \"ord_simile\",\n",
+            "  \"product\": \"licensed_beat\",\n",
+            "  \"quantity\": 2\n",
+            "}\n"
+        ));
+
+    fs::remove_file(request).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn reads_a_complete_request_object_from_standard_input() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--request",
+            "-",
+        ])
+        .stdin(
+            r#"{"headers":{"Content-Type":"application/json"},"body":{"product":"custom_jingle","quantity":3}}"#,
+        )
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"id\": \"ord_simile\",\n",
+            "  \"product\": \"custom_jingle\",\n",
+            "  \"quantity\": 3\n",
+            "}\n"
+        ));
+}
+
+#[test]
 fn prints_only_the_pretty_response_payload_by_default() {
     Command::new(snapbox::cmd::cargo_bin!("simile"))
         .args([
@@ -354,6 +459,32 @@ fn rejects_multiple_spec_sources_and_operation_selectors() {
             "POST /orders",
             "--operation-id",
             "createOrder",
+        ])
+        .assert()
+        .failure();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--body",
+            "request.json",
+        ])
+        .assert()
+        .failure();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--request",
+            "request.json",
+            "--content-type",
+            "application/json",
         ])
         .assert()
         .failure();

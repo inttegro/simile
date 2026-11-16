@@ -58,6 +58,8 @@ $ simile --output json doctor
 $ simile compile openapi.yaml --behavior orders.hcl --artifact service.similec
 $ simile inspect service.similec
 $ simile run openapi.yaml --operation-id createOrder
+$ simile run openapi.yaml --operation-id createOrder --request request.json
+$ cat request.json | simile run openapi.yaml --operation-id createOrder --request -
 $ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
 $ simile run openapi.yaml --operation-id createOrder --heuristics conservative
 ```
@@ -67,10 +69,22 @@ mutually exclusive with `--spec-url`; a structural `--operation "METHOD /path"` 
 mutually exclusive with the exact, case-sensitive OpenAPI `--operation-id` token. Hosted contracts
 are read into memory and are not saved to disk.
 
-When an operation declares a request body and `--body` is absent, Simile synthesizes a fresh valid
-value from the contract and validates it before execution—even when OpenAPI
-marks that body optional. A provided `--body` is a normalized JSON value that Simile validates
-against the selected media type. Only operations with no request-body declaration run without one.
+When an operation declares a request body and `--request` is absent, Simile synthesizes a fresh
+valid value from the contract and validates it before execution—even when OpenAPI marks that body
+optional. `--request` accepts a complete request object as inline JSON, reads it from a bare file
+path (the `@file` spelling remains supported), or reads standard input when passed `-`:
+
+```json
+{
+  "headers": { "Content-Type": "application/json" },
+  "body": { "product": "custom_jingle", "quantity": 4 }
+}
+```
+
+Header names are matched case-insensitively. The `Content-Type` header selects the OpenAPI media
+type for a provided body; `--content-type` remains available only when Simile is synthesizing the
+request. A supplied request object can omit `body`; required-body operations reject that request,
+while optional-body and bodyless operations execute without a body.
 The command prints the validated request, synthesized response, and any declared asynchronous
 work when `--verbose` is passed. Without `--verbose`, stdout contains only the response payload as
 pretty-printed JSON, making `simile run` directly composable with tools such as `jq`. A bodyless

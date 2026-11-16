@@ -152,12 +152,12 @@ pub struct RunArgs {
     #[arg(long, value_name = "ID")]
     pub operation_id: Option<String>,
 
-    /// Read a normalized JSON request value from this file instead of synthesizing one.
-    #[arg(long, value_name = "FILE")]
-    pub body: Option<PathBuf>,
+    /// Read a JSON request object inline, from a file path, or from stdin with `-`.
+    #[arg(long, value_name = "JSON|FILE|-")]
+    pub request: Option<String>,
 
-    /// Select the request media type.
-    #[arg(long, value_name = "TYPE")]
+    /// Select the request media type when synthesizing a request.
+    #[arg(long, value_name = "TYPE", conflicts_with = "request")]
     pub content_type: Option<String>,
 
     /// Control provider-neutral synthesis inference for this run.

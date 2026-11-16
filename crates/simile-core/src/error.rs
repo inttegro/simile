@@ -17,19 +17,28 @@ pub enum Error {
         source: io::Error,
     },
 
-    #[error("could not read request body `{path}`: {source}")]
-    ReadRequestBody {
+    #[error("could not read request `{path}`: {source}")]
+    ReadRequest {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
 
-    #[error("request body `{path}` is not valid JSON: {source}")]
-    InvalidRequestBody {
-        path: PathBuf,
+    #[error("could not read request from stdin: {source}")]
+    ReadRequestStdin {
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("request from {source_name} is not a valid request object: {source}")]
+    InvalidRequest {
+        source_name: String,
         #[source]
         source: serde_json::Error,
     },
+
+    #[error("request contains duplicate case-insensitive `{name}` headers")]
+    DuplicateRequestHeader { name: String },
 
     #[error("could not read remote service source: {source}")]
     FetchSource {

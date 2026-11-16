@@ -32,7 +32,7 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
         spec,
         behaviors: arguments.behavior,
         operation,
-        body: arguments.body,
+        request: arguments.request.map(ops::RequestInput::from_argument),
         content_type: arguments.content_type,
         heuristic_policy: arguments.heuristics.into(),
     })?;
@@ -70,6 +70,9 @@ fn render_human(report: &ops::RunReport, terminal: &Terminal) -> Result<()> {
         "{MUTED}request{MUTED:#} {request_source}{}",
         media_suffix(report.request.content_type.as_deref())
     ))?;
+    for (name, value) in &report.request.headers {
+        terminal.line(format_args!("{MUTED}header{MUTED:#} {name}: {value}"))?;
+    }
     if let Some(body) = &report.request.body {
         terminal.line(format_args!("{body}"))?;
     }
