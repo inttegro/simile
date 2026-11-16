@@ -25,13 +25,14 @@ payload.
 ## Body generation
 
 For a response with content, Simile selects a declared JSON media type unless the caller asks for
-one explicitly. It prefers a valid media example, schema example or default, constant, or enum
-value before constructing the smallest finite value accepted by the compiled response schema. The
-candidate is always validated again before it is encoded.
+one explicitly. Fresh synthesis varies unconstrained values instead of pinning every call to a
+published example or default. Constants remain fixed and enums stay within their declared values.
+The candidate is always validated again before it is encoded.
 
-Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits deterministic
+Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits varying
 format-valid values for supported standard formats and the provider formats it understands, while
-JSON integers remain integer-shaped on the wire. It does not infer formats from descriptions.
+JSON integers remain integer-shaped on the wire. It does not infer formats from descriptions. A
+seeded synthesis entry point reproduces a generated response when a test needs exact replay.
 
 This spec-only path is the baseline and works without request context.
 

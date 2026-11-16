@@ -153,7 +153,7 @@ See [operation execution](operation-execution.md).
 ## Deliberate next boundaries
 
 The current compiler establishes source ownership, cross-source validation, a runtime artifact
-boundary, compiled JSON request validation, deterministic request synthesis, deterministic
-request-aware response synthesis, and protocol-neutral operation coordination. Subsequent slices
-can add form and multipart codecs, parameter validation, state actions, scenario inputs,
+boundary, compiled JSON request validation, seeded request and request-aware response synthesis,
+identity-based in-memory replay, and protocol-neutral operation coordination. Subsequent slices can
+add form and multipart codecs, parameter validation, durable state actions, scenario inputs,
 executable asynchronous instructions, and HTTP serving without collapsing these boundaries.

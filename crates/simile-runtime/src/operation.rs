@@ -1,15 +1,20 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use serde_json::Value;
 use simile_artifact::Artifact;
 use simile_spec::ResourceRef;
 
 use crate::{
-    IncomingBody, ResponseSynthesisRequest, Result, SynthesizedResponse, ValidatedBody,
-    synthesize_response, validate_request_body,
+    Error, IncomingBody, IncomingValue, ResponseSynthesisRequest, Result, SynthesizedResponse,
+    ValidatedBody, synthesize_response, validate_request_body, validate_request_value,
 };
 
 /// Executes compiled service operations without depending on a transport framework.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Runtime<'a> {
     artifact: &'a Artifact,
+    replays: Mutex<HashMap<ReplayKey, ReplayRecord>>,
 }
 
 /// One operation invocation selected by a transport or another runtime client.
@@ -20,11 +25,29 @@ pub struct OperationCall<'a> {
     pub body: &'a [u8],
 }
 
+/// One operation invocation whose request body has already been decoded by its adapter.
+#[derive(Clone, Copy, Debug)]
+pub struct OperationValueCall<'a> {
+    pub operation: &'a str,
+    pub content_type: Option<&'a str>,
+    pub body: Option<&'a Value>,
+}
+
+/// An identity that makes a repeated invocation replay its first completed outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReplayIdentity<'a> {
+    /// A caller-supplied idempotency key for a mutation.
+    IdempotencyKey(&'a str),
+    /// The stable identity of a resource addressed by a GET request.
+    Resource(&'a str),
+}
+
 /// Optional controls for scenarios that need a specific declared response.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExecutionOptions<'a> {
     pub response_status: Option<u16>,
     pub response_content_type: Option<&'a str>,
+    pub replay: Option<ReplayIdentity<'a>>,
 }
 
 /// The validated request, immediate response, and declared follow-up work for an operation.
@@ -43,10 +66,25 @@ pub struct PlannedAsyncOperation {
     resources: Vec<ResourceRef>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ReplayKey {
+    Idempotency { operation: String, key: String },
+    Resource { operation: String, id: String },
+}
+
+#[derive(Clone, Debug)]
+struct ReplayRecord {
+    request_body: Option<ValidatedBody>,
+    outcome: OperationOutcome,
+}
+
 impl<'a> Runtime<'a> {
     #[must_use]
-    pub const fn new(artifact: &'a Artifact) -> Self {
-        Self { artifact }
+    pub fn new(artifact: &'a Artifact) -> Self {
+        Self {
+            artifact,
+            replays: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Execute an operation using the response selected by its compiled contract and behavior.
@@ -60,11 +98,6 @@ impl<'a> Runtime<'a> {
         call: OperationCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationOutcome> {
-        let operation = self.artifact.operation(call.operation).ok_or_else(|| {
-            crate::Error::UnknownOperation {
-                operation: call.operation.to_owned(),
-            }
-        })?;
         let request_body = validate_request_body(
             self.artifact,
             IncomingBody {
@@ -73,10 +106,97 @@ impl<'a> Runtime<'a> {
                 bytes: call.body,
             },
         )?;
+        self.complete(call.operation, request_body, options)
+    }
+
+    /// Execute an operation from a transport-neutral value decoded by an adapter.
+    pub fn execute_value(&self, call: OperationValueCall<'_>) -> Result<OperationOutcome> {
+        self.execute_value_with_options(call, ExecutionOptions::default())
+    }
+
+    /// Execute a decoded operation value with explicit response controls.
+    pub fn execute_value_with_options(
+        &self,
+        call: OperationValueCall<'_>,
+        options: ExecutionOptions<'_>,
+    ) -> Result<OperationOutcome> {
+        let operation =
+            self.artifact
+                .operation(call.operation)
+                .ok_or_else(|| Error::UnknownOperation {
+                    operation: call.operation.to_owned(),
+                })?;
+        let request_body = match call.body {
+            Some(value) => Some(validate_request_value(
+                self.artifact,
+                IncomingValue {
+                    operation: call.operation,
+                    content_type: call.content_type,
+                    value,
+                },
+            )?),
+            None if operation
+                .request_body()
+                .is_some_and(|body| body.is_required()) =>
+            {
+                return Err(Error::BodyRequired {
+                    operation: call.operation.to_owned(),
+                });
+            }
+            None => None,
+        };
+        self.complete(call.operation, request_body, options)
+    }
+
+    fn complete(
+        &self,
+        operation_key: &str,
+        request_body: Option<ValidatedBody>,
+        options: ExecutionOptions<'_>,
+    ) -> Result<OperationOutcome> {
+        let Some(identity) = options.replay else {
+            return self.produce_outcome(operation_key, request_body, options);
+        };
+        let key = replay_key(operation_key, identity)?;
+        let mut replays = self
+            .replays
+            .lock()
+            .map_err(|_| Error::ReplayStateUnavailable)?;
+        if let Some(record) = replays.get(&key) {
+            if matches!(key, ReplayKey::Idempotency { .. }) && record.request_body != request_body {
+                return Err(Error::IdempotencyConflict {
+                    operation: operation_key.to_owned(),
+                });
+            }
+            return Ok(record.outcome.clone());
+        }
+        let outcome = self.produce_outcome(operation_key, request_body.clone(), options)?;
+        replays.insert(
+            key,
+            ReplayRecord {
+                request_body,
+                outcome: outcome.clone(),
+            },
+        );
+        Ok(outcome)
+    }
+
+    fn produce_outcome(
+        &self,
+        operation_key: &str,
+        request_body: Option<ValidatedBody>,
+        options: ExecutionOptions<'_>,
+    ) -> Result<OperationOutcome> {
+        let operation =
+            self.artifact
+                .operation(operation_key)
+                .ok_or_else(|| Error::UnknownOperation {
+                    operation: operation_key.to_owned(),
+                })?;
         let response = synthesize_response(
             self.artifact,
             ResponseSynthesisRequest {
-                operation: call.operation,
+                operation: operation_key,
                 status: options.response_status,
                 content_type: options.response_content_type,
                 request_body: request_body.as_ref(),
@@ -94,11 +214,41 @@ impl<'a> Runtime<'a> {
             .collect();
 
         Ok(OperationOutcome {
-            operation: call.operation.to_owned(),
+            operation: operation_key.to_owned(),
             request_body,
             response,
             async_operations,
         })
+    }
+}
+
+fn replay_key(operation: &str, identity: ReplayIdentity<'_>) -> Result<ReplayKey> {
+    match identity {
+        ReplayIdentity::IdempotencyKey(key) => {
+            let key = key.trim();
+            if key.is_empty() {
+                return Err(Error::EmptyReplayIdentity);
+            }
+            Ok(ReplayKey::Idempotency {
+                operation: operation.to_owned(),
+                key: key.to_owned(),
+            })
+        }
+        ReplayIdentity::Resource(id) => {
+            if !operation.starts_with("GET ") {
+                return Err(Error::ResourceReplayRequiresGet {
+                    operation: operation.to_owned(),
+                });
+            }
+            let id = id.trim();
+            if id.is_empty() {
+                return Err(Error::EmptyReplayIdentity);
+            }
+            Ok(ReplayKey::Resource {
+                operation: operation.to_owned(),
+                id: id.to_owned(),
+            })
+        }
     }
 }
 

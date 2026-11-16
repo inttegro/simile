@@ -21,9 +21,12 @@ fn synthesizes_a_valid_response_without_request_context() {
 
     assert_eq!(response.status(), 201);
     assert_eq!(response.media_type(), Some("application/json"));
-    assert_eq!(
-        response.value().and_then(|value| value.get("id")),
-        Some(&json!("ord_simile"))
+    assert!(
+        response
+            .value()
+            .and_then(|value| value.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|id| !id.is_empty())
     );
     assert_eq!(
         response.value().and_then(|value| value.get("status")),
@@ -80,9 +83,17 @@ paths:
         .value()
         .unwrap_or_else(|| panic!("response body should be present"));
 
-    assert_eq!(value["created"], 0);
-    assert_eq!(value["available_at"], "1970-01-01T00:00:00Z");
-    assert_eq!(value["note"], "example");
+    assert!(value["created"].as_i64().is_some());
+    assert!(
+        value["available_at"]
+            .as_str()
+            .is_some_and(|value| value.contains('T') && value.ends_with('Z'))
+    );
+    assert!(
+        value["note"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 #[test]
@@ -119,7 +130,7 @@ fn carries_compatible_request_values_into_the_response() {
     assert_eq!(value["customer"]["email"], "buyer@example.com");
     assert_eq!(value["customer"]["loyalty"], "new");
     assert_eq!(value["amount"], 4200);
-    assert_eq!(value["id"], "ord_simile");
+    assert!(value["id"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(value["status"], "pending");
     assert!(value.get("secret").is_none());
 }

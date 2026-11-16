@@ -1,6 +1,7 @@
 mod compile;
 mod doctor;
 mod inspect;
+mod run;
 mod version;
 
 use simile_core::Context;
@@ -20,6 +21,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Compile(arguments) => compile::execute(arguments, terminal),
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
+        Command::Run(arguments) => run::execute(arguments, terminal),
         Command::Version => version::execute(ctx, terminal),
     }
 }

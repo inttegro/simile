@@ -9,9 +9,13 @@ use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
 pub use operation::{
-    ExecutionOptions, OperationCall, OperationOutcome, PlannedAsyncOperation, Runtime,
+    ExecutionOptions, OperationCall, OperationOutcome, OperationValueCall, PlannedAsyncOperation,
+    ReplayIdentity, Runtime,
 };
-pub use response::{ResponseSynthesisRequest, SynthesizedResponse, synthesize_response};
+pub use response::{
+    ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
+    synthesize_response_with_seed,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -30,7 +34,39 @@ pub struct SynthesisRequest<'a> {
     pub content_type: Option<&'a str>,
 }
 
-/// A deterministic request body synthesized from a compiled OpenAPI contract.
+/// A normalized request value selected against one declared OpenAPI media type.
+#[derive(Clone, Copy, Debug)]
+pub struct IncomingValue<'a> {
+    pub operation: &'a str,
+    pub content_type: Option<&'a str>,
+    pub value: &'a Value,
+}
+
+/// A normalized request value synthesized from a compiled OpenAPI contract.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SynthesizedValue {
+    media_type: String,
+    value: Value,
+}
+
+impl SynthesizedValue {
+    #[must_use]
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &Value {
+        &self.value
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, Value) {
+        (self.media_type, self.value)
+    }
+}
+
+/// A request body synthesized from a compiled OpenAPI contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthesizedBody {
     media_type: String,
@@ -116,7 +152,7 @@ pub enum Error {
     #[error("Content-Type `{content_type}` does not yet have a request decoder")]
     UnsupportedEncoding { content_type: String },
 
-    #[error("operation `{operation}` has no declared JSON media type to synthesize")]
+    #[error("operation `{operation}` has no declared media type to synthesize")]
     NoSynthesisMediaType {
         operation: String,
         expected: Vec<String>,
@@ -124,6 +160,18 @@ pub enum Error {
 
     #[error("operation `{operation}` does not declare a response matching HTTP {status}")]
     ResponseNotDeclared { operation: String, status: u16 },
+
+    #[error("a replay identity cannot be empty")]
+    EmptyReplayIdentity,
+
+    #[error("resource replay is only valid for GET operations, not `{operation}`")]
+    ResourceReplayRequiresGet { operation: String },
+
+    #[error("idempotency key was already used with a different request for `{operation}`")]
+    IdempotencyConflict { operation: String },
+
+    #[error("runtime replay state is unavailable")]
+    ReplayStateUnavailable,
 
     #[error("operation `{operation}` has no concrete response status to synthesize")]
     NoResponseStatus { operation: String },
@@ -254,10 +302,110 @@ pub fn validate_request_body(
     }))
 }
 
-/// Synthesize a deterministic JSON body and verify it against the same compiled request schema.
+/// Validate a transport-neutral request value against one declared OpenAPI media type.
+pub fn validate_request_value(
+    artifact: &Artifact,
+    request: IncomingValue<'_>,
+) -> Result<ValidatedBody> {
+    let operation =
+        artifact
+            .operation(request.operation)
+            .ok_or_else(|| Error::UnknownOperation {
+                operation: request.operation.to_owned(),
+            })?;
+    let plan = operation
+        .request_body()
+        .ok_or_else(|| Error::BodyNotDeclared {
+            operation: request.operation.to_owned(),
+        })?;
+    let content_type = select_request_media_type(&plan, request.content_type).ok_or_else(|| {
+        Error::NoSynthesisMediaType {
+            operation: request.operation.to_owned(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        }
+    })?;
+    let selected = plan
+        .select(&content_type)
+        .ok_or_else(|| Error::UnsupportedMediaType {
+            operation: request.operation.to_owned(),
+            content_type: content_type.clone(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        })?;
+    let issues = selected.validate(request.value);
+    if !issues.is_empty() {
+        return Err(Error::InvalidBody { issues });
+    }
+    Ok(ValidatedBody {
+        operation: request.operation.to_owned(),
+        media_type: selected.requested().to_owned(),
+        value: request.value.clone(),
+    })
+}
+
+/// Synthesize a fresh transport-neutral request value from the compiled schema.
+pub fn synthesize_request_value(
+    artifact: &Artifact,
+    request: SynthesisRequest<'_>,
+) -> Result<SynthesizedValue> {
+    synthesize_request_value_with_seed(artifact, request, rand::random())
+}
+
+/// Synthesize a reproducible transport-neutral request value from the compiled schema.
+pub fn synthesize_request_value_with_seed(
+    artifact: &Artifact,
+    request: SynthesisRequest<'_>,
+    seed: u64,
+) -> Result<SynthesizedValue> {
+    let operation =
+        artifact
+            .operation(request.operation)
+            .ok_or_else(|| Error::UnknownOperation {
+                operation: request.operation.to_owned(),
+            })?;
+    let plan = operation
+        .request_body()
+        .ok_or_else(|| Error::BodyNotDeclared {
+            operation: request.operation.to_owned(),
+        })?;
+    let content_type = select_request_media_type(&plan, request.content_type).ok_or_else(|| {
+        Error::NoSynthesisMediaType {
+            operation: request.operation.to_owned(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        }
+    })?;
+    let selected = plan
+        .select(&content_type)
+        .ok_or_else(|| Error::UnsupportedMediaType {
+            operation: request.operation.to_owned(),
+            content_type: content_type.clone(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        })?;
+    let value = selected
+        .synthesize_fuzz(seed)
+        .map_err(|source| Error::Synthesis { source })?;
+    let issues = selected.validate(&value);
+    if !issues.is_empty() {
+        return Err(Error::InvalidBody { issues });
+    }
+    Ok(SynthesizedValue {
+        media_type: selected.requested().to_owned(),
+        value,
+    })
+}
+
+/// Synthesize a fresh JSON body and verify it against the same compiled request schema.
 pub fn synthesize_request_body(
     artifact: &Artifact,
     request: SynthesisRequest<'_>,
+) -> Result<SynthesizedBody> {
+    synthesize_request_body_with_seed(artifact, request, rand::random())
+}
+
+/// Synthesize a reproducible JSON body and verify it against the compiled request schema.
+pub fn synthesize_request_body_with_seed(
+    artifact: &Artifact,
+    request: SynthesisRequest<'_>,
+    seed: u64,
 ) -> Result<SynthesizedBody> {
     let operation =
         artifact
@@ -293,7 +441,7 @@ pub fn synthesize_request_body(
         });
     }
     let value = selected
-        .synthesize()
+        .synthesize_fuzz(seed)
         .map_err(|source| Error::Synthesis { source })?;
     let issues = selected.validate(&value);
     if !issues.is_empty() {
@@ -318,6 +466,23 @@ fn preferred_json_media_type(plan: &simile_schema::BoundRequestBody<'_>) -> Opti
                 .any(|media_type| media_type == "application/*" || media_type == "*/*")
                 .then(|| "application/json".to_owned())
         })
+}
+
+fn select_request_media_type(
+    plan: &simile_schema::BoundRequestBody<'_>,
+    requested: Option<&str>,
+) -> Option<String> {
+    requested
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| preferred_json_media_type(plan))
+        .or_else(|| {
+            plan.media_types()
+                .find(|media_type| *media_type == "application/x-www-form-urlencoded")
+                .map(str::to_owned)
+        })
+        .or_else(|| plan.media_types().next().map(str::to_owned))
 }
 
 fn is_json(media_type: &str) -> bool {

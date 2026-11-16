@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let terminal = Terminal::new(cli.output, cli.color);
+    let terminal = Terminal::new(cli.output, cli.color, cli.verbose > 0);
 
     match run(cli, &terminal) {
         Ok(commands::Status::Success) => ExitCode::SUCCESS,

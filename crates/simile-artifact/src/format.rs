@@ -61,6 +61,7 @@ pub struct Artifact {
 #[derive(Clone, Copy, Debug)]
 pub struct ArtifactOperation<'a> {
     key: &'a str,
+    operation_id: Option<&'a str>,
     request_body: Option<&'a RequestBodyPlan>,
     responses: &'a [ResponseRecord],
     behavior_response_status: Option<u16>,
@@ -98,6 +99,11 @@ impl<'a> ArtifactOperation<'a> {
     #[must_use]
     pub const fn key(&self) -> &'a str {
         self.key
+    }
+
+    #[must_use]
+    pub const fn operation_id(&self) -> Option<&'a str> {
+        self.operation_id
     }
 
     #[must_use]
@@ -233,23 +239,40 @@ impl Artifact {
             .3
             .binary_search_by(|operation| self.string(operation.0).cmp(key))
             .ok()
-            .map(|index| {
-                let operation = &self.payload.3[index];
-                ArtifactOperation {
-                    key: self.string(operation.0),
-                    request_body: operation.6.as_ref(),
-                    responses: &operation.7,
-                    behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
-                    triggers: operation
-                        .9
-                        .as_ref()
-                        .map_or(&[], |behavior| behavior.1.as_slice()),
-                    strings: &self.payload.1,
-                    resources: &self.payload.5,
-                    async_operations: &self.payload.6,
-                    schemas: &self.payload.7,
-                }
+            .map(|index| self.operation_at(index))
+    }
+
+    /// Find a compiled operation by its exact, case-sensitive OpenAPI `operationId`.
+    #[must_use]
+    pub fn operation_by_id(&self, operation_id: &str) -> Option<ArtifactOperation<'_>> {
+        self.payload
+            .3
+            .iter()
+            .position(|operation| {
+                operation
+                    .4
+                    .is_some_and(|id| self.string(id) == operation_id)
             })
+            .map(|index| self.operation_at(index))
+    }
+
+    fn operation_at(&self, index: usize) -> ArtifactOperation<'_> {
+        let operation = &self.payload.3[index];
+        ArtifactOperation {
+            key: self.string(operation.0),
+            operation_id: operation.4.map(|id| self.string(id)),
+            request_body: operation.6.as_ref(),
+            responses: &operation.7,
+            behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
+            triggers: operation
+                .9
+                .as_ref()
+                .map_or(&[], |behavior| behavior.1.as_slice()),
+            strings: &self.payload.1,
+            resources: &self.payload.5,
+            async_operations: &self.payload.6,
+            schemas: &self.payload.7,
+        }
     }
 
     fn string(&self, id: StringId) -> &str {

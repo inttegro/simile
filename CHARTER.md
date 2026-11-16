@@ -35,7 +35,7 @@ Simile provides:
 
 - a consistent local runtime for those definitions;
 - isolated, disposable state that can be inspected and reset;
-- deterministic execution and explicit control over asynchronous progress;
+- schema-valid variability, identity-based replay, and explicit control over asynchronous progress;
 - observable operation, event, and failure history;
 - stable human and machine interfaces for local development and CI; and
 - clear reporting when behaviour is unsupported or intentionally differs from production.
@@ -51,9 +51,10 @@ response, authentication, and error contract. Simile accepts the OpenAPI 3.0, 3.
 lines and preserves the provider's exact patch version.
 
 HCL is an optional behavior overlay. An operation without HCL remains executable from OpenAPI:
-Simile validates the request, prefers published examples, and otherwise synthesizes a
-schema-valid deterministic response. It does not infer storage, CRUD semantics, or asynchronous
-work from a route name.
+Simile validates the request and synthesizes a schema-valid response. Fresh calls vary within the
+published schema; repeated calls replay only when the transport supplies the same idempotency key
+or the same GET resource identity. It does not infer storage, CRUD semantics, or asynchronous work
+from a route name.
 
 An HCL `behavior` may select a response already declared by OpenAPI and attach observable work that
 OpenAPI cannot describe. It cannot add an endpoint, contradict a schema, or name a private
@@ -87,10 +88,12 @@ on the provider's availability. The same definition should run on a developer ma
 The provider remains the authority on service semantics. Definitions are explicit, reviewable, and
 versioned so a test run can be reproduced against the same behavioural contract.
 
-### Deterministic by default
+### Variable by default, replayable by identity
 
-Time, randomness, retries, identifiers, and failure scenarios must be controllable where they
-affect reproducibility. Simile should make nondeterminism deliberate rather than incidental.
+Independent calls should exercise integrations with different schema-valid values instead of one
+permanent fixture. Reusing an idempotency key must replay the first outcome, and repeating a GET for
+the same resource must return that resource's existing outcome. Seeds, time, retries, identifiers,
+and failure scenarios remain controllable so an observed run can be reproduced deliberately.
 
 ### Inspectable, disposable state
 

@@ -2,7 +2,8 @@ use serde_json::json;
 use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
-    Error, IncomingBody, SynthesisRequest, synthesize_request_body, validate_request_body,
+    Error, IncomingBody, SynthesisRequest, synthesize_request_body,
+    synthesize_request_body_with_seed, validate_request_body,
 };
 
 #[test]
@@ -93,8 +94,16 @@ fn synthesizes_a_body_that_round_trips_through_validation() {
     .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(body.media_type(), "application/json");
-    assert_eq!(body.value()["customer"]["email"], "example");
-    assert_eq!(body.value()["items"][0]["quantity"], 1);
+    assert!(
+        body.value()["customer"]["email"]
+            .as_str()
+            .is_some_and(|email| email.len() >= 3)
+    );
+    assert!(
+        body.value()["items"][0]["quantity"]
+            .as_i64()
+            .is_some_and(|quantity| quantity >= 1)
+    );
     let validated = validate_request_body(
         &artifact,
         IncomingBody {
@@ -109,18 +118,39 @@ fn synthesizes_a_body_that_round_trips_through_validation() {
 }
 
 #[test]
-fn prefers_a_valid_declared_media_example() {
+fn fuzz_synthesis_is_not_pinned_to_a_declared_example() {
     let artifact = artifact_with_example();
-    let body = synthesize_request_body(
+    let first = synthesize_request_body_with_seed(
         &artifact,
         SynthesisRequest {
             operation: "POST /messages",
             content_type: Some("application/json"),
         },
+        41,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let second = synthesize_request_body_with_seed(
+        &artifact,
+        SynthesisRequest {
+            operation: "POST /messages",
+            content_type: Some("application/json"),
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let replay = synthesize_request_body_with_seed(
+        &artifact,
+        SynthesisRequest {
+            operation: "POST /messages",
+            content_type: Some("application/json"),
+        },
+        41,
     )
     .unwrap_or_else(|error| panic!("{error}"));
 
-    assert_eq!(body.value(), &json!({"text": "hello"}));
+    assert_ne!(first.value(), &json!({"text": "hello"}));
+    assert_ne!(first.value(), second.value());
+    assert_eq!(first.value(), replay.value());
 }
 
 fn artifact() -> simile_artifact::Artifact {

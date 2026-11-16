@@ -31,6 +31,13 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
     assert_eq!(summary.async_operations, 1);
     assert_eq!(summary.encoded_bytes, first.len());
     assert_eq!(summary.payload_sha256.len(), 64);
+
+    let operation = artifact
+        .operation_by_id("createOrder")
+        .unwrap_or_else(|| panic!("operationId should be indexed"));
+    assert_eq!(operation.key(), "POST /orders");
+    assert_eq!(operation.operation_id(), Some("createOrder"));
+    assert!(artifact.operation_by_id("CreateOrder").is_none());
 }
 
 #[test]

@@ -324,6 +324,40 @@ fn synthesizes_nested_required_values_and_combinators() {
 }
 
 #[test]
+fn representative_synthesis_includes_finite_optional_properties() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "description": {"type": "string"},
+                "email": {"type": "string", "format": "email"},
+                "name": {"type": "string"}
+            }
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert_eq!(media.synthesize().ok(), Some(json!({})));
+    let value = media
+        .synthesize_representative()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        value,
+        json!({
+            "description": "example",
+            "email": "user@example.com",
+            "name": "example"
+        })
+    );
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
 fn synthesizes_explicit_formats_without_reading_descriptions() {
     let (plan, schemas) = plan(
         json!({

@@ -26,6 +26,7 @@ anstyle = "1.0.14"
 ciborium = "0.2.2"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
 hcl-rs = "0.20.0"
+rand = "0.9.2"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -43,6 +44,7 @@ snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+ureq = "3.5.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

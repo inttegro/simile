@@ -34,12 +34,12 @@ Read the [service charter](CHARTER.md) for the product boundary and design princ
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,
 parse behavior modules written in HCL, compile both into one validated service model, and emit a
 versioned `.similec` runtime artifact. Request and response schemas are compiled into the artifact.
-The runtime can validate JSON requests, synthesize valid JSON requests, and synthesize valid JSON
-responses either from the contract alone or with compatible values projected from a validated
-request. A protocol-neutral runtime coordinates request validation, response synthesis,
+The runtime can validate decoded request values, synthesize varied schema-valid requests, and
+synthesize valid JSON responses either from the contract alone or with compatible values projected
+from a validated request. A protocol-neutral runtime coordinates request validation, response synthesis,
 and the declared asynchronous work for one operation. HTTP serving, state, and asynchronous
 resource execution remain subsequent runtime layers; the current CLI does not yet serve the
-compiled service.
+compiled service. It can execute one operation directly from a local or hosted OpenAPI contract.
 
 The available foundation commands are:
 
@@ -49,7 +49,24 @@ $ simile doctor
 $ simile --output json doctor
 $ simile compile openapi.yaml --behavior orders.hcl --artifact service.similec
 $ simile inspect service.similec
+$ simile run openapi.yaml --operation-id createOrder
+$ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
 ```
+
+`run` accepts exactly one contract source and one operation selector. A positional source path is
+mutually exclusive with `--spec-url`; a structural `--operation "METHOD /path"` selector is
+mutually exclusive with the exact, case-sensitive OpenAPI `--operation-id` token. Hosted contracts
+are read into memory and are not saved to disk.
+
+When an operation declares a request body and `--body` is absent, Simile synthesizes a fresh valid
+value from the contract and validates it before execution—even when OpenAPI
+marks that body optional. A provided `--body` is a normalized JSON value that Simile validates
+against the selected media type. Only operations with no request-body declaration run without one.
+The command prints the validated request, synthesized response, and any declared asynchronous
+work when `--verbose` is passed. Without `--verbose`, stdout contains only the response payload as
+pretty-printed JSON, making `simile run` directly composable with tools such as `jq`. A bodyless
+response is printed as `null`. The command does not execute asynchronous work or start an HTTP
+server.
 
 OpenAPI JSON/YAML and HCL are source formats. They are not the runtime storage format. A
 `.similec` file contains a compact indexed model encoded as deterministic CBOR, wrapped in a
@@ -62,8 +79,10 @@ The supported request-validation boundary is documented in
 in [response synthesis](docs/response-synthesis.md). The transport-independent execution boundary
 is documented in [operation execution](docs/operation-execution.md).
 
-OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile will derive its
-default deterministic behavior from the OpenAPI operation. HCL is used only when a provider needs
+OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
+default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a
+long-lived runtime replays an outcome only when its adapter supplies the same idempotency key or
+GET resource identity. HCL is used only when a provider needs
 to select a declared response or describe observable effects that OpenAPI cannot express:
 
 ```hcl
@@ -94,12 +113,13 @@ Simile follows a pipeline of narrow ownership boundaries:
   versioned `.similec` envelope.
 - `simile-openapi` converts supported OpenAPI feature lines into a canonical HTTP contract.
 - `simile-schema` compiles request and response schemas into portable graphs, validates decoded
-  values, and performs deterministic synthesis.
+  values, and performs seeded schema-valid synthesis.
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
-- `simile-runtime` loads an operation from an artifact, applies HTTP body semantics, validates
-  requests, synthesizes responses, plans declared asynchronous work, and reports protocol or
-  schema failures without depending on source formats or a server framework.
+- `simile-runtime` loads an operation from an artifact, validates normalized values independently
+  of their wire encoding, synthesizes responses, replays identified invocations, plans declared
+  asynchronous work, and reports protocol or schema failures without depending on source formats
+  or a server framework.
 - `simile-spec` contains only the version-neutral model shared by compilation units.
 - Files under `commands/` are thin adapters. Behaviour belongs under `ops/`.
 - Human output goes to stdout, diagnostics go to stderr, and JSON never contains ANSI colour.

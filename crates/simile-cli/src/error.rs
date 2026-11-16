@@ -6,6 +6,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("invalid command arguments: {0}")]
+    InvalidArguments(&'static str),
+
     #[error(transparent)]
     Core(#[from] simile_core::Error),
 
@@ -22,7 +25,7 @@ impl Error {
         match self {
             Self::Output(error) => error.kind() == io::ErrorKind::BrokenPipe,
             Self::Serialize(error) => error.io_error_kind() == Some(io::ErrorKind::BrokenPipe),
-            Self::Core(_) => false,
+            Self::InvalidArguments(_) | Self::Core(_) => false,
         }
     }
 }

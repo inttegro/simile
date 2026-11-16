@@ -44,7 +44,7 @@ examples. Those roots point into the shared catalog, where component schemas are
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
 response graphs. The catalog also contains compact schema example and default hints, plus explicit
-OpenAPI `format` annotations used by deterministic synthesis. Description prose is deliberately not
+OpenAPI `format` annotations used by seeded synthesis. Description prose is deliberately not
 interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
 or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
 schemas into every operation.

@@ -11,7 +11,7 @@ boundaries.
 - `crates/simile-core`: application context, domain types and operations.
 - `crates/simile-hcl`: HCL syntax parsing and semantic validation of behavior overlays.
 - `crates/simile-openapi`: JSON/YAML OpenAPI parsing and feature-line adapters.
-- `crates/simile-schema`: compiled JSON Schema graphs, validation and deterministic synthesis.
+- `crates/simile-schema`: compiled JSON Schema graphs, validation and seeded synthesis.
 - `crates/simile-runtime`: protocol-neutral execution primitives over loaded artifacts.
 - `crates/simile-spec`: version-neutral API, behavior and compiled-service types.
 - `crates/simile-cli/src/commands`: thin adapters from CLI arguments to core operations.

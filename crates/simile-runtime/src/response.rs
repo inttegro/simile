@@ -14,7 +14,7 @@ pub struct ResponseSynthesisRequest<'a> {
     pub request_body: Option<&'a ValidatedBody>,
 }
 
-/// A deterministic HTTP response synthesized from a compiled OpenAPI contract.
+/// An HTTP response synthesized from a compiled OpenAPI contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthesizedResponse {
     status: u16,
@@ -50,10 +50,19 @@ impl SynthesizedResponse {
     }
 }
 
-/// Synthesize a deterministic response, optionally projecting compatible values from its request.
+/// Synthesize a fresh response, optionally projecting compatible values from its request.
 pub fn synthesize_response(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
+) -> Result<SynthesizedResponse> {
+    synthesize_response_with_seed(artifact, request, rand::random())
+}
+
+/// Synthesize a reproducible response from a caller-provided seed.
+pub fn synthesize_response_with_seed(
+    artifact: &Artifact,
+    request: ResponseSynthesisRequest<'_>,
+    seed: u64,
 ) -> Result<SynthesizedResponse> {
     let operation =
         artifact
@@ -83,7 +92,7 @@ pub fn synthesize_response(
             value: None,
         });
     };
-    synthesize_body(request, status, body)
+    synthesize_body(request, status, body, seed)
 }
 
 fn verify_request_context(request: ResponseSynthesisRequest<'_>) -> Result<()> {
@@ -103,6 +112,7 @@ fn synthesize_body(
     request: ResponseSynthesisRequest<'_>,
     status: u16,
     body: BoundResponseBody<'_>,
+    seed: u64,
 ) -> Result<SynthesizedResponse> {
     let content_type = request
         .content_type
@@ -129,8 +139,8 @@ fn synthesize_body(
     let value = request
         .request_body
         .map_or_else(
-            || selected.synthesize(),
-            |request_body| selected.synthesize_from(request_body.value()),
+            || selected.synthesize_fuzz(seed),
+            |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
         )
         .map_err(|source| Error::ResponseSynthesis { source })?;
     let issues = selected.validate(&value);

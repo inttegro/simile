@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum OutputFormat {
@@ -40,7 +40,7 @@ pub struct Cli {
     #[arg(long, global = true, value_enum, default_value_t, env = "SIMILE_COLOR")]
     pub color: ColorChoice,
 
-    /// Increase diagnostic verbosity. Repeat for more detail.
+    /// Show command details and increase diagnostic verbosity. Repeat for more detail.
     #[arg(
         short,
         long,
@@ -66,6 +66,8 @@ pub enum Command {
     Doctor,
     /// Verify and summarize a compiled Simile artifact.
     Inspect(InspectArgs),
+    /// Execute one operation from an OpenAPI contract.
+    Run(RunArgs),
     /// Print detailed build information.
     Version,
 }
@@ -88,4 +90,49 @@ pub struct CompileArgs {
 pub struct InspectArgs {
     /// Compiled `.similec` artifact.
     pub artifact: PathBuf,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    group(
+        ArgGroup::new("spec_source")
+            .required(true)
+            .multiple(false)
+            .args(["spec", "spec_url"])
+    ),
+    group(
+        ArgGroup::new("operation_selector")
+            .required(true)
+            .multiple(false)
+            .args(["operation", "operation_id"])
+    )
+)]
+pub struct RunArgs {
+    /// OpenAPI JSON or YAML contract on disk.
+    #[arg(value_name = "SPEC")]
+    pub spec: Option<PathBuf>,
+
+    /// Read the OpenAPI contract from this URL without saving it.
+    #[arg(long, value_name = "URL")]
+    pub spec_url: Option<String>,
+
+    /// HCL behavior module. Repeat to compile multiple modules.
+    #[arg(short, long, value_name = "FILE")]
+    pub behavior: Vec<PathBuf>,
+
+    /// Select an operation by its structural `METHOD /path` key.
+    #[arg(long, value_name = "METHOD /path")]
+    pub operation: Option<String>,
+
+    /// Select an operation by its exact OpenAPI `operationId`.
+    #[arg(long, value_name = "ID")]
+    pub operation_id: Option<String>,
+
+    /// Read a normalized JSON request value from this file instead of synthesizing one.
+    #[arg(long, value_name = "FILE")]
+    pub body: Option<PathBuf>,
+
+    /// Select the request media type.
+    #[arg(long, value_name = "TYPE")]
+    pub content_type: Option<String>,
 }

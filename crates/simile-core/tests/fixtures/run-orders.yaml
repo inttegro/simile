@@ -1,0 +1,64 @@
+openapi: 3.1.2
+info:
+  title: Orders
+  version: 1.0.0
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [product, quantity]
+              properties:
+                product:
+                  type: string
+                  minLength: 1
+                quantity:
+                  type: integer
+                  minimum: 1
+            example:
+              product: beat_pack
+              quantity: 2
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, product, quantity]
+                properties:
+                  id:
+                    type: string
+                    const: ord_simile
+                  product:
+                    type: string
+                  quantity:
+                    type: integer
+  /health:
+    get:
+      responses:
+        "204":
+          description: Healthy
+  /optional:
+    post:
+      operationId: optionalForm
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note:
+                  type: string
+      responses:
+        "204":
+          description: Accepted without a body

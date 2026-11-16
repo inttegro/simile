@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use simile_artifact::ArtifactSummary;
 use simile_compiler::{Compiler, Source};
-use simile_spec::BehaviorOrigin;
+use simile_spec::{BehaviorOrigin, CompiledService};
 
 use crate::{Error, Result};
 
@@ -44,26 +44,8 @@ pub struct CompileReport {
 /// Compile an OpenAPI contract and zero or more HCL behavior modules.
 pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
     let openapi = read(&request.openapi)?;
-    let behavior_contents = request
-        .behaviors
-        .iter()
-        .map(read)
-        .collect::<Result<Vec<_>>>()?;
-    let behavior_names = request
-        .behaviors
-        .iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let behaviors = behavior_names
-        .iter()
-        .zip(&behavior_contents)
-        .map(|(name, contents)| Source::new(name, contents))
-        .collect();
     let openapi_name = request.openapi.to_string_lossy().into_owned();
-    let compiled = Compiler::new().compile(simile_compiler::CompileRequest {
-        openapi: Source::new(&openapi_name, &openapi),
-        behaviors,
-    })?;
+    let compiled = compile_service(&openapi_name, &openapi, &request.behaviors)?;
     let hcl_behaviors = compiled
         .operations
         .values()
@@ -86,6 +68,32 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
         resources: compiled.resources.len(),
         artifact,
     })
+}
+
+pub(crate) fn compile_service(
+    openapi_name: &str,
+    openapi: &str,
+    behavior_paths: &[PathBuf],
+) -> Result<CompiledService> {
+    let behavior_contents = behavior_paths
+        .iter()
+        .map(read)
+        .collect::<Result<Vec<_>>>()?;
+    let behavior_names = behavior_paths
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let behaviors = behavior_names
+        .iter()
+        .zip(&behavior_contents)
+        .map(|(name, contents)| Source::new(name, contents))
+        .collect();
+    Compiler::new()
+        .compile(simile_compiler::CompileRequest {
+            openapi: Source::new(openapi_name, openapi),
+            behaviors,
+        })
+        .map_err(Into::into)
 }
 
 fn write_compiled_artifact(

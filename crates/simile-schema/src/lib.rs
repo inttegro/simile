@@ -231,9 +231,55 @@ impl<'a> BoundMediaType<'a> {
         )
     }
 
+    /// Produce a deterministic valid value that includes finite optional fields where possible.
+    pub fn synthesize_representative(&self) -> std::result::Result<Value, SynthesisError> {
+        if let Some(example) = self.selected.example {
+            if self.validate(example).is_empty() {
+                return Ok(example.clone());
+            }
+        }
+        self.selected.schema().map_or_else(
+            || Ok(Value::Object(serde_json::Map::new())),
+            |schema| self.schemas.synthesize_representative(schema),
+        )
+    }
+
+    /// Produce a schema-valid value whose unconstrained fields vary with `seed`.
+    pub fn synthesize_fuzz(&self, seed: u64) -> std::result::Result<Value, SynthesisError> {
+        self.selected.schema().map_or_else(
+            || Ok(Value::Object(serde_json::Map::new())),
+            |schema| self.schemas.synthesize_fuzz(schema, seed),
+        )
+    }
+
     /// Synthesize a valid value and project compatible fields from a request body.
     pub fn synthesize_from(&self, request: &Value) -> std::result::Result<Value, SynthesisError> {
         let baseline = self.synthesize()?;
+        Ok(match self.selected.schema() {
+            Some(schema) => self.schemas.project(schema, &baseline, request),
+            None => baseline,
+        })
+    }
+
+    /// Produce a representative valid value and project compatible request fields into it.
+    pub fn synthesize_representative_from(
+        &self,
+        request: &Value,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize_representative()?;
+        Ok(match self.selected.schema() {
+            Some(schema) => self.schemas.project(schema, &baseline, request),
+            None => baseline,
+        })
+    }
+
+    /// Produce a varying valid value and project compatible request fields into it.
+    pub fn synthesize_fuzz_from(
+        &self,
+        request: &Value,
+        seed: u64,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize_fuzz(seed)?;
         Ok(match self.selected.schema() {
             Some(schema) => self.schemas.project(schema, &baseline, request),
             None => baseline,
