@@ -1230,6 +1230,303 @@ fn proves_lifecycle_paths_and_clears_incompatible_transitions() {
 }
 
 #[test]
+fn proves_and_constructs_relative_bounds() {
+    let (bounded_plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["lower", "value", "upper"],
+            "properties": {
+                "lower": {"type": "integer", "const": 1},
+                "value": {"type": "integer", "minimum": 0, "maximum": 10},
+                "upper": {"type": "integer", "const": 5}
+            },
+            "x-simile-constraints": [{
+                "bounded": {
+                    "path": "/value",
+                    "exclusive-minimum": {"path": "/lower"},
+                    "exclusive-maximum": {"path": "/upper"}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&bounded_plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({"lower": 1, "value": 3, "upper": 5}))
+            .is_empty()
+    );
+    for value in [1, 5] {
+        let issues = media.validate(&json!({"lower": 1, "value": value, "upper": 5}));
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].rule, ValidationRule::Bounded);
+    }
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+
+    let (optional_plan, optional_schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["lower"],
+            "properties": {
+                "lower": {"type": "integer", "const": 4},
+                "value": {"type": ["integer", "null"]}
+            },
+            "x-simile-constraints": [{
+                "bounded": {
+                    "path": "/value",
+                    "minimum": {"path": "/lower"}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let optional = BoundRequestBody::new(&optional_plan, &optional_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    for seed in 0..16 {
+        let value = optional
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(optional.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn evaluates_extended_aggregates() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["values", "count", "sum", "minimum", "maximum"],
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "integer", "minimum": 1, "maximum": 9}
+                },
+                "count": {"type": "integer"},
+                "sum": {"type": "integer"},
+                "minimum": {"type": "integer"},
+                "maximum": {"type": "integer"}
+            },
+            "x-simile-constraints": [
+                {"aggregate": {"target": "/count", "operation": "count", "source": "/values/*"}},
+                {"aggregate": {"target": "/sum", "operation": "sum", "source": "/values/*"}},
+                {"aggregate": {"target": "/minimum", "operation": "min", "source": "/values/*"}},
+                {"aggregate": {"target": "/maximum", "operation": "max", "source": "/values/*"}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let sound = json!({
+        "values": [4, 2, 7],
+        "count": 3,
+        "sum": 13,
+        "minimum": 2,
+        "maximum": 7
+    });
+    assert!(media.validate(&sound).is_empty());
+    let issues = media.validate(&json!({
+        "values": [4, 2, 7],
+        "count": 2,
+        "sum": 12,
+        "minimum": 4,
+        "maximum": 4
+    }));
+    assert_eq!(issues.len(), 4);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue.rule == ValidationRule::Aggregate)
+    );
+
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn proves_distinct_selected_values() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["lines"],
+            "properties": {
+                "lines": {
+                    "type": "array",
+                    "minItems": 3,
+                    "items": {
+                        "type": "object",
+                        "required": ["id"],
+                        "properties": {
+                            "id": {"type": "string", "enum": ["line_a", "line_b", "line_c"]}
+                        }
+                    }
+                }
+            },
+            "x-simile-constraints": [{
+                "distinct": {"source": "/lines/*/id"}
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let issues = media.validate(&json!({
+        "lines": [{"id": "line_a"}, {"id": "line_a"}, {"id": "line_b"}]
+    }));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].path, "/lines/1/id");
+    assert_eq!(issues[0].rule, ValidationRule::Distinct);
+
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn proves_and_constructs_set_relationships() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["enabled", "supported", "blocked"],
+            "properties": {
+                "enabled": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["card", "bank", "wallet"]}
+                },
+                "supported": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "enum": ["card", "bank", "wallet"]}
+                },
+                "blocked": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["card", "bank", "wallet"]}
+                }
+            },
+            "x-simile-constraints": [
+                {"set": {"left": "/enabled", "relation": "subset-of", "right": "/supported"}},
+                {"set": {"left": "/blocked", "relation": "disjoint", "right": "/enabled"}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "enabled": ["card"],
+                "supported": ["card", "bank"],
+                "blocked": ["wallet"]
+            }))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({
+        "enabled": ["wallet"],
+        "supported": ["card", "bank"],
+        "blocked": ["wallet"]
+    }));
+    assert_eq!(issues.len(), 2);
+    assert!(issues.iter().all(|issue| issue.rule == ValidationRule::Set));
+
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn applies_equations_inside_each_array_item() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["lines"],
+            "properties": {
+                "lines": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                        "type": "object",
+                        "required": ["quantity", "unit_amount", "amount"],
+                        "properties": {
+                            "quantity": {"type": "integer", "minimum": 1, "maximum": 5},
+                            "unit_amount": {"type": "integer", "minimum": 1, "maximum": 100},
+                            "amount": {"type": "integer"}
+                        },
+                        "x-simile-constraints": [{
+                            "equation": {
+                                "target": "/amount",
+                                "value": {
+                                    "add": [
+                                        {"multiply": [
+                                            {"path": "/quantity"},
+                                            {"path": "/unit_amount"}
+                                        ]},
+                                        {"literal": 2}
+                                    ]
+                                }
+                            }
+                        }]
+                    }
+                }
+            }
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let issues = media.validate(&json!({
+        "lines": [
+            {"quantity": 2, "unit_amount": 5, "amount": 12},
+            {"quantity": 3, "unit_amount": 7, "amount": 20}
+        ]
+    }));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].path, "/lines/1/amount");
+    assert_eq!(issues[0].rule, ValidationRule::Equation);
+
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
 fn rejects_constraints_that_cannot_be_proven() {
     let root_path = compile_error(json!({
         "type": "object",
@@ -1313,6 +1610,21 @@ fn rejects_constraints_that_cannot_be_proven() {
     }));
     assert!(optional_equation_source.contains("must be required"));
 
+    let optional_bound_source = compile_error(json!({
+        "type": "object",
+        "properties": {
+            "lower": {"type": "integer"},
+            "value": {"type": "integer"}
+        },
+        "x-simile-constraints": [{
+            "bounded": {
+                "path": "/value",
+                "minimum": {"path": "/lower"}
+            }
+        }]
+    }));
+    assert!(optional_bound_source.contains("must be required"));
+
     let scalar_aggregate = compile_error(json!({
         "type": "object",
         "required": ["amount", "total"],
@@ -1329,6 +1641,32 @@ fn rejects_constraints_that_cannot_be_proven() {
         }]
     }));
     assert!(scalar_aggregate.contains("array wildcard"));
+
+    let scalar_distinct = compile_error(json!({
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "x-simile-constraints": [{
+            "distinct": {"source": "/id"}
+        }]
+    }));
+    assert!(scalar_distinct.contains("array wildcard"));
+
+    let optional_set_reference = compile_error(json!({
+        "type": "object",
+        "required": ["enabled"],
+        "properties": {
+            "enabled": {"type": "array", "items": {"type": "string"}},
+            "supported": {"type": "array", "items": {"type": "string"}}
+        },
+        "x-simile-constraints": [{
+            "set": {
+                "left": "/enabled",
+                "relation": "subset-of",
+                "right": "/supported"
+            }
+        }]
+    }));
+    assert!(optional_set_reference.contains("right-hand set must be required"));
 
     let incompatible_equal = compile_error(json!({
         "type": "object",

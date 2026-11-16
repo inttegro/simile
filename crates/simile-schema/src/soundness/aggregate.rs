@@ -12,9 +12,10 @@
 //! ```
 //!
 //! The optional `when` predicate guards the whole relationship: a false guard is vacuously sound
-//! and is not repaired. The source must contain an array wildcard and select non-null numbers.
-//! `sum` folds an empty selection to zero. Proof compares the aggregate with the target;
-//! establishment writes the computed number to the target only when the guard matches.
+//! and is not repaired. The source must contain an array wildcard. `sum`, `min`, and `max` select
+//! non-null numbers; `count` may select any value. `sum` and `count` fold an empty selection to
+//! zero, while `min` and `max` require at least one selected value. Proof compares the aggregate
+//! with the target; establishment writes the computed number only when the guard matches.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +39,12 @@ pub(crate) struct Constraint {
 enum Operation {
     #[serde(rename = "s")]
     Sum,
+    #[serde(rename = "c")]
+    Count,
+    #[serde(rename = "n")]
+    Min,
+    #[serde(rename = "x")]
+    Max,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,6 +82,9 @@ pub(super) fn parse(definition: &Value, field: &str) -> Result<Pending> {
         .map_err(|reason| invalid(&format!("{field}.source"), &reason))?;
     let operation = match aggregate.get("operation").and_then(Value::as_str) {
         Some("sum") => Operation::Sum,
+        Some("count") => Operation::Count,
+        Some("min") => Operation::Min,
+        Some("max") => Operation::Max,
         Some(operation) => {
             return Err(invalid(
                 &format!("{field}.operation"),
@@ -111,6 +121,7 @@ pub(super) fn compile(
         root,
         &pending.target,
         &pending.source,
+        pending.operation,
         &pending.field,
     )?;
     let when = pending
@@ -135,6 +146,7 @@ pub(super) fn is_well_formed(
         root,
         &constraint.target,
         &constraint.source,
+        constraint.operation,
         "aggregate",
     )
     .is_ok()
@@ -190,12 +202,30 @@ pub(super) fn establish(constraint: &Constraint, value: &mut Value) -> bool {
 }
 
 fn evaluate(constraint: &Constraint, value: &Value) -> Option<scalar::Numeric> {
+    let selected = path::select(value, &constraint.source)?;
     match constraint.operation {
-        Operation::Sum => path::select(value, &constraint.source)?
+        Operation::Sum => selected
             .into_iter()
             .try_fold(scalar::Numeric::Integer(0), |sum, selected| {
                 sum.add(scalar::Numeric::from_value(selected.value)?)
             }),
+        Operation::Count => i128::try_from(selected.len())
+            .ok()
+            .map(scalar::Numeric::Integer),
+        Operation::Min => {
+            let mut values = selected
+                .into_iter()
+                .map(|selected| scalar::Numeric::from_value(selected.value));
+            let first = values.next()??;
+            values.try_fold(first, |minimum, value| minimum.minimum(value?))
+        }
+        Operation::Max => {
+            let mut values = selected
+                .into_iter()
+                .map(|selected| scalar::Numeric::from_value(selected.value));
+            let first = values.next()??;
+            values.try_fold(first, |maximum, value| maximum.maximum(value?))
+        }
     }
 }
 
@@ -204,6 +234,7 @@ fn check_paths(
     root: SchemaId,
     target: &str,
     source: &str,
+    operation: Operation,
     field: &str,
 ) -> Result<()> {
     let target = path::resolve_property(catalog, root, target)
@@ -223,14 +254,19 @@ fn check_paths(
             "aggregate source must contain an array wildcard `*`",
         ));
     }
-    if scalar::kind(catalog, source.schema) != Some(scalar::Kind::Number) {
-        return Err(invalid(field, "aggregate source values must be numeric"));
-    }
-    if scalar::accepts(catalog, source.schema, &Value::Null) {
-        return Err(invalid(
-            field,
-            "aggregate source values must not be nullable",
-        ));
+    if operation != Operation::Count {
+        if scalar::kind(catalog, source.schema) != Some(scalar::Kind::Number) {
+            return Err(invalid(
+                field,
+                "numeric aggregate source values must be numeric",
+            ));
+        }
+        if scalar::accepts(catalog, source.schema, &Value::Null) {
+            return Err(invalid(
+                field,
+                "numeric aggregate source values must not be nullable",
+            ));
+        }
     }
     Ok(())
 }
@@ -247,6 +283,9 @@ impl Operation {
     const fn name(self) -> &'static str {
         match self {
             Self::Sum => "sum",
+            Self::Count => "count",
+            Self::Min => "minimum",
+            Self::Max => "maximum",
         }
     }
 }

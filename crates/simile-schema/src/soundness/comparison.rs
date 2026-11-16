@@ -5,9 +5,9 @@
 //! ```yaml
 //! when:
 //!   compare:
-//!     left: /amount_paid
+//!     left: { path: /amount_paid }
 //!     operator: greater-than
-//!     right: /amount_due
+//!     right: { path: /amount_due }
 //! ```
 //!
 //! Both operands must compile to the same numeric or RFC 3339 date-time kind. A missing, null, or

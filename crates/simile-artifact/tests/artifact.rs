@@ -18,7 +18,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 6);
+    assert_eq!(summary.format_version, 7);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -45,17 +45,64 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
         .unwrap_or_else(|| panic!("request body should be compiled into the artifact"));
     assert!(
         request
-            .validate(&json!({"customerId": "cus_1", "startsAt": 1, "endsAt": 2}))
+            .validate(&json!({
+                "customerId": "cus_1",
+                "startsAt": 1,
+                "endsAt": 2,
+                "lower": 0,
+                "upper": 10,
+                "amount": 5,
+                "quantity": 2,
+                "unitAmount": 3,
+                "total": 8,
+                "lineCount": 2,
+                "lineAmounts": [4, 7],
+                "lineMinimum": 4,
+                "lineMaximum": 7,
+                "lineIds": ["a", "b"],
+                "enabled": ["card"],
+                "supported": ["card", "bank"]
+            }))
             .is_empty()
     );
     assert_eq!(
-        request.validate(&json!({"customerId": "cus_1", "startsAt": 2, "endsAt": 1}))[0]
+        request.validate(&json!({
+            "customerId": "cus_1",
+            "startsAt": 2,
+            "endsAt": 1,
+            "lower": 0,
+            "upper": 10,
+            "amount": 5,
+            "quantity": 2,
+            "unitAmount": 3,
+            "total": 8,
+            "lineCount": 2,
+            "lineAmounts": [4, 7],
+            "lineMinimum": 4,
+            "lineMaximum": 7,
+            "lineIds": ["a", "b"],
+            "enabled": ["card"],
+            "supported": ["card", "bank"]
+        }))[0]
             .rule
             .to_string(),
         "ordered"
     );
     let conditional = request.validate(&json!({
         "customerId": "cus_1",
+        "lower": 0,
+        "upper": 10,
+        "amount": 5,
+        "quantity": 2,
+        "unitAmount": 3,
+        "total": 8,
+        "lineCount": 2,
+        "lineAmounts": [4, 7],
+        "lineMinimum": 4,
+        "lineMaximum": 7,
+        "lineIds": ["a", "b"],
+        "enabled": ["card"],
+        "supported": ["card", "bank"],
         "active": false,
         "publishedAt": "2026-01-01T00:00:00Z",
         "archivedAt": null,
@@ -156,7 +203,11 @@ fn example_service() -> CompiledService {
                 MediaTypeContract {
                     schema: Some(json!({
                         "type": "object",
-                        "required": ["customerId"],
+                        "required": [
+                            "customerId", "lower", "upper", "amount", "quantity", "unitAmount",
+                            "total", "lineCount", "lineAmounts", "lineMinimum", "lineMaximum",
+                            "lineIds", "enabled", "supported"
+                        ],
                         "properties": {
                             "customerId": {"type": "string"},
                             "startsAt": {"type": "integer"},
@@ -164,10 +215,71 @@ fn example_service() -> CompiledService {
                             "active": {"type": "boolean"},
                             "publishedAt": {"type": ["string", "null"], "format": "date-time"},
                             "archivedAt": {"type": ["string", "null"], "format": "date-time"},
-                            "checkoutEnabled": {"type": "boolean"}
+                            "checkoutEnabled": {"type": "boolean"},
+                            "lower": {"type": "integer"},
+                            "upper": {"type": "integer"},
+                            "amount": {"type": "integer"},
+                            "quantity": {"type": "integer"},
+                            "unitAmount": {"type": "integer"},
+                            "total": {"type": "integer"},
+                            "lineCount": {"type": "integer"},
+                            "lineAmounts": {
+                                "type": "array",
+                                "items": {"type": "integer"}
+                            },
+                            "lineMinimum": {"type": "integer"},
+                            "lineMaximum": {"type": "integer"},
+                            "lineIds": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["a", "b", "c"]}
+                            },
+                            "enabled": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["card", "bank"]}
+                            },
+                            "supported": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["card", "bank"]}
+                            }
                         },
                         "x-simile-constraints": [
                             {"ordered": {"paths": ["/startsAt", "/endsAt"]}},
+                            {"bounded": {
+                                "path": "/amount",
+                                "minimum": {"path": "/lower"},
+                                "maximum": {"path": "/upper"}
+                            }},
+                            {"equation": {
+                                "target": "/total",
+                                "value": {"add": [
+                                    {"multiply": [
+                                        {"path": "/quantity"},
+                                        {"path": "/unitAmount"}
+                                    ]},
+                                    {"literal": 2}
+                                ]}
+                            }},
+                            {"aggregate": {
+                                "target": "/lineCount",
+                                "operation": "count",
+                                "source": "/lineIds/*"
+                            }},
+                            {"aggregate": {
+                                "target": "/lineMinimum",
+                                "operation": "min",
+                                "source": "/lineAmounts/*"
+                            }},
+                            {"aggregate": {
+                                "target": "/lineMaximum",
+                                "operation": "max",
+                                "source": "/lineAmounts/*"
+                            }},
+                            {"distinct": {"source": "/lineIds/*"}},
+                            {"set": {
+                                "left": "/enabled",
+                                "relation": "subset-of",
+                                "right": "/supported"
+                            }},
                             {
                                 "implies": {
                                     "when": {"path": "/active", "equals": false},

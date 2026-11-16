@@ -72,6 +72,10 @@ pub(super) fn resolve_selector_syntax(selector: &str) -> std::result::Result<(),
     selector_segments(selector).map(|_| ())
 }
 
+pub(super) fn item_schema(catalog: &SchemaCatalog, id: SchemaId) -> Option<SchemaId> {
+    items(catalog, id, &mut BTreeSet::new())
+}
+
 pub(super) fn select<'a>(value: &'a Value, selector: &str) -> Option<Vec<SelectedValue<'a>>> {
     let segments = selector_segments(selector).ok()?;
     let mut selected = Vec::new();

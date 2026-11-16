@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use serde_json::{Number, Value};
@@ -71,6 +72,29 @@ impl Numeric {
         }
     }
 
+    pub(super) fn multiply(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Integer(left), Self::Integer(right)) => {
+                left.checked_mul(right).map(Self::Integer)
+            }
+            (left, right) => finite(left.as_f64()? * right.as_f64()?),
+        }
+    }
+
+    pub(super) fn minimum(self, other: Self) -> Option<Self> {
+        match self.compare(other)? {
+            Ordering::Greater => Some(other),
+            Ordering::Less | Ordering::Equal => Some(self),
+        }
+    }
+
+    pub(super) fn maximum(self, other: Self) -> Option<Self> {
+        match self.compare(other)? {
+            Ordering::Less => Some(other),
+            Ordering::Greater | Ordering::Equal => Some(self),
+        }
+    }
+
     pub(super) fn into_value(self) -> Option<Value> {
         match self {
             Self::Integer(value) => i64::try_from(value)
@@ -79,6 +103,13 @@ impl Numeric {
                 .or_else(|| u64::try_from(value).ok().map(Number::from))
                 .map(Value::Number),
             Self::Float(value) => Number::from_f64(value).map(Value::Number),
+        }
+    }
+
+    fn compare(self, other: Self) -> Option<Ordering> {
+        match (self, other) {
+            (Self::Integer(left), Self::Integer(right)) => Some(left.cmp(&right)),
+            (left, right) => left.as_f64()?.partial_cmp(&right.as_f64()?),
         }
     }
 

@@ -12,11 +12,11 @@
 //!           - { path: /amount_paid }
 //! ```
 //!
-//! `add` accepts two or more expressions and `subtract` accepts exactly two. Source paths must be
-//! required, non-null numeric fields, and the target cannot read itself. Proof evaluates the
-//! expression and compares it with the target. Establishment calculates the same expression and
-//! replaces the target while preserving exact integer arithmetic whenever every operand is an
-//! integer.
+//! Expressions may contain numeric `literal` values. `add` and `multiply` accept two or more
+//! expressions, while `subtract` accepts exactly two. Source paths must be required, non-null
+//! numeric fields, and the target cannot read itself. Proof evaluates the expression and compares
+//! it with the target. Establishment calculates the same expression and replaces the target while
+//! preserving exact integer arithmetic whenever every operand is an integer.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,10 +34,14 @@ pub(crate) struct Constraint {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum Expression {
+    #[serde(rename = "l")]
+    Literal(Value),
     #[serde(rename = "p")]
     Path(String),
     #[serde(rename = "a")]
     Add(Vec<Expression>),
+    #[serde(rename = "m")]
+    Multiply(Vec<Expression>),
     #[serde(rename = "s")]
     Subtract(Box<[Expression; 2]>),
 }
@@ -154,7 +158,7 @@ fn parse_expression(value: &Value, field: &str) -> Result<Expression> {
     if expression.len() != 1 {
         return Err(invalid(
             field,
-            "numeric expression requires exactly one of `path`, `add`, or `subtract`",
+            "numeric expression requires exactly one of `literal`, `path`, `add`, `subtract`, or `multiply`",
         ));
     }
     let (operator, value) = expression
@@ -162,6 +166,15 @@ fn parse_expression(value: &Value, field: &str) -> Result<Expression> {
         .next()
         .ok_or_else(|| invalid(field, "numeric expression is required"))?;
     match operator.as_str() {
+        "literal" => {
+            if scalar::Numeric::from_value(value).is_none() {
+                return Err(invalid(
+                    &format!("{field}.literal"),
+                    "literal must be a finite JSON number",
+                ));
+            }
+            Ok(Expression::Literal(value.clone()))
+        }
         "path" => {
             let pointer = value
                 .as_str()
@@ -182,6 +195,10 @@ fn parse_expression(value: &Value, field: &str) -> Result<Expression> {
                 )
             })?;
             Ok(Expression::Subtract(Box::new(operands)))
+        }
+        "multiply" => {
+            let operands = parse_operands(value, &format!("{field}.multiply"), 2, None)?;
+            Ok(Expression::Multiply(operands))
         }
         operator => Err(invalid(
             field,
@@ -251,22 +268,29 @@ fn require_number(
 impl Expression {
     fn is_well_formed(&self) -> bool {
         match self {
+            Self::Literal(value) => scalar::Numeric::from_value(value).is_some(),
             Self::Path(path) => path::segments(path).is_ok(),
             Self::Add(operands) => operands.len() >= 2 && operands.iter().all(Self::is_well_formed),
             Self::Subtract(operands) => operands.iter().all(Self::is_well_formed),
+            Self::Multiply(operands) => {
+                operands.len() >= 2 && operands.iter().all(Self::is_well_formed)
+            }
         }
     }
 
     fn paths(&self) -> Box<dyn Iterator<Item = &str> + '_> {
         match self {
+            Self::Literal(_) => Box::new(std::iter::empty()),
             Self::Path(path) => Box::new(std::iter::once(path.as_str())),
             Self::Add(operands) => Box::new(operands.iter().flat_map(Self::paths)),
             Self::Subtract(operands) => Box::new(operands.iter().flat_map(Self::paths)),
+            Self::Multiply(operands) => Box::new(operands.iter().flat_map(Self::paths)),
         }
     }
 
     fn evaluate(&self, value: &Value) -> Option<scalar::Numeric> {
         match self {
+            Self::Literal(value) => scalar::Numeric::from_value(value),
             Self::Path(path) => value.pointer(path).and_then(scalar::Numeric::from_value),
             Self::Add(operands) => operands
                 .iter()
@@ -276,6 +300,11 @@ impl Expression {
             Self::Subtract(operands) => operands[0]
                 .evaluate(value)?
                 .subtract(operands[1].evaluate(value)?),
+            Self::Multiply(operands) => operands
+                .iter()
+                .try_fold(scalar::Numeric::Integer(1), |product, operand| {
+                    product.multiply(operand.evaluate(value)?)
+                }),
         }
     }
 }
