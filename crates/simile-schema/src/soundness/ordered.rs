@@ -1,3 +1,18 @@
+//! Evaluates monotonic relationships between numeric or RFC 3339 date-time fields.
+//!
+//! For example:
+//!
+//! ```yaml
+//! x-simile-constraints:
+//!   - ordered:
+//!       paths: [/created_at, /published_at, /updated_at]
+//! ```
+//!
+//! Compilation requires every path to resolve to the same comparable kind. Proof skips missing
+//! and null values, then compares the remaining values from left to right. Establishment sorts
+//! only the existing non-null values and writes them back to their populated positions, so an
+//! optional timestamp is never invented merely to satisfy ordering.
+
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
@@ -18,7 +33,7 @@ pub(crate) struct Constraint {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-enum Kind {
+pub(super) enum Kind {
     #[serde(rename = "n")]
     Number,
     #[serde(rename = "t")]
@@ -79,12 +94,14 @@ pub(super) fn compile(
 ) -> Result<Constraint> {
     let mut kind = None;
     for pointer in &pending.paths {
-        let schema = path::resolve_property(catalog, root, pointer).ok_or_else(|| {
-            invalid(
-                &pending.field,
-                &format!("path `{pointer}` does not resolve to a property"),
-            )
-        })?;
+        let schema = path::resolve_property(catalog, root, pointer)
+            .map(|resolved| resolved.schema)
+            .ok_or_else(|| {
+                invalid(
+                    &pending.field,
+                    &format!("path `{pointer}` does not resolve to a property"),
+                )
+            })?;
         let path_kind = kind_for_schema(catalog, schema).ok_or_else(|| {
             invalid(
                 &pending.field,
@@ -116,7 +133,7 @@ pub(super) fn is_well_formed(
         && constraint.paths.iter().collect::<BTreeSet<_>>().len() == constraint.paths.len()
         && constraint.paths.iter().all(|pointer| {
             path::resolve_property(catalog, root, pointer)
-                .and_then(|id| kind_for_schema(catalog, id))
+                .and_then(|resolved| kind_for_schema(catalog, resolved.schema))
                 == Some(constraint.kind)
         })
 }
@@ -151,7 +168,9 @@ pub(super) fn prove(constraint: &Constraint, value: &Value) -> Vec<Violation> {
     violations
 }
 
-pub(super) fn establish(constraint: &Constraint, value: &mut Value) {
+/// Reorders populated values into monotonic order and reports whether the payload changed.
+pub(super) fn establish(constraint: &Constraint, value: &mut Value) -> bool {
+    let before = value.clone();
     let mut values = constraint
         .paths
         .iter()
@@ -167,7 +186,7 @@ pub(super) fn establish(constraint: &Constraint, value: &mut Value) {
         .iter()
         .any(|(_, value)| constraint.kind.compare(value, value) != Some(Ordering::Equal))
     {
-        return;
+        return false;
     }
     let targets = values
         .iter()
@@ -184,10 +203,11 @@ pub(super) fn establish(constraint: &Constraint, value: &mut Value) {
             *target = ordered_value;
         }
     }
+    before != *value
 }
 
 impl Kind {
-    fn compare(self, left: &Value, right: &Value) -> Option<Ordering> {
+    pub(super) fn compare(self, left: &Value, right: &Value) -> Option<Ordering> {
         match self {
             Self::Number => left.as_f64()?.partial_cmp(&right.as_f64()?),
             Self::DateTime => {
@@ -199,7 +219,7 @@ impl Kind {
     }
 }
 
-fn kind_for_schema(catalog: &SchemaCatalog, id: SchemaId) -> Option<Kind> {
+pub(super) fn kind_for_schema(catalog: &SchemaCatalog, id: SchemaId) -> Option<Kind> {
     kind_for_schema_inner(catalog, id, &mut BTreeSet::new())
 }
 

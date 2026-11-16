@@ -36,6 +36,15 @@ impl SchemaCatalog {
             .or_else(|_| self.synthesize(root))
     }
 
+    pub(crate) fn synthesize_representative_matching(
+        &self,
+        root: SchemaRef,
+        predicate: impl Fn(&Value) -> bool,
+    ) -> std::result::Result<Value, SynthesisError> {
+        self.synthesize_with_matching(root, SynthesisMode::Representative, &predicate)
+            .or_else(|_| self.synthesize_with_matching(root, SynthesisMode::Minimal, &predicate))
+    }
+
     pub(crate) fn synthesize_fuzz(
         &self,
         root: SchemaRef,
@@ -66,6 +75,15 @@ impl SchemaCatalog {
         root: SchemaRef,
         mode: SynthesisMode,
     ) -> std::result::Result<Value, SynthesisError> {
+        self.synthesize_with_matching(root, mode, &|_| true)
+    }
+
+    fn synthesize_with_matching(
+        &self,
+        root: SchemaRef,
+        mode: SynthesisMode,
+        predicate: &impl Fn(&Value) -> bool,
+    ) -> std::result::Result<Value, SynthesisError> {
         if !self.contains(root) {
             return Err(SynthesisError::InvalidSchema);
         }
@@ -79,7 +97,7 @@ impl SchemaCatalog {
             .node(root.0, variant, 0, &mut active)
             {
                 let issues = validate::value(self, root, &value);
-                if issues.is_empty() {
+                if issues.is_empty() && predicate(&value) {
                     return Ok(value);
                 }
                 if closest.is_empty() || issues.len() < closest.len() {

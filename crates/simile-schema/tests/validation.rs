@@ -510,6 +510,200 @@ fn proves_ordered_date_times_are_sound() {
 }
 
 #[test]
+fn proves_implications_with_conjunctive_consequences() {
+    let (plan, schemas) = plan(
+        product_implication_schema(),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "active": false,
+                "published_at": null,
+                "archived_at": "2026-01-03T00:00:00Z",
+                "checkout_enabled": false
+            }))
+            .is_empty()
+    );
+    assert!(
+        media
+            .validate(&json!({
+                "active": true,
+                "published_at": "2026-01-01T00:00:00Z",
+                "archived_at": null,
+                "checkout_enabled": true
+            }))
+            .is_empty()
+    );
+
+    let issues = media.validate(&json!({
+        "active": false,
+        "published_at": "2026-01-01T00:00:00Z",
+        "archived_at": null,
+        "checkout_enabled": true
+    }));
+    assert_eq!(issues.len(), 3);
+    assert_eq!(issues[0].path, "/published_at");
+    assert_eq!(issues[0].rule, ValidationRule::Implies);
+    assert_eq!(issues[1].path, "/archived_at");
+    assert_eq!(issues[1].rule, ValidationRule::Implies);
+    assert_eq!(issues[2].path, "/checkout_enabled");
+    assert_eq!(issues[2].rule, ValidationRule::Implies);
+}
+
+#[test]
+fn implication_presence_distinguishes_missing_from_null() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["discounted"],
+            "properties": {
+                "coupon": {"type": ["string", "null"]},
+                "discounted": {"type": "boolean"}
+            },
+            "x-simile-constraints": [{
+                "implies": {
+                    "when": {"path": "/coupon", "state": "present"},
+                    "then": {"all": [
+                        {"path": "/discounted", "equals": true}
+                    ]}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(media.validate(&json!({"discounted": false})).is_empty());
+    assert!(
+        media
+            .validate(&json!({"coupon": "SAVE", "discounted": true}))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({"coupon": null, "discounted": false}));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].path, "/discounted");
+    assert_eq!(issues[0].rule, ValidationRule::Implies);
+}
+
+#[test]
+fn implication_finds_a_non_null_witness_in_a_nullable_enum() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["active", "status"],
+            "properties": {
+                "active": {"type": "boolean"},
+                "status": {"enum": [null, "ready"]}
+            },
+            "x-simile-constraints": [{
+                "implies": {
+                    "when": {"path": "/active", "equals": true},
+                    "then": {"all": [
+                        {"path": "/status", "state": "non-null"}
+                    ]}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(value["active"], true);
+    assert_eq!(value["status"], "ready");
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
+fn synthesis_establishes_every_triggered_consequence() {
+    let (plan, schemas) = plan(
+        product_implication_schema(),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let mut saw_inactive = false;
+
+    for seed in 0..64 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(
+            media.validate(&value).is_empty(),
+            "seed {seed} produced an unsound value: {value}"
+        );
+        if value["active"] == false {
+            saw_inactive = true;
+            assert!(value["published_at"].is_null());
+            assert!(value["archived_at"].as_str().is_some());
+            assert_eq!(value["checkout_enabled"], false);
+        }
+    }
+    assert!(
+        saw_inactive,
+        "fuzz synthesis should exercise the implication"
+    );
+}
+
+#[test]
+fn synthesis_resolves_chained_implications_to_a_fixed_point() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["active", "status", "published_at"],
+            "properties": {
+                "active": {"type": "boolean"},
+                "status": {"type": "string"},
+                "published_at": {"type": ["string", "null"], "format": "date-time"}
+            },
+            "x-simile-constraints": [
+                {
+                    "implies": {
+                        "when": {"path": "/status", "equals": "draft"},
+                        "then": {"all": [
+                            {"path": "/published_at", "state": "null"}
+                        ]}
+                    }
+                },
+                {
+                    "implies": {
+                        "when": {"path": "/active", "equals": true},
+                        "then": {"all": [
+                            {"path": "/status", "equals": "draft"}
+                        ]}
+                    }
+                }
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(value["active"], true);
+    assert_eq!(value["status"], "draft");
+    assert!(value["published_at"].is_null());
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
 fn proves_nested_numeric_ordering_and_decodes_json_pointers() {
     let (plan, schemas) = plan(
         json!({
@@ -624,12 +818,463 @@ fn response_synthesis_is_proven_against_ordered_relationships() {
 }
 
 #[test]
-fn rejects_constraints_that_cannot_be_proven() {
-    let unsupported = compile_error(json!({
-        "type": "object",
-        "x-simile-constraints": [{"implies": {}}]
+fn response_synthesis_is_proven_against_derived_relationships() {
+    let response = ResponseBodyContract {
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "required": ["id", "url", "subtotal", "lines"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "url": {"type": "string"},
+                        "subtotal": {"type": "integer"},
+                        "lines": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "required": ["amount"],
+                                "properties": {"amount": {"type": "integer"}}
+                            }
+                        }
+                    },
+                    "x-simile-constraints": [
+                        {
+                            "aggregate": {
+                                "target": "/subtotal",
+                                "operation": "sum",
+                                "source": "/lines/*/amount"
+                            }
+                        },
+                        {
+                            "template": {
+                                "path": "/url",
+                                "value": "/v1/invoices/{/id}/lines"
+                            }
+                        }
+                    ]
+                })),
+                example: None,
+            },
+        )]),
+    };
+    let components = BTreeMap::new();
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let plan = compiler
+        .compile_response(&response)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
+    let media = BoundResponseBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    for seed in 0..32 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn proves_equal_values_across_array_items() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["currency", "lines"],
+            "properties": {
+                "currency": {"type": "string", "enum": ["usd", "gbp"]},
+                "lines": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                        "type": "object",
+                        "required": ["currency"],
+                        "properties": {
+                            "currency": {"type": "string", "enum": ["usd", "gbp"]}
+                        }
+                    }
+                }
+            },
+            "x-simile-constraints": [{
+                "equal": {"paths": ["/currency", "/lines/*/currency"]}
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "currency": "usd",
+                "lines": [{"currency": "usd"}, {"currency": "usd"}]
+            }))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({
+        "currency": "usd",
+        "lines": [{"currency": "gbp"}, {"currency": "usd"}]
     }));
-    assert!(unsupported.contains("unsupported constraint kind `implies`"));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].path, "/lines/0/currency");
+    assert_eq!(issues[0].rule, ValidationRule::Equal);
+
+    for seed in 0..32 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn proves_numeric_equations_and_constructs_the_target() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["amount_due", "amount_paid", "amount_remaining"],
+            "properties": {
+                "amount_due": {"type": "integer", "minimum": 0},
+                "amount_paid": {"type": "integer", "minimum": 0},
+                "amount_remaining": {"type": "integer"}
+            },
+            "x-simile-constraints": [{
+                "equation": {
+                    "target": "/amount_remaining",
+                    "value": {"subtract": [
+                        {"path": "/amount_due"},
+                        {"path": "/amount_paid"}
+                    ]}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "amount_due": 30,
+                "amount_paid": 12,
+                "amount_remaining": 18
+            }))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({
+        "amount_due": 30,
+        "amount_paid": 12,
+        "amount_remaining": 14
+    }));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].rule, ValidationRule::Equation);
+
+    for seed in 0..32 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn proves_guarded_array_aggregates() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["subtotal", "lines"],
+            "properties": {
+                "subtotal": {"type": "integer"},
+                "lines": {
+                    "type": "object",
+                    "required": ["has_more", "data"],
+                    "properties": {
+                        "has_more": {"type": "boolean"},
+                        "data": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["amount"],
+                                "properties": {"amount": {"type": "integer"}}
+                            }
+                        }
+                    }
+                }
+            },
+            "x-simile-constraints": [{
+                "aggregate": {
+                    "target": "/subtotal",
+                    "operation": "sum",
+                    "source": "/lines/data/*/amount",
+                    "when": {"path": "/lines/has_more", "equals": false}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "subtotal": 12,
+                "lines": {"has_more": false, "data": [{"amount": 5}, {"amount": 7}]}
+            }))
+            .is_empty()
+    );
+    assert!(
+        media
+            .validate(&json!({
+                "subtotal": 999,
+                "lines": {"has_more": true, "data": [{"amount": 5}]}
+            }))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({
+        "subtotal": 11,
+        "lines": {"has_more": false, "data": [{"amount": 5}, {"amount": 7}]}
+    }));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].rule, ValidationRule::Aggregate);
+}
+
+#[test]
+fn proves_field_templates() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["id", "url"],
+            "properties": {
+                "id": {"type": "string"},
+                "url": {"type": "string"}
+            },
+            "x-simile-constraints": [{
+                "template": {
+                    "path": "/url",
+                    "value": "/v1/invoices/{/id}/lines"
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({"id": "in_123", "url": "/v1/invoices/in_123/lines"}))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({"id": "in_123", "url": "wrong"}));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].rule, ValidationRule::Template);
+
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        value["url"],
+        format!("/v1/invoices/{}/lines", value["id"].as_str().unwrap_or(""))
+    );
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
+fn implication_supports_contains_and_path_comparisons() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["amount_due", "amount_paid", "overpaid", "methods", "twint_enabled"],
+            "properties": {
+                "amount_due": {"type": "integer"},
+                "amount_paid": {"type": "integer"},
+                "overpaid": {"type": "boolean"},
+                "methods": {"type": "array", "items": {"type": "string"}},
+                "twint_enabled": {"type": "boolean"}
+            },
+            "x-simile-constraints": [
+                {
+                    "implies": {
+                        "when": {
+                            "compare": {
+                                "left": {"path": "/amount_paid"},
+                                "operator": "greater-than",
+                                "right": {"path": "/amount_due"}
+                            }
+                        },
+                        "then": {"all": [{"path": "/overpaid", "equals": true}]}
+                    }
+                },
+                {
+                    "implies": {
+                        "when": {"path": "/methods", "contains": "twint"},
+                        "then": {"all": [{"path": "/twint_enabled", "equals": true}]}
+                    }
+                }
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let issues = media.validate(&json!({
+        "amount_due": 10,
+        "amount_paid": 12,
+        "overpaid": false,
+        "methods": ["twint"],
+        "twint_enabled": false
+    }));
+    assert_eq!(issues.len(), 2);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue.rule == ValidationRule::Implies)
+    );
+}
+
+#[test]
+fn implication_combines_multiple_membership_consequences() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["active", "capabilities"],
+            "properties": {
+                "active": {"const": true},
+                "capabilities": {
+                    "type": "array",
+                    "minItems": 2,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "enum": ["payments", "refunds"]}
+                }
+            },
+            "x-simile-constraints": [{
+                "implies": {
+                    "when": {"path": "/active", "equals": true},
+                    "then": {"all": [
+                        {"path": "/capabilities", "contains": "payments"},
+                        {"path": "/capabilities", "contains": "refunds"}
+                    ]}
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(media.validate(&value).is_empty());
+    assert_eq!(value["capabilities"], json!(["payments", "refunds"]));
+}
+
+#[test]
+fn proves_lifecycle_paths_and_clears_incompatible_transitions() {
+    let (plan, schemas) = plan(
+        invoice_lifecycle_schema(),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(
+        media
+            .validate(&json!({
+                "status": "open",
+                "created": 1,
+                "status_transitions": {
+                    "finalized_at": 2,
+                    "paid_at": null,
+                    "marked_uncollectible_at": null,
+                    "voided_at": null
+                }
+            }))
+            .is_empty()
+    );
+    let issues = media.validate(&json!({
+        "status": "paid",
+        "created": 1,
+        "status_transitions": {
+            "finalized_at": null,
+            "paid_at": 3,
+            "marked_uncollectible_at": null,
+            "voided_at": 2
+        }
+    }));
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].rule, ValidationRule::Lifecycle);
+
+    for seed in 0..64 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn rejects_constraints_that_cannot_be_proven() {
+    let root_path = compile_error(json!({
+        "type": "object",
+        "properties": {"active": {"type": "boolean"}},
+        "x-simile-constraints": [{
+            "implies": {
+                "when": {"path": "", "state": "present"},
+                "then": {"all": [
+                    {"path": "/active", "equals": true}
+                ]}
+            }
+        }]
+    }));
+    assert!(root_path.contains("path must be a non-empty absolute JSON Pointer"));
+
+    let unsupported_branch = compile_error(json!({
+        "type": "object",
+        "properties": {"active": {"type": "boolean"}},
+        "x-simile-constraints": [{
+            "implies": {
+                "when": {"path": "/active", "equals": false},
+                "then": {"any": []}
+            }
+        }]
+    }));
+    assert!(unsupported_branch.contains("then currently supports exactly one `all` array"));
+
+    let conflicting = compile_error(json!({
+        "type": "object",
+        "required": ["active", "published_at"],
+        "properties": {
+            "active": {"type": "boolean"},
+            "published_at": {"type": ["string", "null"], "format": "date-time"}
+        },
+        "x-simile-constraints": [{
+            "implies": {
+                "when": {"path": "/active", "equals": false},
+                "then": {"all": [
+                    {"path": "/published_at", "state": "null"},
+                    {"path": "/published_at", "state": "non-null"}
+                ]}
+            }
+        }]
+    }));
+    assert!(conflicting.contains("assertions for the same path cannot all be satisfied"));
 
     let unknown_path = compile_error(json!({
         "type": "object",
@@ -651,6 +1296,131 @@ fn rejects_constraints_that_cannot_be_proven() {
         ]
     }));
     assert!(incompatible.contains("compatible value types"));
+
+    let optional_equation_source = compile_error(json!({
+        "type": "object",
+        "required": ["total"],
+        "properties": {
+            "subtotal": {"type": "integer"},
+            "total": {"type": "integer"}
+        },
+        "x-simile-constraints": [{
+            "equation": {
+                "target": "/total",
+                "value": {"add": [{"path": "/subtotal"}, {"path": "/subtotal"}]}
+            }
+        }]
+    }));
+    assert!(optional_equation_source.contains("must be required"));
+
+    let scalar_aggregate = compile_error(json!({
+        "type": "object",
+        "required": ["amount", "total"],
+        "properties": {
+            "amount": {"type": "integer"},
+            "total": {"type": "integer"}
+        },
+        "x-simile-constraints": [{
+            "aggregate": {
+                "target": "/total",
+                "operation": "sum",
+                "source": "/amount"
+            }
+        }]
+    }));
+    assert!(scalar_aggregate.contains("array wildcard"));
+
+    let incompatible_equal = compile_error(json!({
+        "type": "object",
+        "properties": {
+            "amount": {"type": "integer"},
+            "currency": {"type": "string"}
+        },
+        "x-simile-constraints": [{
+            "equal": {"paths": ["/amount", "/currency"]}
+        }]
+    }));
+    assert!(incompatible_equal.contains("compatible types"));
+
+    let cyclic_lifecycle = compile_error(json!({
+        "type": "object",
+        "required": ["status", "created"],
+        "properties": {
+            "status": {"type": "string", "enum": ["draft", "open"]},
+            "created": {"type": "integer"},
+            "opened_at": {"type": ["integer", "null"]},
+            "reopened_at": {"type": ["integer", "null"]}
+        },
+        "x-simile-constraints": [{
+            "lifecycle": {
+                "state": "/status",
+                "created-at": "/created",
+                "transitions": [
+                    {"from": "draft", "to": "open", "at": "/opened_at"},
+                    {"from": "open", "to": "draft", "at": "/reopened_at"}
+                ]
+            }
+        }]
+    }));
+    assert!(cyclic_lifecycle.contains("must not contain cycles"));
+}
+
+fn product_implication_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "required": ["active", "published_at", "archived_at", "checkout_enabled"],
+        "properties": {
+            "active": {"type": "boolean"},
+            "published_at": {"type": ["string", "null"], "format": "date-time"},
+            "archived_at": {"type": ["string", "null"], "format": "date-time"},
+            "checkout_enabled": {"type": "boolean"}
+        },
+        "x-simile-constraints": [
+            {
+                "implies": {
+                    "when": {"path": "/active", "equals": false},
+                    "then": {"all": [
+                        {"path": "/published_at", "state": "null-or-absent"},
+                        {"path": "/archived_at", "state": "non-null"},
+                        {"path": "/checkout_enabled", "equals": false}
+                    ]}
+                }
+            }
+        ]
+    })
+}
+
+fn invoice_lifecycle_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "required": ["status", "created", "status_transitions"],
+        "properties": {
+            "status": {"type": "string", "enum": ["draft", "open", "paid", "uncollectible", "void"]},
+            "created": {"type": "integer"},
+            "status_transitions": {
+                "type": "object",
+                "required": ["finalized_at", "paid_at", "marked_uncollectible_at", "voided_at"],
+                "properties": {
+                    "finalized_at": {"type": ["integer", "null"]},
+                    "paid_at": {"type": ["integer", "null"]},
+                    "marked_uncollectible_at": {"type": ["integer", "null"]},
+                    "voided_at": {"type": ["integer", "null"]}
+                }
+            }
+        },
+        "x-simile-constraints": [{
+            "lifecycle": {
+                "state": "/status",
+                "created-at": "/created",
+                "transitions": [
+                    {"from": "draft", "to": "open", "at": "/status_transitions/finalized_at"},
+                    {"from": ["open", "uncollectible"], "to": "paid", "at": "/status_transitions/paid_at"},
+                    {"from": "open", "to": "uncollectible", "at": "/status_transitions/marked_uncollectible_at"},
+                    {"from": ["open", "uncollectible"], "to": "void", "at": "/status_transitions/voided_at"}
+                ]
+            }
+        }]
+    })
 }
 
 fn compile_error(schema: serde_json::Value) -> String {

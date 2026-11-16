@@ -18,7 +18,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 5);
+    assert_eq!(summary.format_version, 6);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -53,6 +53,19 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
             .rule
             .to_string(),
         "ordered"
+    );
+    let conditional = request.validate(&json!({
+        "customerId": "cus_1",
+        "active": false,
+        "publishedAt": "2026-01-01T00:00:00Z",
+        "archivedAt": null,
+        "checkoutEnabled": true
+    }));
+    assert_eq!(conditional.len(), 3);
+    assert!(
+        conditional
+            .iter()
+            .all(|issue| issue.rule.to_string() == "implies")
     );
 }
 
@@ -147,10 +160,24 @@ fn example_service() -> CompiledService {
                         "properties": {
                             "customerId": {"type": "string"},
                             "startsAt": {"type": "integer"},
-                            "endsAt": {"type": "integer"}
+                            "endsAt": {"type": "integer"},
+                            "active": {"type": "boolean"},
+                            "publishedAt": {"type": ["string", "null"], "format": "date-time"},
+                            "archivedAt": {"type": ["string", "null"], "format": "date-time"},
+                            "checkoutEnabled": {"type": "boolean"}
                         },
                         "x-simile-constraints": [
-                            {"ordered": {"paths": ["/startsAt", "/endsAt"]}}
+                            {"ordered": {"paths": ["/startsAt", "/endsAt"]}},
+                            {
+                                "implies": {
+                                    "when": {"path": "/active", "equals": false},
+                                    "then": {"all": [
+                                        {"path": "/publishedAt", "state": "null-or-absent"},
+                                        {"path": "/archivedAt", "state": "non-null"},
+                                        {"path": "/checkoutEnabled", "equals": false}
+                                    ]}
+                                }
+                            }
                         ]
                     })),
                     example: None,

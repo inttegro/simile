@@ -38,7 +38,13 @@ pub enum ValidationRule {
     UniqueItems,
     MinProperties,
     MaxProperties,
+    Aggregate,
+    Equal,
+    Equation,
+    Implies,
+    Lifecycle,
     Ordered,
+    Template,
     AllOf,
     AnyOf,
     OneOf,
@@ -65,7 +71,13 @@ impl fmt::Display for ValidationRule {
             Self::UniqueItems => "uniqueItems",
             Self::MinProperties => "minProperties",
             Self::MaxProperties => "maxProperties",
+            Self::Aggregate => "aggregate",
+            Self::Equal => "equal",
+            Self::Equation => "equation",
+            Self::Implies => "implies",
+            Self::Lifecycle => "lifecycle",
             Self::Ordered => "ordered",
+            Self::Template => "template",
             Self::AllOf => "allOf",
             Self::AnyOf => "anyOf",
             Self::OneOf => "oneOf",
@@ -155,7 +167,13 @@ impl Validator<'_> {
     ) {
         for violation in soundness::prove(node, value) {
             let rule = match violation.kind {
+                soundness::ViolationKind::Aggregate => ValidationRule::Aggregate,
+                soundness::ViolationKind::Equal => ValidationRule::Equal,
+                soundness::ViolationKind::Equation => ValidationRule::Equation,
+                soundness::ViolationKind::Implies => ValidationRule::Implies,
+                soundness::ViolationKind::Lifecycle => ValidationRule::Lifecycle,
                 soundness::ViolationKind::Ordered => ValidationRule::Ordered,
+                soundness::ViolationKind::Template => ValidationRule::Template,
             };
             push(
                 issues,
