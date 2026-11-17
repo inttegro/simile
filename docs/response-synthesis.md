@@ -1,7 +1,14 @@
-# Response synthesis
+---
+title: Response synthesis
+description: How Simile selects a legal response and constructs a sound payload with or without a request.
+---
 
 Simile synthesizes responses from the compiled `.similec` artifact. It does not parse OpenAPI or
 HCL at runtime, and it does not require an incoming request to produce a contract-sound response.
+
+There are two separate questions: **which declared response should be used?** and **what valid body
+should that response contain?** Selection is handled before generation so the synthesizer never
+chooses an arbitrary error or success family.
 
 ## Selection
 
@@ -58,5 +65,12 @@ This is not global name matching and does not infer private business rules. A fi
 data cannot be reflected through this mechanism. A property marked `readOnly` remains available to
 response synthesis.
 
+For example, if both request and response declare compatible `/product` and `/quantity` fields,
+those values can be copied into the generated response. A generated `/id` remains intact. A
+request-only secret marked `writeOnly` never enters the response graph.
+
 Form, multipart, and non-JSON response encoders are outside the current slice. Declared non-JSON
 content produces an explicit unsupported-encoder error rather than unverified bytes.
+
+Read [Outcome fidelity](/outcome-fidelity) for named exact results and
+[Payload soundness](/payload-soundness) for the final proof gate.

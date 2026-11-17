@@ -1,4 +1,7 @@
-# Payload soundness
+---
+title: Payload soundness
+description: Define and prove relationships that ordinary field-by-field schemas cannot express.
+---
 
 Simile treats a request or response payload as sound only when it satisfies the complete compiled
 contract. The contract includes the supported OpenAPI schema rules and every recognized
@@ -15,6 +18,17 @@ does not reparse source OpenAPI or infer relationships from property names or pr
 This is a proof relative to the published contract. It does not claim that an incomplete contract
 describes every private production invariant. A service provider must publish each relationship it
 wants Simile to prove.
+
+## Valid shape is not enough
+
+OpenAPI can say that `amount_due`, `amount_paid`, and `amount_remaining` are non-negative integers.
+That makes each field individually valid, but it does not prove the accounting identity between
+them. Likewise, four nullable status timestamps can each be valid while describing an impossible
+lifecycle.
+
+`x-simile-constraints` closes that gap with typed relationships that Simile can both evaluate and
+construct. A relationship is accepted only when the compiler can resolve its paths, prove type
+compatibility, and identify a finite construction strategy.
 
 ## Ordered fields
 
@@ -315,3 +329,6 @@ cannot be executed safely fail compilation instead of surviving as inert metadat
 Future relationships such as conditional equations, conditional cardinality, and mutually
 exclusive cross-field branches should be added as explicit typed variants. Simile will not infer
 them from property names or description prose.
+
+Use [Generation heuristics](/generation-heuristics) when a contract does not publish relationships,
+but remember that heuristics improve generated examples and never prove incoming payloads.

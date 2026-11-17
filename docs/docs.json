@@ -12,21 +12,40 @@
 		"groups": [
 			{
 				"group": "Start here",
-				"pages": ["index", "service-configuration", "operation-execution"]
+				"pages": ["index", "why-simile", "quickstart"]
 			},
 			{
-				"group": "Contracts and behavior",
+				"group": "Build a service",
 				"pages": [
-					"request-validation",
-					"response-synthesis",
-					"outcome-fidelity",
-					"payload-soundness",
-					"generation-heuristics"
+					"service-configuration",
+					"service-lifecycle",
+					"openapi-and-hcl",
+					"dependencies-and-effects"
 				]
 			},
 			{
+				"group": "Run operations",
+				"pages": [
+					"run-operation",
+					"request-validation",
+					"response-synthesis",
+					"outcome-fidelity",
+					"state-and-replay"
+				]
+			},
+			{
+				"group": "Sound payloads",
+				"pages": ["payload-soundness", "generation-heuristics"]
+			},
+			{
 				"group": "Architecture",
-				"pages": ["architecture", "compiled-artifact"]
+				"pages": [
+					"architecture",
+					"compilation-pipeline",
+					"operation-execution",
+					"compiled-artifact",
+					"current-boundaries"
+				]
 			}
 		]
 	}

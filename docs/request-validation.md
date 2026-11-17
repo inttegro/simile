@@ -1,8 +1,14 @@
-# Request validation
+---
+title: Request validation
+description: How Simile selects, decodes, and proves an incoming JSON request body.
+---
 
 Simile validates a request from the compiled `.similec` artifact. OpenAPI is parsed only while the
 provider builds that artifact; the local runtime does not need the original document or an HCL
 module.
+
+Validation answers a narrow question: **does this decoded body satisfy every rule Simile compiled
+for this operation and direction?** It does not infer business meaning from route names or prose.
 
 ## Boundary
 
@@ -69,6 +75,15 @@ validated.
 
 JSON synthesis selects a declared JSON media type unless the caller requests one explicitly.
 
+```mermaid
+flowchart LR
+  Bytes[Body bytes] --> Media[Select declared media type]
+  Media --> Decode[Decode JSON]
+  Decode --> Schema[Validate schema graph]
+  Schema --> Relations[Prove cross-field constraints]
+  Relations --> Validated[Validated value]
+```
+
 ## Compiled schema support
 
 The schema compiler supports the request constraints needed for the first runtime slice:
@@ -105,3 +120,6 @@ semantics.
 The validation pass caps both traversal depth and reported issue count. Those bounds protect the
 runtime and keep an invalid request response useful. The HTTP server applies its body-size limit
 before decoding.
+
+Read [Payload soundness](/payload-soundness) for cross-field proofs and
+[Response synthesis](/response-synthesis) for how a validated value can influence the result.

@@ -1,7 +1,21 @@
-# Compiled artifact format
+---
+title: Compiled artifact
+description: Why Simile uses a deterministic indexed binary artifact and how it stays compatible.
+---
 
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
+
+The split is comparable to source code and an executable. OpenAPI and HCL optimize for authoring,
+review, and diagnostics. `.similec` optimizes for linked references, compact storage, fast loading,
+and a clear compatibility boundary.
+
+## Why not store normalized JSON
+
+JSON would keep repeating field names and string references, and it would still require the
+runtime to resolve many relationships after loading. Simile instead builds sorted tables and
+replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
+loads a graph that has already been linked and validated.
 
 ## Envelope version 9
 
@@ -88,3 +102,6 @@ Serde defaults are not compatibility promises.
 The payload digest protects integrity and enables content-addressed caching. It is not a signature
 and does not establish who published an artifact. Artifact signing and provider trust policy belong
 to a later distribution layer.
+
+See [Compilation pipeline](/compilation-pipeline) for how the artifact is produced and
+[Operation execution](/operation-execution) for how the runtime consumes it.

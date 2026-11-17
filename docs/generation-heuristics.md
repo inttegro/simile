@@ -1,4 +1,7 @@
-# Generation heuristics
+---
+title: Generation heuristics
+description: Improve generated examples conservatively when OpenAPI lacks cross-field relationships.
+---
 
 Most OpenAPI descriptions specify the shape of each field without specifying relationships between
 fields. Simile can use a small provider-neutral heuristic plan to make synthesized requests and
@@ -8,6 +11,12 @@ Heuristics are not soundness proofs. They do not reject incoming requests, chang
 contract, or turn a likely naming convention into a service guarantee. They run only while Simile
 is generating a value. The complete repaired candidate must still pass ordinary OpenAPI validation
 and every explicit Simile constraint; otherwise Simile rolls the heuristic transaction back.
+
+The distinction is practical. If a schema contains `created_at` and `updated_at` but declares no
+relationship, rejecting an incoming payload where creation follows update would change the public
+contract. During generation, however, placing `created_at` before `updated_at` is a useful,
+reversible improvement. Explicit `x-simile-constraints` is the only way to make that ordering a
+proof obligation.
 
 ## Policies
 
@@ -37,3 +46,16 @@ competing with provider-authored semantics.
 Description prose is not interpreted. Heuristics require exact names and compatible structural
 types. Provider-specific profiles are intentionally excluded for now; adding one later requires a
 separate, named source of rules rather than mixing vendor knowledge into the generic catalog.
+
+## Generation order
+
+```mermaid
+flowchart LR
+  Schema[Generate from schema] --> Explicit[Establish explicit constraints]
+  Explicit --> Heuristic[Apply non-overlapping heuristic plan]
+  Heuristic --> Validate[Validate complete candidate]
+  Validate -->|valid| Commit[Return candidate]
+  Validate -->|invalid| Rollback[Discard heuristic changes]
+```
+
+Read [Payload soundness](/payload-soundness) for authoritative relationships.

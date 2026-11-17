@@ -1,7 +1,14 @@
-# Compiler architecture
+---
+title: Architecture
+description: The ownership boundaries that keep source languages, runtime behavior, and transport separate.
+---
 
-Simile compiles two provider-authored sources into one runtime contract. OpenAPI is mandatory and
-complete for HTTP. HCL is optional and additive for behavior.
+Simile is organized around ownership boundaries rather than command names. OpenAPI parsing, HCL
+semantics, schema proof, artifact encoding, operation execution, HTTP transport, and terminal
+presentation are separate because each has a different reason to change.
+
+OpenAPI is mandatory and complete for the current HTTP body contract. HCL is optional and additive
+for behavior. Both disappear behind a compiled artifact before execution.
 
 ```text
  OpenAPI JSON/YAML                 HCL modules
@@ -40,6 +47,10 @@ complete for HTTP. HCL is optional and additive for behavior.
 ```
 
 ## Units of work
+
+The crates form a dependency flow, not a collection of interchangeable helpers. Source adapters
+translate into `simile-spec`; the compiler coordinates them; artifact and schema crates lower the
+model; runtime consumes it; adapters present it.
 
 ### Canonical model: `simile-spec`
 
@@ -147,8 +158,8 @@ status choice when present; and constructs a valid body from the compiled respon
 validated request is available, compatible values at the same structural path are projected into
 the response while generated response-only fields remain intact. Every synthesized value is sent
 back through its compiled validator. Missing bodies, undeclared media types, malformed payloads,
-schema violations, and exhausted synthesis remain distinct errors so a future HTTP adapter can map
-them deliberately.
+schema violations, and exhausted synthesis remain distinct errors so the HTTP adapter can map them
+deliberately.
 
 `Runtime::execute` is the protocol-neutral coordination boundary. It validates the incoming
 body, supplies the validated value to request-aware response synthesis, and returns both the
@@ -205,5 +216,7 @@ The current compiler and server establish source ownership, cross-source validat
 artifact boundary, compiled JSON request validation, seeded request and request-aware response
 synthesis, identity-based in-memory replay, protocol-neutral operation coordination, and local HTTP
 serving. Subsequent slices can add form and multipart codecs, parameter validation, durable state
-actions, scenario inputs, and executable asynchronous instructions without collapsing these
-boundaries.
+actions, and executable asynchronous instructions without collapsing these boundaries.
+
+Read [Compilation pipeline](/compilation-pipeline) for the same architecture as a data journey,
+and [Current boundaries](/current-boundaries) for the fidelity not yet implemented.

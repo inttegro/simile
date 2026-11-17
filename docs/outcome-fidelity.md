@@ -1,8 +1,16 @@
-# Outcome fidelity
+---
+title: Outcome fidelity
+description: Select trustworthy public results without publishing private production decision logic.
+---
 
 OpenAPI defines which responses are legal. Simile compiles those responses into named outcomes so
 tests can select a public cause instead of asking for an arbitrary HTTP status. The resulting
 catalog is carried in `.similec`; the runtime does not reopen OpenAPI or HCL.
+
+Schema validity and behavioral fidelity are different. A synthesized `402` error may satisfy the
+schema while still using meaningless generated strings. A named provider example carries stronger
+evidence because its public code and message were deliberately authored. Simile records that
+difference instead of presenting both as equivalent.
 
 ## Provenance
 
@@ -19,6 +27,20 @@ separately while the selected outcome retains the provenance of its response bod
 `simile inspect service.similec` lists each operation's outcomes and calls out operations for which
 every outcome is schema-synthesized. This is an authoring worklist, not a claim that those operations
 are production-faithful.
+
+```mermaid
+flowchart TD
+  Select{Outcome control?}
+  Select -->|--outcome| Named[Named outcome]
+  Select -->|--scenario| Scenario[Scenario selection]
+  Select -->|public request predicate| Predicate[First matching outcome]
+  Select -->|none| Default[OpenAPI/HCL response selection]
+  Named --> Body[Exact body or schema synthesis]
+  Scenario --> Body
+  Predicate --> Body
+  Default --> Body
+  Body --> Validate[Validate selected response schema]
+```
 
 ## OpenAPI first
 
@@ -130,3 +152,6 @@ markers such as `_internal*`, `private_*`, `implementation_detail`, `fraud_thres
 `database_table` in distributed outcome metadata. `simile inspect` reports whether the artifact
 passed this audit. This is a guardrail, not a substitute for provider review of all published
 examples and scenario names.
+
+Read [OpenAPI and HCL](/openapi-and-hcl) for the source boundary and
+[Current boundaries](/current-boundaries) for what an exact outcome does—and does not—prove.

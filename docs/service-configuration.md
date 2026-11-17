@@ -1,9 +1,15 @@
-# Service configuration
+---
+title: Service configuration
+description: Compose one runnable service from its contract, listener, and optional behavior modules.
+---
 
 A service configuration is the composition root for one locally runnable emulator. It names the
 service, selects one OpenAPI source, defines its listener, and optionally imports or contains HCL
 behavior declarations. `simile register` validates and compiles the complete configuration before
 installing it, while `simile start --config` retains the direct, unregistered path.
+
+The configuration does **not** describe endpoints. OpenAPI already owns them. Think of this file as
+the place where a deployable local service is assembled from independently reviewable sources.
 
 ```hcl
 service "inttegro" {
@@ -38,6 +44,16 @@ $ simile start inttegro --config ./inttegro.simile.hcl --port 8484
 ```
 
 `--port` has invocation precedence over `listen.port`; it does not edit the configuration.
+
+```mermaid
+flowchart LR
+  Config[Service HCL] --> Listener[Listener address]
+  Config --> OpenAPI[One OpenAPI source]
+  Config --> Behaviors[Zero or more HCL modules]
+  OpenAPI --> Compile[Compile and validate]
+  Behaviors --> Compile
+  Compile --> Service[Runnable artifact]
+```
 
 ## Local registry
 
@@ -159,3 +175,6 @@ multipart codecs are also not yet implemented. HCL-declared asynchronous operati
 by the runtime as plans, but the server does not yet execute abstract resources or persist durable
 service state. These omissions are reported here so that starting a service is not mistaken for
 full behavioral fidelity.
+
+Continue with [Service lifecycle](/service-lifecycle) to see how this file becomes a registered
+revision, or [OpenAPI and HCL](/openapi-and-hcl) to decide what belongs in each source.

@@ -1,9 +1,15 @@
-# Operation execution
+---
+title: Operation execution
+description: Follow a validated operation through response selection, replay, and effect planning.
+---
 
 Simile executes a compiled service through a protocol-neutral runtime. The runtime does
 not open a port, route a URL, or depend on an HTTP framework. It accepts the stable operation key
 selected by a caller and coordinates the runtime primitives that already understand the compiled
 artifact.
+
+This boundary lets the one-shot CLI and the HTTP server share semantics without forcing HTTP
+concerns into the compiler or schema engine.
 
 ## Execution boundary
 
@@ -32,6 +38,22 @@ It performs one ordered run:
 3. synthesize the immediate response, using the validated request as context; and
 4. collect the asynchronous operations attached by HCL, including their abstract resources; and
 5. cache the completed outcome when the adapter supplied a replay identity.
+
+```mermaid
+sequenceDiagram
+  participant A as Adapter
+  participant R as Runtime
+  participant S as Schema engine
+  participant O as Outcome selector
+  A->>R: operation key + normalized request
+  R->>S: validate request
+  S-->>R: validated value
+  R->>O: request + execution options
+  O-->>R: named outcome or default selection
+  R->>S: synthesize and validate response
+  S-->>R: response
+  R-->>A: response + planned async work
+```
 
 The result owns the validated request body, synthesized response, and asynchronous operation plan.
 No plan is returned when validation or response synthesis fails. This gives future state and effect
@@ -102,3 +124,6 @@ It currently matches literal and parameterized OpenAPI paths, applies an 8 MiB b
 schema validation, authentication behavior, form and multipart codecs, durable state, and execution
 of asynchronous plans remain later runtime slices. They are not silently treated as implemented by
 the current body-oriented runtime.
+
+For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
+current persistence model, read [State, identity, and replay](/state-and-replay).
