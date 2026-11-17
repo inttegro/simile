@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod execution;
+mod fault;
 mod operation;
+mod outcome;
+mod protocol;
+mod replay;
 mod response;
 
 use serde_json::Value;
@@ -8,10 +13,12 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
-pub use operation::{
-    ExecutionOptions, OperationCall, OperationOutcome, OperationValueCall, PlannedAsyncOperation,
-    ReplayIdentity, Runtime,
+pub use execution::{
+    ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
+    PlannedAsyncOperation, ReplayIdentity,
 };
+pub use fault::{FaultActivation, FaultSource, TransportPlan};
+pub use operation::Runtime;
 pub use response::{
     ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
     synthesize_response_with_seed,
@@ -136,6 +143,15 @@ pub enum Error {
 
     #[error("scenario `{scenario}` is not present in the compiled service")]
     UnknownScenario { scenario: String },
+
+    #[error("fault profile `{profile}` is not present in the compiled service")]
+    UnknownFaultProfile { profile: String },
+
+    #[error("fault `{fault}` is not present in the compiled service")]
+    UnknownFault { fault: String },
+
+    #[error("runtime fault state is unavailable")]
+    FaultStateUnavailable,
 
     #[error("operation `{operation}` does not declare a request body")]
     BodyNotDeclared { operation: String },

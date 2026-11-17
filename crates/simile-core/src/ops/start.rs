@@ -29,6 +29,12 @@ pub struct ServiceReport {
     pub operations: usize,
     pub resources: usize,
     pub async_operations: usize,
+    pub faults: usize,
+    pub fault_profiles: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_fault_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault_seed: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +123,10 @@ pub(crate) fn prepare_loaded_service(
         operations: summary.operations,
         resources: summary.resources,
         async_operations: summary.async_operations,
+        faults: summary.faults,
+        fault_profiles: summary.fault_profiles,
+        active_fault_profile: None,
+        fault_seed: None,
     };
 
     Ok(PreparedConfiguration {
@@ -144,6 +154,10 @@ fn prepare_registered_service(ctx: &Context, request: &StartRequest) -> Result<P
         operations: summary.operations,
         resources: summary.resources,
         async_operations: summary.async_operations,
+        faults: summary.faults,
+        fault_profiles: summary.fault_profiles,
+        active_fault_profile: None,
+        fault_seed: None,
     };
     Ok(PreparedService {
         report,
@@ -169,6 +183,8 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
         && module.error_set_applications.is_empty()
         && module.protocol_errors.is_empty()
         && module.scenarios.is_empty()
+        && module.faults.is_empty()
+        && module.fault_profiles.is_empty()
         && module.async_operations.is_empty()
 }
 

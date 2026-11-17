@@ -11,6 +11,7 @@ const MUTED: Style = AnsiColor::BrightBlack.on_default();
 
 pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Result<Status> {
     let scenario = arguments.scenario;
+    let fault_profile = arguments.fault_profile;
     let prepared = ops::prepare_service(
         ctx,
         &ops::StartRequest {
@@ -23,21 +24,27 @@ pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Resu
         .enable_all()
         .build()
         .map_err(Error::AsyncRuntime)?;
-    runtime.block_on(run(prepared, scenario, terminal))
+    runtime.block_on(run(prepared, scenario, fault_profile, terminal))
 }
 
 async fn run(
     mut prepared: ops::PreparedService,
     scenario: Option<String>,
+    fault_profile: Option<String>,
     terminal: &Terminal,
 ) -> Result<Status> {
-    let server = simile_server::Server::bind_with_scenario(
+    let server = simile_server::Server::bind_with_options(
         prepared.report.listen,
         prepared.artifact,
-        scenario,
+        simile_server::ServerOptions {
+            scenario,
+            fault_profile: fault_profile.clone(),
+        },
     )
     .await?;
     prepared.report.listen = server.local_addr();
+    prepared.report.active_fault_profile = fault_profile;
+    prepared.report.fault_seed = server.fault_seed();
     render(&prepared.report, terminal)?;
     server.run().await?;
     Ok(Status::Success)
@@ -61,7 +68,19 @@ fn render(report: &ops::ServiceReport, terminal: &Terminal) -> Result<()> {
             terminal.line(format_args!(
                 "{MUTED}runtime{MUTED:#} {} async operations · {} resources",
                 report.async_operations, report.resources
-            ))
+            ))?;
+            terminal.line(format_args!(
+                "{MUTED}faults{MUTED:#} {} definitions · {} profiles",
+                report.faults, report.fault_profiles
+            ))?;
+            if let (Some(profile), Some(seed)) =
+                (report.active_fault_profile.as_deref(), report.fault_seed)
+            {
+                terminal.line(format_args!(
+                    "{MUTED}faults{MUTED:#} {profile} · seed {seed}"
+                ))?;
+            }
+            Ok(())
         }
         OutputFormat::Json => terminal.json(report),
     }

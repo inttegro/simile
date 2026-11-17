@@ -201,6 +201,10 @@ pub struct StartArgs {
     /// Activate one opaque public scenario for the running emulator.
     #[arg(long, value_name = "NAME")]
     pub scenario: Option<String>,
+
+    /// Enable one bounded stochastic environmental-fault profile.
+    #[arg(long, value_name = "NAME")]
+    pub fault_profile: Option<String>,
 }
 
 #[derive(Debug, Args)]

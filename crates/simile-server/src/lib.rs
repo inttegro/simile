@@ -8,15 +8,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::body::{Body, HttpBody, to_bytes};
+use axum::body::{Body, Bytes, HttpBody, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{ALLOW, CONTENT_TYPE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use futures_util::stream;
 use serde_json::json;
 use simile_artifact::Artifact;
-use simile_runtime::{ExecutionOptions, OperationCall, ReplayIdentity, Runtime};
+use simile_runtime::{
+    ExecutionOptions, OperationCall, OperationExecution, ReplayIdentity, Runtime, TransportPlan,
+};
 use thiserror::Error;
 use tokio::net::TcpListener;
 
@@ -41,6 +44,18 @@ pub enum Error {
 
     #[error("compiled service has no scenario named `{0}`")]
     UnknownScenario(String),
+
+    #[error("compiled service has no fault profile named `{0}`")]
+    UnknownFaultProfile(String),
+
+    #[error("could not initialize fault profile `{profile}`: {message}")]
+    FaultProfileState { profile: String, message: String },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ServerOptions {
+    pub scenario: Option<String>,
+    pub fault_profile: Option<String>,
 }
 
 #[derive(Debug)]
@@ -48,6 +63,7 @@ pub struct Server {
     listener: TcpListener,
     router: Router,
     address: SocketAddr,
+    fault_seed: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -56,6 +72,7 @@ struct ServerState {
     routes: RouteTable,
     body_limit: usize,
     scenario: Option<String>,
+    fault_profile: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,7 +119,7 @@ struct AccessLine<'a> {
 
 impl Server {
     pub async fn bind(address: SocketAddr, artifact: Artifact) -> Result<Self> {
-        Self::bind_with_scenario(address, artifact, None).await
+        Self::bind_with_options(address, artifact, ServerOptions::default()).await
     }
 
     pub async fn bind_with_scenario(
@@ -110,9 +127,30 @@ impl Server {
         artifact: Artifact,
         scenario: Option<String>,
     ) -> Result<Self> {
-        if let Some(name) = scenario.as_deref() {
+        Self::bind_with_options(
+            address,
+            artifact,
+            ServerOptions {
+                scenario,
+                fault_profile: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn bind_with_options(
+        address: SocketAddr,
+        artifact: Artifact,
+        options: ServerOptions,
+    ) -> Result<Self> {
+        if let Some(name) = options.scenario.as_deref() {
             if !artifact.has_scenario(name) {
                 return Err(Error::UnknownScenario(name.to_owned()));
+            }
+        }
+        if let Some(name) = options.fault_profile.as_deref() {
+            if !artifact.has_fault_profile(name) {
+                return Err(Error::UnknownFaultProfile(name.to_owned()));
             }
         }
         let listener = TcpListener::bind(address)
@@ -120,11 +158,25 @@ impl Server {
             .map_err(|source| Error::Bind { address, source })?;
         let address = listener.local_addr().map_err(Error::LocalAddress)?;
         let routes = RouteTable::new(&artifact);
+        let runtime = Runtime::from_artifact(artifact);
+        let fault_seed = options
+            .fault_profile
+            .as_deref()
+            .map(|profile| {
+                runtime
+                    .fault_profile_seed(profile)
+                    .map_err(|error| Error::FaultProfileState {
+                        profile: profile.to_owned(),
+                        message: error.to_string(),
+                    })
+            })
+            .transpose()?;
         let state = Arc::new(ServerState {
-            runtime: Runtime::from_artifact(artifact),
+            runtime,
             routes,
             body_limit: DEFAULT_BODY_LIMIT,
-            scenario,
+            scenario: options.scenario,
+            fault_profile: options.fault_profile,
         });
         let router = Router::new()
             .fallback(handle)
@@ -134,12 +186,18 @@ impl Server {
             listener,
             router,
             address,
+            fault_seed,
         })
     }
 
     #[must_use]
     pub const fn local_addr(&self) -> SocketAddr {
         self.address
+    }
+
+    #[must_use]
+    pub const fn fault_seed(&self) -> Option<u64> {
+        self.fault_seed
     }
 
     pub async fn run(self) -> Result<()> {
@@ -371,13 +429,55 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         ExecutionOptions {
             replay,
             scenario: state.scenario.as_deref(),
+            fault_profile: state.fault_profile.as_deref(),
             ..ExecutionOptions::default()
         },
     );
     match outcome {
-        Ok(outcome) => operation_response(outcome.response(), method == Method::HEAD),
+        Ok(execution) => operation_execution_response(execution, method == Method::HEAD).await,
         Err(error) => operation_error(&state.runtime, &operation, error, method == Method::HEAD),
     }
+}
+
+async fn operation_execution_response(execution: OperationExecution, head: bool) -> Response {
+    if let Some(fault) = execution.fault() {
+        tracing::info!(
+            target: "simile::fault",
+            operation = execution.operation(),
+            fault = fault.name(),
+            source = ?fault.source(),
+            phase = ?fault.phase(),
+            "activated environmental fault"
+        );
+    }
+    match execution.transport() {
+        TransportPlan::Respond => operation_response(execution.response(), head),
+        TransportPlan::RespondAfter { milliseconds } => {
+            tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
+            operation_response(execution.response(), head)
+        }
+        TransportPlan::DisconnectAfterCommit => disconnect_after_commit(execution.response()),
+    }
+}
+
+fn disconnect_after_commit(response: &simile_runtime::SynthesizedResponse) -> Response {
+    let status =
+        StatusCode::from_u16(response.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let error = std::io::Error::new(
+        std::io::ErrorKind::ConnectionReset,
+        "simile injected a disconnect after commit",
+    );
+    let body = Body::from_stream(stream::once(
+        async move { Err::<Bytes, std::io::Error>(error) },
+    ));
+    let mut outgoing = (status, body).into_response();
+    if let Some(content_type) = response
+        .media_type()
+        .and_then(|value| HeaderValue::from_str(value).ok())
+    {
+        outgoing.headers_mut().insert(CONTENT_TYPE, content_type);
+    }
+    outgoing
 }
 
 fn header(headers: &HeaderMap, name: &str) -> std::result::Result<Option<String>, Response> {
@@ -653,11 +753,69 @@ paths:
         )
     }
 
+    fn artifact_with_faults() -> Artifact {
+        compile_artifact_with_behavior(
+            r#"
+openapi: 3.1.0
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string }
+"#,
+            r#"
+fault "slow_response" {
+  phase = "before_response"
+  delay { milliseconds = 20 }
+}
+
+fault "response_lost" {
+  phase = "after_commit"
+  disconnect {}
+}
+
+fault_profile "always_slow" {
+  probability       = 1
+  faults            = ["slow_response"]
+  operations        = ["createOrder"]
+  max_consecutive   = 1
+  cooldown_requests = 1
+  seed              = 7
+}
+
+scenario "slow" {
+  inject "createOrder" { fault = "slow_response" }
+}
+
+scenario "lost" {
+  inject "createOrder" { fault = "response_lost" }
+}
+"#,
+        )
+    }
+
     fn compile_artifact(source: &str) -> Artifact {
+        compile_artifact_with_behavior(source, "")
+    }
+
+    fn compile_artifact_with_behavior(source: &str, behavior: &str) -> Artifact {
         let compiled = Compiler::new()
             .compile(CompileRequest {
                 openapi: Source::new("orders.yml", source),
-                behaviors: Vec::new(),
+                behaviors: (!behavior.is_empty())
+                    .then(|| Source::new("faults.hcl", behavior))
+                    .into_iter()
+                    .collect(),
                 heuristic_policy: Policy::Standard,
             })
             .unwrap_or_else(|error| panic!("{error}"));
@@ -744,6 +902,76 @@ paths:
         .await;
 
         assert!(matches!(result, Err(Error::UnknownScenario(name)) if name == "missing"));
+    }
+
+    #[tokio::test]
+    async fn rejects_an_unknown_fault_profile_before_binding() {
+        let result = Server::bind_with_options(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            artifact_with_faults(),
+            ServerOptions {
+                scenario: None,
+                fault_profile: Some("missing".to_owned()),
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(Error::UnknownFaultProfile(name)) if name == "missing"));
+    }
+
+    #[tokio::test]
+    async fn reports_the_active_fault_profiles_seed() {
+        let server = Server::bind_with_options(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            artifact_with_faults(),
+            ServerOptions {
+                scenario: None,
+                fault_profile: Some("always_slow".to_owned()),
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(server.fault_seed(), Some(7));
+    }
+
+    #[tokio::test]
+    async fn enacts_delay_and_disconnect_transport_plans() {
+        let artifact = artifact_with_faults();
+        let runtime = Runtime::new(&artifact);
+        let call = OperationCall {
+            operation: "POST /orders",
+            content_type: None,
+            body: b"",
+        };
+        let delayed = runtime
+            .execute_with_options(
+                call,
+                ExecutionOptions {
+                    scenario: Some("slow"),
+                    ..ExecutionOptions::default()
+                },
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        let started = Instant::now();
+        let response = operation_execution_response(delayed, false).await;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(started.elapsed() >= Duration::from_millis(10));
+
+        let disconnected = runtime
+            .execute_with_options(
+                call,
+                ExecutionOptions {
+                    scenario: Some("lost"),
+                    ..ExecutionOptions::default()
+                },
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        let response = operation_execution_response(disconnected, false).await;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(to_bytes(response.into_body(), 1_024).await.is_err());
     }
 
     async fn serve_raw_with_artifact(artifact: Artifact, request: &[u8]) -> String {

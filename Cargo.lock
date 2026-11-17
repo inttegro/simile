@@ -1132,6 +1132,7 @@ name = "simile-server"
 version = "0.1.1"
 dependencies = [
  "axum",
+ "futures-util",
  "serde_json",
  "simile-artifact",
  "simile-compiler",

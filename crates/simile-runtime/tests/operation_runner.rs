@@ -3,6 +3,7 @@ use simile_artifact::{Artifact, decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
     Error, ExecutionOptions, OperationCall, OperationValueCall, ReplayIdentity, Runtime,
+    TransportPlan,
 };
 
 #[test]
@@ -98,6 +99,7 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
             ExecutionOptions {
                 outcome: None,
                 scenario: None,
+                fault_profile: None,
                 response_status: Some(202),
                 response_content_type: None,
                 replay: None,
@@ -296,6 +298,93 @@ fn rejects_resource_replay_for_mutating_operations() {
     ));
 }
 
+#[test]
+fn scenario_faults_change_delivery_without_becoming_service_outcomes() {
+    let artifact = artifact();
+    assert_eq!(artifact.summary().scenario_faults, 1);
+    let runtime = Runtime::new(&artifact);
+    let options = ExecutionOptions {
+        scenario: Some("response_lost"),
+        replay: Some(ReplayIdentity::IdempotencyKey("checkout-lost")),
+        ..ExecutionOptions::default()
+    };
+
+    let first = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(first.selected_outcome(), None);
+    assert_eq!(
+        first.fault().map(|fault| fault.name()),
+        Some("response_lost")
+    );
+    assert_eq!(first.transport(), &TransportPlan::DisconnectAfterCommit);
+
+    let replay = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(replay.fault(), None);
+    assert_eq!(replay.transport(), &TransportPlan::Respond);
+    assert_eq!(replay.response(), first.response());
+}
+
+#[test]
+fn stochastic_fault_profiles_are_seeded_scoped_and_bounded() {
+    let artifact = artifact();
+    let runtime = Runtime::new(&artifact);
+    assert_eq!(
+        runtime
+            .fault_profile_seed("always_slow")
+            .unwrap_or_else(|error| panic!("{error}")),
+        7
+    );
+    let options = ExecutionOptions {
+        fault_profile: Some("always_slow"),
+        ..ExecutionOptions::default()
+    };
+
+    let first = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let second = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let third = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let fourth = runtime
+        .execute_with_options(
+            order_call(br#"{"product":"beat_pack","quantity":2}"#),
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        first.transport(),
+        &TransportPlan::RespondAfter { milliseconds: 25 }
+    );
+    assert_eq!(second.transport(), &TransportPlan::Respond);
+    assert_eq!(third.transport(), &TransportPlan::Respond);
+    assert_eq!(
+        fourth.transport(),
+        &TransportPlan::RespondAfter { milliseconds: 25 }
+    );
+}
+
 fn order_call(body: &[u8]) -> OperationCall<'_> {
     OperationCall {
         operation: "POST /orders",
@@ -478,6 +567,29 @@ protocol_error "invalid_body" {
 
 scenario "payment_declined" {
   select "createOrder" { outcome = "card_declined" }
+}
+
+fault "slow_response" {
+  phase = "before_response"
+  delay { milliseconds = 25 }
+}
+
+fault "response_lost" {
+  phase = "after_commit"
+  disconnect {}
+}
+
+fault_profile "always_slow" {
+  probability      = 1
+  faults           = ["slow_response"]
+  operations       = ["createOrder"]
+  max_consecutive  = 1
+  cooldown_requests = 2
+  seed             = 7
+}
+
+scenario "response_lost" {
+  inject "createOrder" { fault = "response_lost" }
 }
 
 behavior "createOrder" {

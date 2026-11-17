@@ -1,85 +1,22 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
-use simile_artifact::{Artifact, ArtifactOutcome};
-use simile_spec::{OutcomeProvenance, ResourceRef, ResponseStatus};
+use simile_artifact::Artifact;
 
+use crate::fault::FaultController;
+use crate::outcome;
+use crate::replay::ReplayStore;
 use crate::{
-    Error, IncomingBody, IncomingValue, ResponseSynthesisRequest, Result, SynthesizedResponse,
-    ValidatedBody, synthesize_response, validate_request_body, validate_request_value,
+    Error, ExecutionOptions, IncomingBody, IncomingValue, OperationCall, OperationExecution,
+    OperationOutcome, OperationValueCall, Result, ValidatedBody, validate_request_body,
+    validate_request_value,
 };
 
 /// Executes compiled service operations without depending on a transport framework.
 #[derive(Debug)]
 pub struct Runtime {
     artifact: Arc<Artifact>,
-    replays: Mutex<HashMap<ReplayKey, ReplayRecord>>,
-}
-
-/// One operation invocation selected by a transport or another runtime client.
-#[derive(Clone, Copy, Debug)]
-pub struct OperationCall<'a> {
-    pub operation: &'a str,
-    pub content_type: Option<&'a str>,
-    pub body: &'a [u8],
-}
-
-/// One operation invocation whose request body has already been decoded by its adapter.
-#[derive(Clone, Copy, Debug)]
-pub struct OperationValueCall<'a> {
-    pub operation: &'a str,
-    pub content_type: Option<&'a str>,
-    pub body: Option<&'a Value>,
-}
-
-/// An identity that makes a repeated invocation replay its first completed outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReplayIdentity<'a> {
-    /// A caller-supplied idempotency key for a mutation.
-    IdempotencyKey(&'a str),
-    /// The stable identity of a resource addressed by a GET request.
-    Resource(&'a str),
-}
-
-/// Optional controls for scenarios that need a specific declared response.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ExecutionOptions<'a> {
-    pub outcome: Option<&'a str>,
-    pub scenario: Option<&'a str>,
-    pub response_status: Option<u16>,
-    pub response_content_type: Option<&'a str>,
-    pub replay: Option<ReplayIdentity<'a>>,
-}
-
-/// The validated request, immediate response, and declared follow-up work for an operation.
-#[derive(Clone, Debug, PartialEq)]
-pub struct OperationOutcome {
-    operation: String,
-    request_body: Option<ValidatedBody>,
-    response: SynthesizedResponse,
-    selected_outcome: Option<String>,
-    provenance: Option<OutcomeProvenance>,
-    async_operations: Vec<PlannedAsyncOperation>,
-}
-
-/// One asynchronous operation declared by the selected behavior.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlannedAsyncOperation {
-    name: String,
-    resources: Vec<ResourceRef>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-enum ReplayKey {
-    Idempotency { operation: String, key: String },
-    Resource { operation: String, id: String },
-}
-
-#[derive(Clone, Debug)]
-struct ReplayRecord {
-    request_body: Option<ValidatedBody>,
-    outcome: OperationOutcome,
+    replays: ReplayStore,
+    faults: Mutex<FaultController>,
 }
 
 impl Runtime {
@@ -96,13 +33,14 @@ impl Runtime {
     #[must_use]
     pub fn from_shared(artifact: Arc<Artifact>) -> Self {
         Self {
+            faults: Mutex::new(FaultController::new(&artifact)),
             artifact,
-            replays: Mutex::new(HashMap::new()),
+            replays: ReplayStore::default(),
         }
     }
 
     /// Execute an operation using the response selected by its compiled contract and behavior.
-    pub fn execute(&self, call: OperationCall<'_>) -> Result<OperationOutcome> {
+    pub fn execute(&self, call: OperationCall<'_>) -> Result<OperationExecution> {
         self.execute_with_options(call, ExecutionOptions::default())
     }
 
@@ -111,7 +49,7 @@ impl Runtime {
         &self,
         call: OperationCall<'_>,
         options: ExecutionOptions<'_>,
-    ) -> Result<OperationOutcome> {
+    ) -> Result<OperationExecution> {
         let request_body = validate_request_body(
             &self.artifact,
             IncomingBody {
@@ -124,7 +62,7 @@ impl Runtime {
     }
 
     /// Execute an operation from a transport-neutral value decoded by an adapter.
-    pub fn execute_value(&self, call: OperationValueCall<'_>) -> Result<OperationOutcome> {
+    pub fn execute_value(&self, call: OperationValueCall<'_>) -> Result<OperationExecution> {
         self.execute_value_with_options(call, ExecutionOptions::default())
     }
 
@@ -133,7 +71,7 @@ impl Runtime {
         &self,
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
-    ) -> Result<OperationOutcome> {
+    ) -> Result<OperationExecution> {
         let operation =
             self.artifact
                 .operation(call.operation)
@@ -162,318 +100,62 @@ impl Runtime {
         self.complete(call.operation, request_body, options)
     }
 
-    /// Synthesize the first service response declared for one of `statuses`.
-    ///
-    /// Exact responses win over class responses such as `4XX`, and class
-    /// responses win over `default`. Candidate order is retained within each
-    /// tier. This lets a transport ask the emulated service to own a protocol
-    /// failure without mistaking an unrelated success response for an error.
-    pub fn synthesize_first_declared_response(
-        &self,
-        operation_key: &str,
-        statuses: &[u16],
-    ) -> Result<Option<SynthesizedResponse>> {
-        let operation =
-            self.artifact
-                .operation(operation_key)
-                .ok_or_else(|| Error::UnknownOperation {
-                    operation: operation_key.to_owned(),
-                })?;
-        let responses = operation.responses().collect::<Vec<_>>();
-        let status = statuses
-            .iter()
-            .copied()
-            .find(|status| {
-                responses
-                    .iter()
-                    .any(|response| response.status() == &ResponseStatus::Exact(*status))
-            })
-            .or_else(|| {
-                statuses.iter().copied().find(|status| {
-                    responses.iter().any(|response| {
-                        matches!(response.status(), ResponseStatus::Range(_))
-                            && response.status().matches(*status)
-                    })
-                })
-            })
-            .or_else(|| {
-                responses
-                    .iter()
-                    .any(|response| response.status() == &ResponseStatus::Default)
-                    .then(|| statuses.first().copied())
-                    .flatten()
-            });
-        let Some(status) = status else {
-            return Ok(None);
-        };
-        synthesize_response(
-            &self.artifact,
-            ResponseSynthesisRequest {
-                operation: operation_key,
-                status: Some(status),
-                content_type: None,
-                request_body: None,
-                body: None,
-            },
-        )
-        .map(Some)
-    }
-
-    /// Render the service-declared response for a transport/runtime failure.
-    pub fn synthesize_protocol_error(
-        &self,
-        operation_key: &str,
-        cause: &str,
-    ) -> Result<Option<SynthesizedResponse>> {
-        let Some(mapping) = self.artifact.protocol_error(cause) else {
-            return Ok(None);
-        };
-        let operation =
-            self.artifact
-                .operation(operation_key)
-                .ok_or_else(|| Error::UnknownOperation {
-                    operation: operation_key.to_owned(),
-                })?;
-        let status = mapping.statuses().iter().copied().find(|status| {
-            operation
-                .responses()
-                .any(|response| response.status().matches(*status))
-        });
-        let Some(status) = status else {
-            return Ok(None);
-        };
-        synthesize_response(
-            &self.artifact,
-            ResponseSynthesisRequest {
-                operation: operation_key,
-                status: Some(status),
-                content_type: mapping.content_type(),
-                request_body: None,
-                body: mapping.body(),
-            },
-        )
-        .map(Some)
-    }
-
     fn complete(
         &self,
         operation_key: &str,
         request_body: Option<ValidatedBody>,
         options: ExecutionOptions<'_>,
-    ) -> Result<OperationOutcome> {
+    ) -> Result<OperationExecution> {
         let Some(identity) = options.replay else {
-            return self.produce_outcome(operation_key, request_body, options);
+            let outcome = outcome::produce(&self.artifact, operation_key, request_body, options)?;
+            return self.finish_attempt(operation_key, outcome, options);
         };
-        let key = replay_key(operation_key, identity)?;
-        let mut replays = self
+
+        let replay = self
             .replays
+            .resolve(operation_key, identity, request_body.clone(), || {
+                outcome::produce(&self.artifact, operation_key, request_body, options)
+            })?;
+        if replay.replayed {
+            return Ok(OperationExecution::normal(replay.outcome));
+        }
+        self.finish_attempt(operation_key, replay.outcome, options)
+    }
+
+    fn finish_attempt(
+        &self,
+        operation_key: &str,
+        outcome: OperationOutcome,
+        options: ExecutionOptions<'_>,
+    ) -> Result<OperationExecution> {
+        let fault = self
+            .faults
             .lock()
-            .map_err(|_| Error::ReplayStateUnavailable)?;
-        if let Some(record) = replays.get(&key) {
-            if matches!(key, ReplayKey::Idempotency { .. }) && record.request_body != request_body {
-                return Err(Error::IdempotencyConflict {
-                    operation: operation_key.to_owned(),
-                });
-            }
-            return Ok(record.outcome.clone());
-        }
-        let outcome = self.produce_outcome(operation_key, request_body.clone(), options)?;
-        replays.insert(
-            key,
-            ReplayRecord {
-                request_body,
-                outcome: outcome.clone(),
-            },
-        );
-        Ok(outcome)
+            .map_err(|_| Error::FaultStateUnavailable)?
+            .activate(
+                &self.artifact,
+                operation_key,
+                options.scenario,
+                options.fault_profile,
+            )?;
+        Ok(OperationExecution::with_fault(outcome, fault))
     }
 
-    fn produce_outcome(
-        &self,
-        operation_key: &str,
-        request_body: Option<ValidatedBody>,
-        options: ExecutionOptions<'_>,
-    ) -> Result<OperationOutcome> {
-        let operation =
-            self.artifact
-                .operation(operation_key)
-                .ok_or_else(|| Error::UnknownOperation {
-                    operation: operation_key.to_owned(),
-                })?;
-        let selected = self.select_outcome(operation_key, request_body.as_ref(), options)?;
-        let response_status = selected
-            .as_ref()
-            .map_or(options.response_status, |outcome| Some(outcome.status()));
-        let response_content_type = selected
-            .as_ref()
-            .map_or(options.response_content_type, |outcome| {
-                outcome.content_type().or(options.response_content_type)
-            });
-        let response = synthesize_response(
-            &self.artifact,
-            ResponseSynthesisRequest {
-                operation: operation_key,
-                status: response_status,
-                content_type: response_content_type,
-                request_body: request_body.as_ref(),
-                body: selected.as_ref().and_then(ArtifactOutcome::body),
-            },
-        )?;
-        let async_operations = operation
-            .triggers()
-            .map(|trigger| PlannedAsyncOperation {
-                name: trigger.name().to_owned(),
-                resources: trigger
-                    .resources()
-                    .map(|resource| resource.reference())
-                    .collect(),
+    /// Return the seed governing one stochastic profile in this runtime.
+    ///
+    /// Profiles without a configured seed receive one at runtime construction;
+    /// exposing it makes an otherwise random session exactly reproducible.
+    pub fn fault_profile_seed(&self, profile: &str) -> Result<u64> {
+        self.faults
+            .lock()
+            .map_err(|_| Error::FaultStateUnavailable)?
+            .seed(profile)
+            .ok_or_else(|| Error::UnknownFaultProfile {
+                profile: profile.to_owned(),
             })
-            .collect();
-
-        Ok(OperationOutcome {
-            operation: operation_key.to_owned(),
-            request_body,
-            response,
-            selected_outcome: selected.as_ref().map(|outcome| outcome.name().to_owned()),
-            provenance: selected.as_ref().map(ArtifactOutcome::provenance),
-            async_operations,
-        })
     }
 
-    fn select_outcome(
-        &self,
-        operation_key: &str,
-        request_body: Option<&ValidatedBody>,
-        options: ExecutionOptions<'_>,
-    ) -> Result<Option<ArtifactOutcome>> {
-        let operation =
-            self.artifact
-                .operation(operation_key)
-                .ok_or_else(|| Error::UnknownOperation {
-                    operation: operation_key.to_owned(),
-                })?;
-        let named = if let Some(outcome) = options.outcome {
-            Some(outcome)
-        } else if let Some(scenario) = options.scenario {
-            if !self.artifact.has_scenario(scenario) {
-                return Err(Error::UnknownScenario {
-                    scenario: scenario.to_owned(),
-                });
-            }
-            self.artifact.scenario_outcome(scenario, operation_key)
-        } else {
-            None
-        };
-        if let Some(name) = named {
-            return operation
-                .outcomes()
-                .find(|outcome| outcome.name() == name)
-                .map(Some)
-                .ok_or_else(|| Error::UnknownOutcome {
-                    operation: operation_key.to_owned(),
-                    outcome: name.to_owned(),
-                });
-        }
-        let Some(body) = request_body.map(ValidatedBody::value) else {
-            return Ok(None);
-        };
-        Ok(operation.outcomes().find(|outcome| {
-            !outcome.conditions().is_empty()
-                && outcome
-                    .conditions()
-                    .iter()
-                    .all(|condition| body.pointer(condition.path()) == Some(condition.equals()))
-        }))
-    }
-}
-
-fn replay_key(operation: &str, identity: ReplayIdentity<'_>) -> Result<ReplayKey> {
-    match identity {
-        ReplayIdentity::IdempotencyKey(key) => {
-            let key = key.trim();
-            if key.is_empty() {
-                return Err(Error::EmptyReplayIdentity);
-            }
-            Ok(ReplayKey::Idempotency {
-                operation: operation.to_owned(),
-                key: key.to_owned(),
-            })
-        }
-        ReplayIdentity::Resource(id) => {
-            if !operation.starts_with("GET ") {
-                return Err(Error::ResourceReplayRequiresGet {
-                    operation: operation.to_owned(),
-                });
-            }
-            let id = id.trim();
-            if id.is_empty() {
-                return Err(Error::EmptyReplayIdentity);
-            }
-            Ok(ReplayKey::Resource {
-                operation: operation.to_owned(),
-                id: id.to_owned(),
-            })
-        }
-    }
-}
-
-impl OperationOutcome {
-    #[must_use]
-    pub fn operation(&self) -> &str {
-        &self.operation
-    }
-
-    #[must_use]
-    pub const fn request_body(&self) -> Option<&ValidatedBody> {
-        self.request_body.as_ref()
-    }
-
-    #[must_use]
-    pub const fn response(&self) -> &SynthesizedResponse {
-        &self.response
-    }
-
-    #[must_use]
-    pub fn selected_outcome(&self) -> Option<&str> {
-        self.selected_outcome.as_deref()
-    }
-
-    #[must_use]
-    pub const fn provenance(&self) -> Option<OutcomeProvenance> {
-        self.provenance
-    }
-
-    #[must_use]
-    pub fn async_operations(&self) -> &[PlannedAsyncOperation] {
-        &self.async_operations
-    }
-
-    #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        String,
-        Option<ValidatedBody>,
-        SynthesizedResponse,
-        Vec<PlannedAsyncOperation>,
-    ) {
-        (
-            self.operation,
-            self.request_body,
-            self.response,
-            self.async_operations,
-        )
-    }
-}
-
-impl PlannedAsyncOperation {
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[must_use]
-    pub fn resources(&self) -> &[ResourceRef] {
-        &self.resources
+    pub(crate) fn artifact(&self) -> &Artifact {
+        &self.artifact
     }
 }
