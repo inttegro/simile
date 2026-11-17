@@ -1,5 +1,5 @@
 ---
-title: Service configuration
+title: Configuration
 description: Compose one runnable service from its contract, listener, and optional behavior modules.
 ---
 
@@ -40,6 +40,7 @@ $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
 $ simile update inttegro --config ./replacement.simile.hcl
 $ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile remove inttegro --confirm inttegro
 $ simile start inttegro
 $ simile start inttegro --config ./inttegro.simile.hcl
 $ simile start inttegro --config ./inttegro.simile.hcl --port 8484
@@ -178,5 +179,5 @@ by the runtime as plans, but the server does not yet execute abstract resources 
 service state. These omissions are reported here so that starting a service is not mistaken for
 full behavioral fidelity.
 
-Continue with [Service lifecycle](/service-lifecycle) to see how this file becomes a registered
+Continue with [Lifecycle](/service-lifecycle) to see how this file becomes a registered
 revision, or [OpenAPI and HCL](/openapi-and-hcl) to decide what belongs in each source.

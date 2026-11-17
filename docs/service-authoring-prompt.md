@@ -1,5 +1,5 @@
 ---
-title: Service authoring prompt
+title: Authoring prompt
 description: Give a coding agent the evidence, constraints, and validation standard needed to produce a faithful Simile service contract.
 ---
 

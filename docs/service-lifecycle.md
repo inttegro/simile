@@ -1,6 +1,6 @@
 ---
-title: Service lifecycle
-description: Understand how register, update, start, and run compile and load service definitions.
+title: Lifecycle
+description: Understand how register, update, start, remove, and run manage service definitions.
 ---
 
 Simile has two execution paths. `run` compiles and executes one operation in a short-lived process.
@@ -78,6 +78,21 @@ simile update inttegro --config https://example.com/inttegro.simile.hcl
 An already running process keeps the artifact it loaded. Restart it to load the newly current
 revision.
 
+## Remove
+
+```bash
+simile remove inttegro --confirm inttegro
+```
+
+Removal permanently deletes the named service's complete registry directory: its `current`
+pointer, every immutable revision, and any local `state/` data. The `--confirm` value is required
+and must exactly match the service name. A missing or different value fails before the registry is
+changed. Other registered services and the registry layout remain intact.
+
+Removing a service does not stop an already running process, because that process has already
+loaded its artifact into memory. Stop it separately. After removal, `simile start inttegro` fails
+until the service is registered again.
+
 ## Run
 
 ```bash
@@ -112,6 +127,6 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 runtime does not persist resources there. `locks/` is likewise reserved as cross-process registry
 coordination expands; installation currently relies on same-filesystem staging and atomic rename.
 
-See [Service configuration](/service-configuration) for configuration rules and
+See [Configuration](/service-configuration) for configuration rules and
 [Compiled artifact](/compiled-artifact) for what the installed runtime reads. The component
 ownership and atomic installation flow are described in [Application and registry](/application-registry).

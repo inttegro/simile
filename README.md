@@ -95,6 +95,7 @@ $ simile register inttegro --config inttegro.simile.hcl
 $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
 $ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile remove inttegro --confirm inttegro
 $ simile start inttegro
 $ simile start inttegro --config inttegro.simile.hcl
 $ simile start inttegro --config inttegro.simile.hcl --port 8484
@@ -158,6 +159,10 @@ either configuration for that invocation; the listener host remains configuratio
 behavior sources. Pass `--config URL_OR_FILE` to replace the HCL configuration source at the same
 time. Every successful update installs a new immutable revision and atomically advances the
 service's `current` pointer; a failed load or compilation leaves the active revision unchanged.
+
+`simile remove NAME --confirm NAME` permanently deletes that service's current pointer, immutable
+revisions, and local state. The exact-name confirmation is required; other registered services and
+the registry layout are preserved.
 
 ```hcl
 service "inttegro" {

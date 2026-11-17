@@ -36,6 +36,10 @@ so a failed compile or interrupted write cannot expose a partial service.
 source with a file or URL, resolves its provenance, compiles a complete new revision, and advances
 `current` only after success. Older revisions remain immutable.
 
+`simile remove NAME --confirm NAME` deletes the service's entire directory, including all revisions
+and local state. Exact-name confirmation is mandatory. The registry layout and other named services
+are not changed.
+
 ## Start a named service
 
 ```mermaid
@@ -67,5 +71,5 @@ It does not interpret OpenAPI or HCL, validate JSON Schema itself, encode CBOR, 
 or format terminal output. Keeping those responsibilities in their component crates makes every
 application operation replaceable and testable.
 
-For command-level behavior, see [Service lifecycle](/service-lifecycle). For the bytes installed in
+For command-level behavior, see [Lifecycle](/service-lifecycle). For the bytes installed in
 each revision, see [Compiled artifact](/compiled-artifact).
