@@ -28,6 +28,7 @@
 						"pages": [
 							"openapi-and-hcl",
 							"service-configuration",
+							"service-authoring-prompt",
 							"service-lifecycle"
 						]
 					},
