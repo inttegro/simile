@@ -3,6 +3,12 @@
 	"theme": "luma",
 	"name": "Simile",
 	"description": "Run faithful service emulators locally and in CI.",
+	"logo": {
+		"light": "/logo-dark.svg",
+		"dark": "/logo-light.svg",
+		"href": "/"
+	},
+	"favicon": "/favicon.svg",
 	"colors": {
 		"primary": "#16A34A",
 		"light": "#22C55E",
@@ -46,6 +52,90 @@
 					{
 						"group": "Runtime",
 						"pages": ["operation-execution", "current-boundaries"]
+					}
+				]
+			}
+		]
+	},
+	"footer": {
+		"socials": {
+			"website": "https://inttegro.com",
+			"github": "https://github.com/inttegro"
+		},
+		"links": [
+			{
+				"header": "Simile",
+				"items": [
+					{
+						"label": "Why Simile",
+						"href": "/why-simile"
+					},
+					{
+						"label": "Quickstart",
+						"href": "/quickstart"
+					},
+					{
+						"label": "Source code",
+						"href": "https://github.com/inttegro/simile"
+					},
+					{
+						"label": "Releases",
+						"href": "https://github.com/inttegro/simile/releases"
+					}
+				]
+			},
+			{
+				"header": "Inttegro",
+				"items": [
+					{
+						"label": "Commerce platform",
+						"href": "https://inttegro.com"
+					},
+					{
+						"label": "Developer Studio",
+						"href": "https://studio.inttegro.dev"
+					},
+					{
+						"label": "Pricing",
+						"href": "https://inttegro.com/pricing"
+					}
+				]
+			},
+			{
+				"header": "Open source",
+				"items": [
+					{
+						"label": "AI tools",
+						"href": "https://github.com/inttegro/ai"
+					},
+					{
+						"label": "Labor skills",
+						"href": "https://github.com/inttegro/labor"
+					},
+					{
+						"label": "HTTP API",
+						"href": "https://github.com/inttegro/httpapi"
+					},
+					{
+						"label": "OpenAPI contract",
+						"href": "https://github.com/inttegro/openapi"
+					}
+				]
+			},
+			{
+				"header": "Developer tools",
+				"items": [
+					{
+						"label": "SDKs",
+						"href": "https://github.com/orgs/inttegro/repositories?q=inttegro-sdk"
+					},
+					{
+						"label": "CLI",
+						"href": "https://github.com/inttegro/cli"
+					},
+					{
+						"label": "Integration demos",
+						"href": "https://github.com/inttegro/inttegro-demos"
 					}
 				]
 			}
