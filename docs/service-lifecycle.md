@@ -113,4 +113,5 @@ runtime does not persist resources there. `locks/` is likewise reserved as cross
 coordination expands; installation currently relies on same-filesystem staging and atomic rename.
 
 See [Service configuration](/service-configuration) for configuration rules and
-[Compiled artifact](/compiled-artifact) for what the installed runtime reads.
+[Compiled artifact](/compiled-artifact) for what the installed runtime reads. The component
+ownership and atomic installation flow are described in [Application and registry](/application-registry).

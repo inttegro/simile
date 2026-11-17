@@ -10,6 +10,18 @@ The split is comparable to source code and an executable. OpenAPI and HCL optimi
 review, and diagnostics. `.similec` optimizes for linked references, compact storage, fast loading,
 and a clear compatibility boundary.
 
+```mermaid
+flowchart LR
+  Service["CompiledService"] --> Lower["Stable tables + numeric indexes"]
+  Schemas["Compiled schema catalog"] --> Lower
+  Lower --> CBOR["Deterministic CBOR payload"]
+  CBOR --> Envelope["Versioned envelope<br/>length + SHA-256 digest"]
+  Envelope --> File[("service.similec")]
+  File --> Reader["Artifact reader"]
+  Reader --> Checks["Envelope, digest, tags,<br/>indexes, and trailing-byte checks"]
+  Checks --> Runtime["Validated runtime records"]
+```
+
 ## Why not store normalized JSON
 
 JSON would keep repeating field names and string references, and it would still require the

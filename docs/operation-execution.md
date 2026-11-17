@@ -126,4 +126,5 @@ of asynchronous plans remain later runtime slices. They are not silently treated
 the current body-oriented runtime.
 
 For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
-current persistence model, read [State, identity, and replay](/state-and-replay).
+current persistence model, read [State, identity, and replay](/state-and-replay). For routing,
+wire limits, error adaptation, and listener lifecycle, continue to the [HTTP server](/http-server).

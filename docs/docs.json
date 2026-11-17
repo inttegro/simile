@@ -18,14 +18,28 @@
 		"groups": [
 			{
 				"group": "Start here",
-				"pages": ["index", "why-simile", "quickstart"]
+				"pages": ["index", "why-simile", "downloads", "quickstart"]
 			},
 			{
 				"group": "Guides",
 				"pages": [
 					{
 						"group": "Define a service",
-						"pages": ["openapi-and-hcl", "service-configuration", "service-lifecycle"]
+						"pages": [
+							"openapi-and-hcl",
+							"service-configuration",
+							"service-lifecycle"
+						]
+					},
+					{
+						"group": "OpenAPI extensions",
+						"pages": [
+							"openapi-extensions",
+							"constraint-mechanics",
+							"constraint-value-relationships",
+							"constraint-conditional-derived",
+							"constraint-lifecycle-template"
+						]
 					},
 					{
 						"group": "Run operations",
@@ -44,14 +58,19 @@
 			{
 				"group": "Internals",
 				"pages": [
-					"architecture",
 					{
-						"group": "Compilation",
-						"pages": ["compilation-pipeline", "compiled-artifact"]
-					},
-					{
-						"group": "Runtime",
-						"pages": ["operation-execution", "current-boundaries"]
+						"group": "Architecture",
+						"pages": [
+							"architecture",
+							"source-model",
+							"compilation-pipeline",
+							"schema-engine",
+							"compiled-artifact",
+							"operation-execution",
+							"http-server",
+							"application-registry",
+							"current-boundaries"
+						]
 					}
 				]
 			}
@@ -73,6 +92,10 @@
 					{
 						"label": "Quickstart",
 						"href": "/quickstart"
+					},
+					{
+						"label": "Downloads",
+						"href": "/downloads"
 					},
 					{
 						"label": "Source code",

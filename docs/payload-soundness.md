@@ -19,6 +19,10 @@ This is a proof relative to the published contract. It does not claim that an in
 describes every private production invariant. A service provider must publish each relationship it
 wants Simile to prove.
 
+For a lookup-oriented list of every supported clause, path form, predicate, and example, use the
+[OpenAPI extension reference](/openapi-extensions). This page explains the proof and construction
+model behind that syntax.
+
 ## Valid shape is not enough
 
 OpenAPI can say that `amount_due`, `amount_paid`, and `amount_remaining` are non-negative integers.

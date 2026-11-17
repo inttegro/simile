@@ -96,5 +96,6 @@ Moving work out of the request path has three benefits:
 3. **Execution is reproducible.** A registered service runs the validated artifact revision even
    if its original URL or local source later changes.
 
-Read [Compiler architecture](/architecture) for crate ownership and
-[Compiled artifact](/compiled-artifact) for the wire format.
+Return to the [architecture overview](/architecture), inspect the source frontends in
+[Source model](/source-model), or continue to the [Compiled artifact](/compiled-artifact) wire
+format.

@@ -112,6 +112,10 @@ schemas, and examples twice, while ordinary OpenAPI tooling could not see the em
 Keeping HCL additive makes source ownership clear and allows OpenAPI-only services to remain
 first-class.
 
+When ordinary OpenAPI Schema cannot express a public relationship between fields, Simile provides
+the executable `x-simile-constraints` extension. See the
+[OpenAPI extension reference](/openapi-extensions) for its clause glossary and authoring rules.
+
 ## Why not infer behavior from route names
 
 `POST /orders` suggests creation to a human, but it does not prove what is stored, what identity is
