@@ -86,6 +86,16 @@ runtime and leaves source-specific structures behind.
 only converts arguments into that request and renders the structured report. Neither crate knows
 how either source language works.
 
+The filesystem registry is also a `simile-core` boundary. Registration compiles and validates a
+service before installing an immutable revision containing the source HCL, a versioned JSON
+manifest, and the `.similec` runtime artifact. The registry atomically advances a small `current`
+pointer; it does not maintain a second central index. Starting by name loads and validates the
+selected artifact without returning to OpenAPI or HCL. CLI adapters do not construct registry paths
+or interpret manifests. Updating is a source operation: core loads either the stored HCL snapshot
+or a replacement file or URL, resolves its provenance, compiles a complete artifact, installs a
+new revision, and only then advances `current`. The registry never exposes a partially compiled
+update to `start`.
+
 ### Runtime artifact: `simile-artifact`
 
 The source model is intentionally convenient for parsing and diagnostics; it is not persisted as
@@ -170,6 +180,8 @@ process lifetime.
 - Distributed definitions contain observable behavior, not sensitive production logic.
 - Parsing, semantic validation, orchestration, file I/O, and terminal rendering remain separate
   testable units.
+- A registered service starts from its validated artifact and never depends on the original source
+  path or availability of a remote specification.
 - Compiled artifact bytes are deterministic for the same compiled service.
 - Binary compatibility is governed by the artifact envelope version, not the Rust layout of
   source-domain structs.

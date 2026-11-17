@@ -2,8 +2,8 @@
 
 A service configuration is the composition root for one locally runnable emulator. It names the
 service, selects one OpenAPI source, defines its listener, and optionally imports or contains HCL
-behavior declarations. `simile start` validates and compiles the complete configuration before it
-binds a socket.
+behavior declarations. `simile register` validates and compiles the complete configuration before
+installing it, while `simile start --config` retains the direct, unregistered path.
 
 ```hcl
 service "inttegro" {
@@ -27,11 +27,52 @@ The document must contain exactly one `service` block. Its label is the service 
 CLI:
 
 ```console
+$ simile register inttegro --config ./inttegro.simile.hcl
+$ simile register inttegro --config https://example.com/inttegro.simile.hcl
+$ simile update inttegro
+$ simile update inttegro --config ./replacement.simile.hcl
+$ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile start inttegro
 $ simile start inttegro --config ./inttegro.simile.hcl
 $ simile start inttegro --config ./inttegro.simile.hcl --port 8484
 ```
 
 `--port` has invocation precedence over `listen.port`; it does not edit the configuration.
+
+## Local registry
+
+The default registry root is `$HOME/.simile`; `SIMILE_HOME` overrides it for CI and tests. A
+registration is an immutable runtime snapshot:
+
+```text
+~/.simile/
+├── layout-version
+├── services/
+│   └── inttegro/
+│       ├── current
+│       ├── revisions/
+│       │   └── REVISION/
+│       │       ├── manifest.json
+│       │       ├── config.hcl
+│       │       └── service.similec
+│       └── state/
+├── locks/
+└── tmp/
+```
+
+The copied HCL preserves the registered source for inspection. The versioned JSON manifest records
+listener and provenance metadata. The deterministic `.similec` artifact is the runtime authority.
+Consequently, starting a registered service neither depends on the original config path nor
+refetches a URL-based OpenAPI source. `simile update NAME` recompiles the stored HCL after reloading
+the OpenAPI and imported behavior sources it names. `simile update NAME --config URL_OR_FILE`
+first replaces that HCL source. The fetched HCL is kept in the installed revision; it is not saved
+as a separate download. Compilation completes before `current` advances, so a failed update leaves
+the previous revision active. Existing revisions remain available for recovery, while `current` is
+the only mutable pointer. `register --force` remains an explicit replacement path, but normal
+refreshes should use `update`. `locks/` is reserved for cross-process coordination as registry
+operations expand; `tmp/` contains only same-filesystem staging directories used before an atomic
+revision install. `state/` is deliberately outside revisions so future emulated resource state can
+survive a service update.
 
 ## Listener
 
@@ -56,6 +97,11 @@ openapi { url = "https://example.com/commerce.yml" }
 
 A relative path is resolved from the directory containing the service configuration. A URL is read
 into memory for compilation and is not saved to disk.
+
+Both `simile register --config` and `simile update --config` can load the service configuration
+itself from an HTTP or HTTPS URL. Because that document has no local directory, it must use an
+OpenAPI URL and inline behavior declarations. Relative OpenAPI and imported behavior paths in a
+remote configuration are rejected rather than resolved against the process working directory.
 
 ## Behavior modules
 

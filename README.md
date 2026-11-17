@@ -62,6 +62,11 @@ $ simile run openapi.yaml --operation-id createOrder --request request.json
 $ cat request.json | simile run openapi.yaml --operation-id createOrder --request -
 $ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
 $ simile run openapi.yaml --operation-id createOrder --heuristics conservative
+$ simile register inttegro --config inttegro.simile.hcl
+$ simile register inttegro --config https://example.com/inttegro.simile.hcl
+$ simile update inttegro
+$ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile start inttegro
 $ simile start inttegro --config inttegro.simile.hcl
 $ simile start inttegro --config inttegro.simile.hcl --port 8484
 ```
@@ -110,10 +115,17 @@ The deliberately weaker generation-only inference boundary is documented in
 
 ## Running a service
 
-`simile start` reads one strict HCL service configuration, compiles its OpenAPI contract and
-optional behavior modules in memory, and binds the configured listener. The positional name must
-match the service label. `--port` overrides the configuration for that invocation; the listener
-host remains configuration-owned.
+`simile register` reads one strict HCL service configuration from a local path or HTTP(S) URL,
+compiles its OpenAPI contract and optional behavior modules, and atomically installs a validated
+runtime snapshot under `$HOME/.simile`. The positional name must match the service label. The
+registered artifact is loaded by `simile start NAME` without reopening local sources or refetching
+a remote contract. Pass `--config` to `start` for an ad-hoc, unregistered run. `--port` overrides
+either configuration for that invocation; the listener host remains configuration-owned.
+
+`simile update NAME` recompiles the registered HCL snapshot after reloading its OpenAPI and
+behavior sources. Pass `--config URL_OR_FILE` to replace the HCL configuration source at the same
+time. Every successful update installs a new immutable revision and atomically advances the
+service's `current` pointer; a failed load or compilation leaves the active revision unchanged.
 
 ```hcl
 service "inttegro" {
@@ -131,10 +143,13 @@ service "inttegro" {
 ```
 
 Use exactly one of `path` or `url` inside `openapi`. Relative OpenAPI and behavior paths resolve
-from the service configuration's directory. The default host is `127.0.0.1`; a port from 1 through
-65535 is required. The server prefers literal routes over parameter templates, returns `404` or
-`405` before entering the runtime, limits bodies to 8 MiB, and preserves process-local replay for
-`Idempotency-Key` and repeated GET identities. See
+from a local service configuration's directory. A remotely loaded HCL configuration must use an
+OpenAPI URL and may use inline behavior declarations; imported behavior paths have no remote base
+and are rejected. The default host is `127.0.0.1`; a port from 1 through 65535 is required.
+Registering an existing name requires `--force`. Set `SIMILE_HOME` to override the registry root
+for CI or isolated development. The server prefers literal routes over parameter
+templates, returns `404` or `405` before entering the runtime, limits bodies to 8 MiB, and preserves
+process-local replay for `Idempotency-Key` and repeated GET identities. See
 [service configuration](docs/service-configuration.md) for the complete current boundary.
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
