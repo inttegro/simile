@@ -1,0 +1,79 @@
+---
+title: Simile
+description: A faithful, locally runnable model of an HTTP service.
+---
+
+Simile lets a service provider distribute a faithful, locally runnable model of its system. It
+emulates the service's API, state transitions, and asynchronous behavior so developers can build
+and test complete integrations without depending on hosted test infrastructure.
+
+An HTTP response is only the visible edge of many services. A request may create durable state,
+enqueue work, emit an event, deliver a webhook, retry, or complete later. Simile treats those
+effects as part of the operation rather than reducing the service to static request and response
+fixtures.
+
+## Run a service
+
+Register a provider-authored service configuration once, then start the compiled emulator from
+your local registry:
+
+```bash
+simile register inttegro --config ./inttegro.simile.hcl
+simile start inttegro
+```
+
+The service configuration points Simile at the provider's OpenAPI contract and any optional HCL
+behavior overlays:
+
+```hcl
+service "inttegro" {
+  listen {
+    host = "127.0.0.1"
+    port = 4242
+  }
+
+  openapi {
+    url = "https://example.com/commerce.yml"
+  }
+}
+```
+
+OpenAPI owns the public HTTP contract. HCL is optional and adds behavior that OpenAPI cannot
+express precisely, such as named outcomes, asynchronous work, and opaque test scenarios.
+
+## Exercise one operation
+
+You can run an operation directly without starting the HTTP service:
+
+```bash
+simile run \
+  --spec-url https://example.com/openapi.yaml \
+  --operation-id createOrder
+```
+
+When no request is supplied, Simile synthesizes and validates a fresh contract-sound request. Pass
+`--request` to provide a complete request object inline, from a file, or through standard input.
+
+```json
+{
+  "headers": { "Content-Type": "application/json" },
+  "body": { "product": "custom_jingle", "quantity": 4 }
+}
+```
+
+## How fidelity is established
+
+- OpenAPI defines routes, request shapes, response shapes, authentication, and public errors.
+- Optional HCL selects declared responses and describes observable work that OpenAPI cannot.
+- Provider-authored constraints prove relationships between fields during validation and
+  synthesis.
+- Named examples and outcomes give tests deterministic, public failure families without exposing
+  private production decision logic.
+- Compiled `.similec` artifacts carry the validated model into a source-format-independent
+  runtime.
+
+Continue with [service configuration](/service-configuration) to compose and run an emulator, or
+read [outcome fidelity](/outcome-fidelity) to understand how Simile chooses trustworthy results.
+
+The source, issue tracker, and release history live in the
+[Simile GitHub repository](https://github.com/inttegro/simile).

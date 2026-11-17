@@ -1,0 +1,33 @@
+{
+	"$schema": "https://mintlify.com/docs.json",
+	"theme": "willow",
+	"name": "Simile",
+	"description": "Run faithful service emulators locally and in CI.",
+	"colors": {
+		"primary": "#16A34A",
+		"light": "#22C55E",
+		"dark": "#22C55E"
+	},
+	"navigation": {
+		"groups": [
+			{
+				"group": "Start here",
+				"pages": ["index", "service-configuration", "operation-execution"]
+			},
+			{
+				"group": "Contracts and behavior",
+				"pages": [
+					"request-validation",
+					"response-synthesis",
+					"outcome-fidelity",
+					"payload-soundness",
+					"generation-heuristics"
+				]
+			},
+			{
+				"group": "Architecture",
+				"pages": ["architecture", "compiled-artifact"]
+			}
+		]
+	}
+}
