@@ -15,36 +15,38 @@
 				"pages": ["index", "why-simile", "quickstart"]
 			},
 			{
-				"group": "Build a service",
+				"group": "Guides",
 				"pages": [
-					"service-configuration",
-					"service-lifecycle",
-					"openapi-and-hcl",
-					"dependencies-and-effects"
+					{
+						"group": "Define a service",
+						"pages": ["openapi-and-hcl", "service-configuration", "service-lifecycle"]
+					},
+					{
+						"group": "Run operations",
+						"pages": ["run-operation", "request-validation", "response-synthesis"]
+					},
+					{
+						"group": "Model behavior",
+						"pages": ["outcome-fidelity", "state-and-replay", "dependencies-and-effects"]
+					},
+					{
+						"group": "Prove payloads",
+						"pages": ["payload-soundness", "generation-heuristics"]
+					}
 				]
 			},
 			{
-				"group": "Run operations",
-				"pages": [
-					"run-operation",
-					"request-validation",
-					"response-synthesis",
-					"outcome-fidelity",
-					"state-and-replay"
-				]
-			},
-			{
-				"group": "Sound payloads",
-				"pages": ["payload-soundness", "generation-heuristics"]
-			},
-			{
-				"group": "Architecture",
+				"group": "Internals",
 				"pages": [
 					"architecture",
-					"compilation-pipeline",
-					"operation-execution",
-					"compiled-artifact",
-					"current-boundaries"
+					{
+						"group": "Compilation",
+						"pages": ["compilation-pipeline", "compiled-artifact"]
+					},
+					{
+						"group": "Runtime",
+						"pages": ["operation-execution", "current-boundaries"]
+					}
 				]
 			}
 		]
