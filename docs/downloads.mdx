@@ -1,0 +1,95 @@
+---
+title: Downloads
+description: Install Simile on macOS, Linux, or Windows, or download a verified release archive.
+---
+
+Simile publishes prebuilt releases for macOS, Linux, and Windows. Choose an installer for normal
+use, or download an archive when you need to manage the binary yourself.
+
+## Install Simile
+
+<Tabs>
+  <Tab title="Shell">
+    On macOS or Linux, install the latest release with the stable bootstrap:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/inttegro/simile/HEAD/install.sh)"
+    ```
+
+    The bootstrap selects the archive for your platform, verifies its release checksum, and
+    installs `simile` under Cargo's binary directory. It requires `curl` and does not edit your
+    shell profile.
+
+    To install a specific release, set `SIMILE_VERSION` before running the same bootstrap:
+
+    ```bash
+    SIMILE_VERSION=0.1.1 /bin/bash -c \
+      "$(curl -fsSL https://raw.githubusercontent.com/inttegro/simile/HEAD/install.sh)"
+    ```
+  </Tab>
+  <Tab title="Homebrew">
+    On macOS or Linux, install the formula from Inttegro's Homebrew tap:
+
+    ```bash
+    brew tap inttegro/tap
+    brew trust --formula inttegro/tap/simile
+    brew install inttegro/tap/simile
+    ```
+
+    The tap carries Simile releases before the formula is available from Homebrew Core. Upgrade an
+    existing installation with `brew update && brew upgrade inttegro/tap/simile`.
+  </Tab>
+  <Tab title="Windows">
+    In PowerShell, install the latest x64 Windows release with the generated installer:
+
+    ```powershell
+    powershell -ExecutionPolicy Bypass -c "irm https://github.com/inttegro/simile/releases/latest/download/simile-cli-installer.ps1 | iex"
+    ```
+
+    The installer downloads the Windows archive, verifies its release checksum, and installs
+    `simile.exe` under Cargo's binary directory.
+  </Tab>
+</Tabs>
+
+Confirm the installation from a new terminal:
+
+```bash
+simile --version
+simile doctor
+```
+
+## Download an archive
+
+These links always select the assets attached to the latest GitHub release.
+
+| Platform | Architecture | Archive | SHA-256 |
+| --- | --- | --- | --- |
+| macOS | Apple silicon | [`.tar.xz`](https://github.com/inttegro/simile/releases/latest/download/simile-cli-aarch64-apple-darwin.tar.xz) | [checksum](https://github.com/inttegro/simile/releases/latest/download/simile-cli-aarch64-apple-darwin.tar.xz.sha256) |
+| macOS | Intel | [`.tar.xz`](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-apple-darwin.tar.xz) | [checksum](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-apple-darwin.tar.xz.sha256) |
+| Linux | ARM64 | [`.tar.xz`](https://github.com/inttegro/simile/releases/latest/download/simile-cli-aarch64-unknown-linux-gnu.tar.xz) | [checksum](https://github.com/inttegro/simile/releases/latest/download/simile-cli-aarch64-unknown-linux-gnu.tar.xz.sha256) |
+| Linux | x64 | [`.tar.xz`](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-unknown-linux-gnu.tar.xz) | [checksum](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-unknown-linux-gnu.tar.xz.sha256) |
+| Windows | x64 | [`.zip`](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-pc-windows-msvc.zip) | [checksum](https://github.com/inttegro/simile/releases/latest/download/simile-cli-x86_64-pc-windows-msvc.zip.sha256) |
+
+Versioned assets, source archives, and release notes are available on the
+[GitHub releases page](https://github.com/inttegro/simile/releases).
+
+## Verify a download
+
+Every release includes per-file SHA-256 checksums and GitHub artifact attestations. After
+downloading an archive and its checksum file, verify the checksum on macOS:
+
+```bash
+shasum -a 256 --check simile-cli-aarch64-apple-darwin.tar.xz.sha256
+```
+
+Or on Linux:
+
+```bash
+sha256sum --check simile-cli-x86_64-unknown-linux-gnu.tar.xz.sha256
+```
+
+You can independently verify the archive's provenance with the GitHub CLI:
+
+```bash
+gh attestation verify <archive> --repo inttegro/simile
+```
