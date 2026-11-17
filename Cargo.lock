@@ -1074,6 +1074,7 @@ name = "simile-hcl"
 version = "0.1.0"
 dependencies = [
  "hcl-rs",
+ "serde_json",
  "simile-openapi",
  "simile-spec",
  "thiserror",

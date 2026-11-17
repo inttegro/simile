@@ -146,6 +146,8 @@ pub struct MediaTypeContract {
     pub schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub example: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub examples: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -169,6 +171,8 @@ pub struct Operation {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

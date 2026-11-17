@@ -12,13 +12,13 @@ use simile_schema::{
     SchemaCatalog,
 };
 use simile_spec::{
-    BehaviorOrigin, CompiledService, HttpMethod, OpenApiFeature, ResourceKind, ResourceRef,
-    ResponseStatus,
+    BehaviorOrigin, CompiledService, HttpMethod, OpenApiFeature, OutcomeProvenance, ResourceKind,
+    ResourceRef, ResponseStatus,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 8;
+pub const FORMAT_VERSION: u16 = 9;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -46,11 +46,34 @@ pub struct ArtifactSummary {
     pub schema_nodes: usize,
     pub heuristic_rules: usize,
     pub responses: usize,
+    pub outcomes: usize,
+    pub provider_authored_outcomes: usize,
+    pub scenario_selections: usize,
+    pub schema_synthesized_outcomes: usize,
+    pub underspecified_operations: usize,
+    pub public_export_safe: bool,
+    pub operation_outcomes: Vec<OperationOutcomeSummary>,
     pub value_nodes: usize,
     pub resources: usize,
     pub async_operations: usize,
     pub encoded_bytes: usize,
     pub payload_sha256: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationOutcomeSummary {
+    pub operation: String,
+    pub outcomes: Vec<OutcomeSummary>,
+    pub underspecified: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutcomeSummary {
+    pub name: String,
+    pub status: u16,
+    pub provenance: OutcomeProvenance,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,11 +92,13 @@ pub struct ArtifactOperation<'a> {
     operation_id: Option<&'a str>,
     request_body: Option<&'a RequestBodyPlan>,
     responses: &'a [ResponseRecord],
+    outcomes: &'a [OutcomeRecord],
     behavior_response_status: Option<u16>,
     triggers: &'a [AsyncId],
     strings: &'a [String],
     resources: &'a [ResourceRecord],
     async_operations: &'a [AsyncRecord],
+    values: &'a [ValueRecord],
     schemas: &'a SchemaCatalog,
 }
 
@@ -82,6 +107,31 @@ pub struct ArtifactOperation<'a> {
 pub struct ArtifactResponse<'a> {
     status: ResponseStatus,
     body: Option<BoundResponseBody<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArtifactOutcome {
+    name: String,
+    status: u16,
+    content_type: Option<String>,
+    body: Option<Value>,
+    provenance: OutcomeProvenance,
+    when: Vec<ArtifactOutcomeCondition>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArtifactOutcomeCondition {
+    path: String,
+    equals: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArtifactProtocolError {
+    cause: String,
+    statuses: Vec<u16>,
+    content_type: Option<String>,
+    body: Option<Value>,
+    provenance: OutcomeProvenance,
 }
 
 /// One asynchronous operation triggered by a compiled behavior.
@@ -142,6 +192,32 @@ impl<'a> ArtifactOperation<'a> {
         self.behavior_response_status
     }
 
+    pub fn outcomes(&self) -> impl Iterator<Item = ArtifactOutcome> + '_ {
+        self.outcomes.iter().map(|outcome| ArtifactOutcome {
+            name: self.strings[outcome.0 as usize].clone(),
+            status: outcome.1,
+            content_type: outcome.2.map(|id| self.strings[id as usize].clone()),
+            body: outcome
+                .3
+                .map(|id| decode_value(id, self.strings, self.values())),
+            provenance: decode_outcome_provenance(outcome.4),
+            when: outcome
+                .5
+                .iter()
+                .map(|condition| ArtifactOutcomeCondition {
+                    path: self.strings[condition.0 as usize].clone(),
+                    equals: decode_value(condition.1, self.strings, self.values()),
+                })
+                .collect(),
+        })
+    }
+
+    fn values(&self) -> &[ValueRecord] {
+        // The value arena is stored on the artifact rather than the operation;
+        // this field is injected by `operation_at` through the schema-adjacent slot.
+        self.values
+    }
+
     /// Return the asynchronous operations attached to this operation's behavior.
     pub fn triggers(&self) -> impl Iterator<Item = ArtifactAsyncOperation<'a>> + 'a {
         let operations = self.async_operations;
@@ -168,6 +244,77 @@ impl<'a> ArtifactResponse<'a> {
     #[must_use]
     pub const fn body(&self) -> Option<BoundResponseBody<'a>> {
         self.body
+    }
+}
+
+impl ArtifactOutcome {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn status(&self) -> u16 {
+        self.status
+    }
+
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> Option<&Value> {
+        self.body.as_ref()
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> OutcomeProvenance {
+        self.provenance
+    }
+
+    #[must_use]
+    pub fn conditions(&self) -> &[ArtifactOutcomeCondition] {
+        &self.when
+    }
+}
+
+impl ArtifactOutcomeCondition {
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn equals(&self) -> &Value {
+        &self.equals
+    }
+}
+
+impl ArtifactProtocolError {
+    #[must_use]
+    pub fn cause(&self) -> &str {
+        &self.cause
+    }
+
+    #[must_use]
+    pub fn statuses(&self) -> &[u16] {
+        &self.statuses
+    }
+
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> Option<&Value> {
+        self.body.as_ref()
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> OutcomeProvenance {
+        self.provenance
     }
 }
 
@@ -217,6 +364,32 @@ impl Artifact {
             .iter()
             .map(|operation| operation.7.len())
             .sum();
+        let operation_outcomes = self
+            .operations()
+            .map(|operation| {
+                let outcomes = operation
+                    .outcomes()
+                    .map(|outcome| OutcomeSummary {
+                        name: outcome.name().to_owned(),
+                        status: outcome.status(),
+                        provenance: outcome.provenance(),
+                    })
+                    .collect::<Vec<_>>();
+                let underspecified = outcomes.is_empty()
+                    || outcomes
+                        .iter()
+                        .all(|outcome| outcome.provenance == OutcomeProvenance::SchemaSynthesized);
+                OperationOutcomeSummary {
+                    operation: operation.key().to_owned(),
+                    outcomes,
+                    underspecified,
+                }
+            })
+            .collect::<Vec<_>>();
+        let outcomes = operation_outcomes
+            .iter()
+            .flat_map(|operation| &operation.outcomes)
+            .collect::<Vec<_>>();
         ArtifactSummary {
             format_version: FORMAT_VERSION,
             compiler_version: self.string(self.payload.0).to_owned(),
@@ -241,6 +414,28 @@ impl Artifact {
             schema_nodes: self.payload.7.len(),
             heuristic_rules: self.payload.7.heuristic_rules(),
             responses,
+            outcomes: outcomes.len(),
+            provider_authored_outcomes: outcomes
+                .iter()
+                .filter(|outcome| outcome.provenance == OutcomeProvenance::ProviderAuthored)
+                .count(),
+            scenario_selections: self
+                .payload
+                .2
+                .7
+                .iter()
+                .map(|scenario| scenario.1.len())
+                .sum(),
+            schema_synthesized_outcomes: outcomes
+                .iter()
+                .filter(|outcome| outcome.provenance == OutcomeProvenance::SchemaSynthesized)
+                .count(),
+            underspecified_operations: operation_outcomes
+                .iter()
+                .filter(|operation| operation.underspecified)
+                .count(),
+            public_export_safe: true,
+            operation_outcomes,
             value_nodes: self.payload.4.len(),
             resources: self.payload.5.len(),
             async_operations: self.payload.6.len(),
@@ -278,6 +473,49 @@ impl Artifact {
         (0..self.payload.3.len()).map(|index| self.operation_at(index))
     }
 
+    /// Return the compiled mapping for a transport/runtime failure cause.
+    #[must_use]
+    pub fn protocol_error(&self, cause: &str) -> Option<ArtifactProtocolError> {
+        self.payload
+            .2
+            .6
+            .iter()
+            .find(|error| self.string(error.0) == cause)
+            .map(|error| ArtifactProtocolError {
+                cause: self.string(error.0).to_owned(),
+                statuses: error.1.clone(),
+                content_type: error.2.map(|id| self.string(id).to_owned()),
+                body: error.3.map(|id| self.value(id)),
+                provenance: decode_outcome_provenance(error.4),
+            })
+    }
+
+    /// Resolve an opaque scenario into the named outcome for one operation.
+    #[must_use]
+    pub fn scenario_outcome(&self, scenario: &str, operation: &str) -> Option<&str> {
+        self.payload
+            .2
+            .7
+            .iter()
+            .find(|record| self.string(record.0) == scenario)
+            .and_then(|record| {
+                record
+                    .1
+                    .iter()
+                    .find(|(key, _)| self.string(*key) == operation)
+            })
+            .map(|(_, outcome)| self.string(*outcome))
+    }
+
+    #[must_use]
+    pub fn has_scenario(&self, scenario: &str) -> bool {
+        self.payload
+            .2
+            .7
+            .iter()
+            .any(|record| self.string(record.0) == scenario)
+    }
+
     fn operation_at(&self, index: usize) -> ArtifactOperation<'_> {
         let operation = &self.payload.3[index];
         ArtifactOperation {
@@ -287,6 +525,7 @@ impl Artifact {
             operation_id: operation.4.map(|id| self.string(id)),
             request_body: operation.6.as_ref(),
             responses: &operation.7,
+            outcomes: &operation.10,
             behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
             triggers: operation
                 .9
@@ -295,6 +534,7 @@ impl Artifact {
             strings: &self.payload.1,
             resources: &self.payload.5,
             async_operations: &self.payload.6,
+            values: &self.payload.4,
             schemas: &self.payload.7,
         }
     }
@@ -302,6 +542,38 @@ impl Artifact {
     fn string(&self, id: StringId) -> &str {
         // Decoding validates every identifier before constructing Artifact.
         &self.payload.1[id as usize]
+    }
+
+    fn value(&self, id: ValueId) -> Value {
+        decode_value(id, &self.payload.1, &self.payload.4)
+    }
+}
+
+fn decode_value(id: ValueId, strings: &[String], values: &[ValueRecord]) -> Value {
+    match &values[id as usize] {
+        ValueRecord::Null => Value::Null,
+        ValueRecord::Bool(value) => Value::Bool(*value),
+        ValueRecord::Signed(value) => Value::from(*value),
+        ValueRecord::Unsigned(value) => Value::from(*value),
+        ValueRecord::Float(value) => Value::from(*value),
+        ValueRecord::String(id) => Value::String(strings[*id as usize].clone()),
+        ValueRecord::Array(children) => Value::Array(
+            children
+                .iter()
+                .map(|child| decode_value(*child, strings, values))
+                .collect(),
+        ),
+        ValueRecord::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        strings[*key as usize].clone(),
+                        decode_value(*value, strings, values),
+                    )
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -421,7 +693,16 @@ struct Payload(
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ServiceRecord(StringId, StringId, Option<StringId>, StringId, u8, u8);
+struct ServiceRecord(
+    StringId,
+    StringId,
+    Option<StringId>,
+    StringId,
+    u8,
+    u8,
+    Vec<ProtocolErrorRecord>,
+    Vec<ScenarioRecord>,
+);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct OperationRecord(
@@ -435,6 +716,7 @@ struct OperationRecord(
     Vec<ResponseRecord>,
     u8,
     Option<BehaviorRecord>,
+    Vec<OutcomeRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -442,6 +724,25 @@ struct ResponseRecord(u8, u16, ValueId, Option<ResponseBodyPlan>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct BehaviorRecord(Option<u16>, Vec<AsyncId>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct OutcomeRecord(
+    StringId,
+    u16,
+    Option<StringId>,
+    Option<ValueId>,
+    u8,
+    Vec<ConditionRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ConditionRecord(StringId, ValueId);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ProtocolErrorRecord(StringId, Vec<u16>, Option<StringId>, Option<ValueId>, u8);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ScenarioRecord(StringId, Vec<(StringId, StringId)>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ResourceRecord(u8, StringId);
@@ -562,6 +863,7 @@ where
 
 impl Payload {
     fn compile(service: &CompiledService) -> Result<Self> {
+        audit_public_export(service)?;
         let strings = StringTable::compile(service)?;
         let resource_ids = index_resources(service)?;
         let async_ids = index_async_operations(service)?;
@@ -572,6 +874,49 @@ impl Payload {
             service.heuristic_policy,
         );
 
+        let protocol_errors = service
+            .protocol_errors
+            .values()
+            .map(|error| {
+                Ok(ProtocolErrorRecord(
+                    strings.id(&error.cause)?,
+                    error.statuses.clone(),
+                    strings.optional(error.content_type.as_deref())?,
+                    error
+                        .body
+                        .as_ref()
+                        .map(|body| values.push(body, &strings))
+                        .transpose()?,
+                    encode_outcome_provenance(error.provenance),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let scenarios = service
+            .scenarios
+            .values()
+            .map(|scenario| {
+                let selections = scenario
+                    .selections
+                    .iter()
+                    .map(|(operation_id, outcome)| {
+                        let operation = service
+                            .operations
+                            .iter()
+                            .find(|(_, operation)| {
+                                operation.contract.operation_id.as_deref()
+                                    == Some(operation_id.as_str())
+                            })
+                            .map(|(key, _)| key)
+                            .ok_or_else(|| Error::UnknownReference {
+                                kind: "scenario operation",
+                                name: operation_id.clone(),
+                            })?;
+                        Ok((strings.id(operation.as_str())?, strings.id(outcome)?))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(ScenarioRecord(strings.id(&scenario.name)?, selections))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let service_record = ServiceRecord(
             strings.id(&service.contract.info.title)?,
             strings.id(&service.contract.info.version)?,
@@ -579,6 +924,8 @@ impl Payload {
             strings.id(&service.contract.openapi.exact)?,
             encode_openapi_feature(service.contract.openapi.feature),
             encode_heuristic_policy(service.heuristic_policy),
+            protocol_errors,
+            scenarios,
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -628,6 +975,34 @@ impl Payload {
                     Ok::<_, Error>(BehaviorRecord(behavior.response_status, triggers))
                 })
                 .transpose()?;
+            let outcomes = compiled
+                .outcomes
+                .iter()
+                .map(|outcome| {
+                    let conditions = outcome
+                        .when
+                        .iter()
+                        .map(|condition| {
+                            Ok(ConditionRecord(
+                                strings.id(&condition.path)?,
+                                values.push(&condition.equals, &strings)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(OutcomeRecord(
+                        strings.id(&outcome.name)?,
+                        outcome.status,
+                        strings.optional(outcome.content_type.as_deref())?,
+                        outcome
+                            .body
+                            .as_ref()
+                            .map(|body| values.push(body, &strings))
+                            .transpose()?,
+                        encode_outcome_provenance(outcome.provenance),
+                        conditions,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
             operations.push(OperationRecord(
                 strings.id(key.as_str())?,
                 method,
@@ -639,6 +1014,7 @@ impl Payload {
                 responses,
                 encode_origin(compiled.origin),
                 behavior,
+                outcomes,
             ));
         }
 
@@ -673,6 +1049,7 @@ impl Payload {
             .collect::<Result<Vec<_>>>()?;
 
         let schemas = schema_compiler.finish()?;
+        validate_outcome_bodies(&operations, &values.records, &strings.values, &schemas)?;
 
         Ok(Self(
             strings.id(env!("CARGO_PKG_VERSION"))?,
@@ -701,6 +1078,24 @@ impl Payload {
         }
         if self.2.5 > 3 {
             return Err(Error::Invalid("heuristic policy"));
+        }
+        for error in &self.2.6 {
+            validate_index(error.0, strings, "protocol error cause")?;
+            if error.1.is_empty() || error.1.iter().any(|status| !(100..=599).contains(status)) {
+                return Err(Error::Invalid("protocol error statuses"));
+            }
+            validate_optional_index(error.2, strings, "protocol error content type")?;
+            validate_optional_index(error.3, values, "protocol error body")?;
+            if error.4 > 3 {
+                return Err(Error::Invalid("protocol error provenance"));
+            }
+        }
+        for scenario in &self.2.7 {
+            validate_index(scenario.0, strings, "scenario name")?;
+            for (operation, outcome) in &scenario.1 {
+                validate_index(*operation, strings, "scenario operation")?;
+                validate_index(*outcome, strings, "scenario outcome")?;
+            }
         }
 
         for operation in &self.3 {
@@ -747,6 +1142,21 @@ impl Payload {
             if let Some(behavior) = &operation.9 {
                 for trigger in &behavior.1 {
                     validate_index(*trigger, async_operations, "async operation")?;
+                }
+            }
+            for outcome in &operation.10 {
+                validate_index(outcome.0, strings, "outcome name")?;
+                if !(100..=599).contains(&outcome.1) {
+                    return Err(Error::Invalid("outcome status"));
+                }
+                validate_optional_index(outcome.2, strings, "outcome content type")?;
+                validate_optional_index(outcome.3, values, "outcome body")?;
+                if outcome.4 > 3 {
+                    return Err(Error::Invalid("outcome provenance"));
+                }
+                for condition in &outcome.5 {
+                    validate_index(condition.0, strings, "outcome condition path")?;
+                    validate_index(condition.1, values, "outcome condition value")?;
                 }
             }
         }
@@ -797,6 +1207,120 @@ impl Payload {
     }
 }
 
+fn validate_outcome_bodies(
+    operations: &[OperationRecord],
+    values: &[ValueRecord],
+    strings: &[String],
+    schemas: &SchemaCatalog,
+) -> Result<()> {
+    for operation in operations {
+        for outcome in &operation.10 {
+            let Some(body_id) = outcome.3 else {
+                continue;
+            };
+            let response = select_response_record(&operation.7, outcome.1)
+                .and_then(|response| response.3.as_ref())
+                .ok_or_else(|| Error::InvalidOutcomeBody {
+                    operation: strings[operation.0 as usize].clone(),
+                    outcome: strings[outcome.0 as usize].clone(),
+                    issues: "the selected response declares no body".to_owned(),
+                })?;
+            let body = BoundResponseBody::new(response, schemas);
+            let content_type = outcome
+                .2
+                .map(|id| strings[id as usize].as_str())
+                .or_else(|| body.media_types().next())
+                .ok_or_else(|| Error::InvalidOutcomeBody {
+                    operation: strings[operation.0 as usize].clone(),
+                    outcome: strings[outcome.0 as usize].clone(),
+                    issues: "the selected response declares no media type".to_owned(),
+                })?;
+            let selected = body
+                .select(content_type)
+                .ok_or_else(|| Error::InvalidOutcomeBody {
+                    operation: strings[operation.0 as usize].clone(),
+                    outcome: strings[outcome.0 as usize].clone(),
+                    issues: format!("content type `{content_type}` is not declared"),
+                })?;
+            let value = decode_value(body_id, strings, values);
+            let issues = selected.validate(&value);
+            if !issues.is_empty() {
+                return Err(Error::InvalidOutcomeBody {
+                    operation: strings[operation.0 as usize].clone(),
+                    outcome: strings[outcome.0 as usize].clone(),
+                    issues: format!("{issues:?}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn select_response_record(responses: &[ResponseRecord], status: u16) -> Option<&ResponseRecord> {
+    responses
+        .iter()
+        .find(|response| response.0 == 0 && response.1 == status)
+        .or_else(|| {
+            responses
+                .iter()
+                .find(|response| response.0 == 1 && status / 100 == response.1)
+        })
+        .or_else(|| responses.iter().find(|response| response.0 == 2))
+}
+
+fn audit_public_export(service: &CompiledService) -> Result<()> {
+    for operation in service.operations.values() {
+        for outcome in &operation.outcomes {
+            audit_public_name(&outcome.name)?;
+            if let Some(body) = &outcome.body {
+                audit_public_value(body)?;
+            }
+        }
+    }
+    for error in service.protocol_errors.values() {
+        audit_public_name(&error.cause)?;
+        if let Some(body) = &error.body {
+            audit_public_value(body)?;
+        }
+    }
+    for scenario in service.scenarios.values() {
+        audit_public_name(&scenario.name)?;
+    }
+    Ok(())
+}
+
+fn audit_public_value(value: &Value) -> Result<()> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                audit_public_value(value)?;
+            }
+        }
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                audit_public_name(key)?;
+                audit_public_value(value)?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
+fn audit_public_name(value: &str) -> Result<()> {
+    let normalized = value.to_ascii_lowercase();
+    if normalized.starts_with("_internal")
+        || normalized.starts_with("private_")
+        || normalized.starts_with("_private")
+        || normalized.contains("implementation_detail")
+        || normalized.contains("fraud_threshold")
+        || normalized.contains("database_table")
+    {
+        return Err(Error::UnsafePublicExport(value.to_owned()));
+    }
+    Ok(())
+}
+
 struct StringTable {
     values: Vec<String>,
     ids: BTreeMap<String, StringId>,
@@ -831,6 +1355,35 @@ impl StringTable {
             if let Some(behavior) = &compiled.behavior {
                 values.insert(behavior.operation_id.clone());
                 values.extend(behavior.triggers.iter().cloned());
+            }
+            for outcome in &compiled.outcomes {
+                values.insert(outcome.name.clone());
+                if let Some(content_type) = &outcome.content_type {
+                    values.insert(content_type.clone());
+                }
+                if let Some(body) = &outcome.body {
+                    collect_value_strings(body, &mut values);
+                }
+                for condition in &outcome.when {
+                    values.insert(condition.path.clone());
+                    collect_value_strings(&condition.equals, &mut values);
+                }
+            }
+        }
+        for error in service.protocol_errors.values() {
+            values.insert(error.cause.clone());
+            if let Some(content_type) = &error.content_type {
+                values.insert(content_type.clone());
+            }
+            if let Some(body) = &error.body {
+                collect_value_strings(body, &mut values);
+            }
+        }
+        for scenario in service.scenarios.values() {
+            values.insert(scenario.name.clone());
+            for (operation_id, outcome) in &scenario.selections {
+                values.insert(operation_id.clone());
+                values.insert(outcome.clone());
             }
         }
         for resource in service.resources.values() {
@@ -1017,6 +1570,25 @@ const fn encode_origin(origin: BehaviorOrigin) -> u8 {
     }
 }
 
+const fn encode_outcome_provenance(provenance: OutcomeProvenance) -> u8 {
+    match provenance {
+        OutcomeProvenance::OpenApiDerived => 0,
+        OutcomeProvenance::ProviderAuthored => 1,
+        OutcomeProvenance::RecordedReviewed => 2,
+        OutcomeProvenance::SchemaSynthesized => 3,
+    }
+}
+
+fn decode_outcome_provenance(provenance: u8) -> OutcomeProvenance {
+    match provenance {
+        0 => OutcomeProvenance::OpenApiDerived,
+        1 => OutcomeProvenance::ProviderAuthored,
+        2 => OutcomeProvenance::RecordedReviewed,
+        3 => OutcomeProvenance::SchemaSynthesized,
+        _ => unreachable!("artifact validation rejects unknown outcome provenance"),
+    }
+}
+
 const fn encode_resource_kind(kind: ResourceKind) -> u8 {
     match kind {
         ResourceKind::Db => 0,
@@ -1073,7 +1645,7 @@ mod tests {
                 "3.2.1".to_owned(),
                 "/orders".to_owned(),
             ],
-            ServiceRecord(1, 2, None, 3, 2, 2),
+            ServiceRecord(1, 2, None, 3, 2, 2, Vec::new(), Vec::new()),
             vec![OperationRecord(
                 99,
                 2,
@@ -1085,6 +1657,7 @@ mod tests {
                 Vec::new(),
                 0,
                 None,
+                Vec::new(),
             )],
             Vec::new(),
             Vec::new(),

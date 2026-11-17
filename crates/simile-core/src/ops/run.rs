@@ -7,7 +7,10 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use simile_heuristics::Policy;
-use simile_runtime::{OperationValueCall, Runtime, SynthesisRequest, synthesize_request_value};
+use simile_runtime::{
+    ExecutionOptions, OperationValueCall, Runtime, SynthesisRequest, synthesize_request_value,
+};
+use simile_spec::OutcomeProvenance;
 
 use super::compile::compile_service;
 use crate::{Error, Result};
@@ -54,6 +57,8 @@ pub struct RunRequest {
     pub spec: SpecSource,
     pub behaviors: Vec<PathBuf>,
     pub operation: OperationSelector,
+    pub outcome: Option<String>,
+    pub scenario: Option<String>,
     pub request: Option<RequestInput>,
     pub content_type: Option<String>,
     pub heuristic_policy: Policy,
@@ -128,6 +133,10 @@ pub struct RunReport {
     pub operation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome_provenance: Option<OutcomeProvenance>,
     pub request: ExecutedRequest,
     pub response: ExecutedResponse,
     pub async_operations: Vec<PlannedAsyncOperation>,
@@ -164,11 +173,18 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
     let operation = selected.key().to_owned();
     let operation_id = selected.operation_id().map(str::to_owned);
     let prepared = prepare_request(&artifact, &operation, request)?;
-    let outcome = Runtime::from_artifact(artifact).execute_value(OperationValueCall {
-        operation: &operation,
-        content_type: prepared.content_type.as_deref(),
-        body: prepared.body.as_ref(),
-    })?;
+    let outcome = Runtime::from_artifact(artifact).execute_value_with_options(
+        OperationValueCall {
+            operation: &operation,
+            content_type: prepared.content_type.as_deref(),
+            body: prepared.body.as_ref(),
+        },
+        ExecutionOptions {
+            outcome: request.outcome.as_deref(),
+            scenario: request.scenario.as_deref(),
+            ..ExecutionOptions::default()
+        },
+    )?;
     let executed_request = ExecutedRequest {
         source: prepared.source,
         headers: prepared.headers,
@@ -203,6 +219,8 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         service_version,
         operation,
         operation_id,
+        outcome: outcome.selected_outcome().map(str::to_owned),
+        outcome_provenance: outcome.provenance(),
         request: executed_request,
         response: executed_response,
         async_operations,
@@ -386,6 +404,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
+            outcome: None,
+            scenario: None,
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -434,6 +454,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
+            outcome: None,
+            scenario: None,
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -473,6 +495,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
+            outcome: None,
+            scenario: None,
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -502,6 +526,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
+            outcome: None,
+            scenario: None,
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -520,6 +546,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Key("GET /health".to_owned()),
+            outcome: None,
+            scenario: None,
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -538,6 +566,8 @@ mod tests {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
+            outcome: None,
+            scenario: None,
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
@@ -587,6 +617,8 @@ mod tests {
             spec: SpecSource::Url(format!("http://{address}/openapi.yaml")),
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
+            outcome: None,
+            scenario: None,
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,

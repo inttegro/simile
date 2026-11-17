@@ -46,8 +46,11 @@ examples only; they never become request-validation rules or proof obligations.
 A protocol-neutral runtime coordinates request validation, response synthesis, and the declared
 asynchronous work for one operation. A separate HTTP adapter can now compile a runnable service
 configuration, listen on a local port, match its OpenAPI routes, validate JSON request bodies, and
-return generated responses. Durable resource state and asynchronous resource execution remain
-subsequent runtime layers; declared async work is planned but is not yet performed.
+return generated responses. OpenAPI examples, reusable provider-authored outcome sets, public
+request predicates, opaque scenarios, and service-wide protocol-error mappings now compile into a
+named outcome catalog with fidelity provenance. Durable resource state and asynchronous resource
+execution remain subsequent runtime layers; declared async work is planned but is not yet
+performed.
 
 The available foundation commands are:
 
@@ -62,6 +65,8 @@ $ simile run openapi.yaml --operation-id createOrder --request request.json
 $ cat request.json | simile run openapi.yaml --operation-id createOrder --request -
 $ simile run --spec-url https://example.com/openapi.yaml --operation "GET /health"
 $ simile run openapi.yaml --operation-id createOrder --heuristics conservative
+$ simile run openapi.yaml --behavior payments.hcl --operation-id createPayment --outcome card_declined
+$ simile run openapi.yaml --behavior payments.hcl --operation-id createPayment --scenario payment_declined
 $ simile register inttegro --config inttegro.simile.hcl
 $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
@@ -69,6 +74,7 @@ $ simile update inttegro --config https://example.com/inttegro.simile.hcl
 $ simile start inttegro
 $ simile start inttegro --config inttegro.simile.hcl
 $ simile start inttegro --config inttegro.simile.hcl --port 8484
+$ simile start inttegro --scenario payment_declined
 ```
 
 `run` accepts exactly one contract source and one operation selector. A positional source path is
@@ -112,6 +118,8 @@ OpenAPI rules and cross-field relationships is documented in
 [payload soundness](docs/payload-soundness.md).
 The deliberately weaker generation-only inference boundary is documented in
 [generation heuristics](docs/generation-heuristics.md).
+Named responses, protocol errors, scenarios, provenance, and the public export boundary are
+documented in [outcome fidelity](docs/outcome-fidelity.md).
 
 ## Running a service
 
@@ -171,6 +179,11 @@ behavior "createOrder" {
   trigger "publish_order" {}
 }
 ```
+
+Providers can publish exact failure families once, attach them to operations, and expose opaque
+scenario controls without shipping private decision logic. `simile inspect` lists every compiled
+outcome and marks operations that still depend entirely on schema synthesis. See
+[outcome fidelity](docs/outcome-fidelity.md) for the HCL forms and trust model.
 
 Resource kinds are intentionally abstract. A definition may declare `db`, `cache`, `queue`,
 `mail`, `object_store`, `event_bus`, `scheduler`, or `http`; it cannot couple local emulation to a

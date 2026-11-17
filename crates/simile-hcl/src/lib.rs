@@ -7,8 +7,10 @@ mod parse;
 mod service;
 
 pub use ast::{
-    AsyncDeclaration, BehaviorDeclaration, ListenDeclaration, Module, OpenApiDeclaration,
-    ResourceDeclaration, ServiceDeclaration, ServiceDocument, Source,
+    AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
+    ListenDeclaration, Module, OpenApiDeclaration, OutcomeDeclaration, ProtocolErrorDeclaration,
+    ResourceDeclaration, ScenarioDeclaration, ScenarioSelectionDeclaration, ServiceDeclaration,
+    ServiceDocument, Source,
 };
 pub use compile::compile;
 pub use error::{Error, Result};

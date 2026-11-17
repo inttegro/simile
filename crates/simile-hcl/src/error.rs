@@ -90,6 +90,12 @@ pub enum Error {
     #[error("behavior for operationId `{operation_id}` is declared more than once")]
     DuplicateBehavior { operation_id: String },
 
+    #[error("error set `{name}` is declared more than once")]
+    DuplicateErrorSet { name: String },
+
+    #[error("scenario `{name}` is declared more than once")]
+    DuplicateScenario { name: String },
+
     #[error("async operation `{name}` is declared more than once")]
     DuplicateAsyncOperation { name: String },
 
@@ -98,6 +104,30 @@ pub enum Error {
 
     #[error("operationId `{operation_id}` does not declare response status {status} in OpenAPI")]
     UndeclaredResponse { operation_id: String, status: u16 },
+
+    #[error(
+        "outcome `{outcome}` for operationId `{operation_id}` uses response status {status}, which is not declared in OpenAPI"
+    )]
+    UndeclaredOutcomeResponse {
+        operation_id: String,
+        outcome: String,
+        status: u16,
+    },
+
+    #[error("behavior for `{operation_id}` references unknown error set `{name}`")]
+    UnknownErrorSet { operation_id: String, name: String },
+
+    #[error("apply_error_set references unknown error set `{name}`")]
+    UnknownAppliedErrorSet { name: String },
+
+    #[error("apply_error_set references unknown OpenAPI tag `{tag}`")]
+    UnknownOpenApiTag { tag: String },
+
+    #[error("scenario `{scenario}` references unknown operationId `{operation_id}`")]
+    UnknownScenarioOperation {
+        scenario: String,
+        operation_id: String,
+    },
 
     #[error("behavior for `{operation_id}` triggers unknown async operation `{target}`")]
     UnknownAsyncTarget {

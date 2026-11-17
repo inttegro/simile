@@ -131,6 +131,12 @@ pub enum Error {
     #[error("operation `{operation}` is not present in the compiled service")]
     UnknownOperation { operation: String },
 
+    #[error("operation `{operation}` has no named outcome `{outcome}`")]
+    UnknownOutcome { operation: String, outcome: String },
+
+    #[error("scenario `{scenario}` is not present in the compiled service")]
+    UnknownScenario { scenario: String },
+
     #[error("operation `{operation}` does not declare a request body")]
     BodyNotDeclared { operation: String },
 
@@ -160,6 +166,9 @@ pub enum Error {
 
     #[error("operation `{operation}` does not declare a response matching HTTP {status}")]
     ResponseNotDeclared { operation: String, status: u16 },
+
+    #[error("operation `{operation}` declares no response body for HTTP {status}")]
+    ResponseBodyNotDeclared { operation: String, status: u16 },
 
     #[error("a replay identity cannot be empty")]
     EmptyReplayIdentity,

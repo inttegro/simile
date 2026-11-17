@@ -145,6 +145,10 @@ components:
         body.content["application/json"].example,
         Some(serde_json::json!({"id": "ord_123"}))
     );
+    assert_eq!(
+        body.content["application/json"].examples["created"],
+        serde_json::json!({"id": "ord_123"})
+    );
 }
 
 #[test]

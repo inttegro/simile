@@ -38,6 +38,9 @@ pub enum Error {
 
     #[error("service listener failed: {0}")]
     Serve(#[source] std::io::Error),
+
+    #[error("compiled service has no scenario named `{0}`")]
+    UnknownScenario(String),
 }
 
 #[derive(Debug)]
@@ -52,6 +55,7 @@ struct ServerState {
     runtime: Runtime,
     routes: RouteTable,
     body_limit: usize,
+    scenario: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +102,19 @@ struct AccessLine<'a> {
 
 impl Server {
     pub async fn bind(address: SocketAddr, artifact: Artifact) -> Result<Self> {
+        Self::bind_with_scenario(address, artifact, None).await
+    }
+
+    pub async fn bind_with_scenario(
+        address: SocketAddr,
+        artifact: Artifact,
+        scenario: Option<String>,
+    ) -> Result<Self> {
+        if let Some(name) = scenario.as_deref() {
+            if !artifact.has_scenario(name) {
+                return Err(Error::UnknownScenario(name.to_owned()));
+            }
+        }
         let listener = TcpListener::bind(address)
             .await
             .map_err(|source| Error::Bind { address, source })?;
@@ -107,6 +124,7 @@ impl Server {
             runtime: Runtime::from_artifact(artifact),
             routes,
             body_limit: DEFAULT_BODY_LIMIT,
+            scenario,
         });
         let router = Router::new()
             .fallback(handle)
@@ -352,6 +370,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         },
         ExecutionOptions {
             replay,
+            scenario: state.scenario.as_deref(),
             ..ExecutionOptions::default()
         },
     );
@@ -404,10 +423,10 @@ fn operation_error(
     error: simile_runtime::Error,
     head: bool,
 ) -> Response {
-    let Some(statuses) = service_error_statuses(&error) else {
+    let Some(cause) = service_error_cause(&error) else {
         return runtime_error(error);
     };
-    match runtime.synthesize_first_declared_response(operation, statuses) {
+    match runtime.synthesize_protocol_error(operation, cause) {
         Ok(Some(response)) => {
             tracing::debug!(
                 target: "simile::http",
@@ -432,19 +451,19 @@ fn operation_error(
     }
 }
 
-fn service_error_statuses(error: &simile_runtime::Error) -> Option<&'static [u16]> {
+fn service_error_cause(error: &simile_runtime::Error) -> Option<&'static str> {
     use simile_runtime::Error as RuntimeError;
 
     match error {
-        RuntimeError::InvalidBody { .. } => Some(&[422, 400]),
+        RuntimeError::InvalidBody { .. } => Some("invalid_body"),
         RuntimeError::MalformedJson { .. }
         | RuntimeError::BodyRequired { .. }
         | RuntimeError::BodyNotDeclared { .. }
-        | RuntimeError::EmptyReplayIdentity => Some(&[400]),
+        | RuntimeError::EmptyReplayIdentity => Some("malformed_request"),
         RuntimeError::MissingContentType { .. }
         | RuntimeError::UnsupportedMediaType { .. }
-        | RuntimeError::UnsupportedEncoding { .. } => Some(&[415, 400]),
-        RuntimeError::IdempotencyConflict { .. } => Some(&[409]),
+        | RuntimeError::UnsupportedEncoding { .. } => Some("unsupported_media_type"),
+        RuntimeError::IdempotencyConflict { .. } => Some("idempotency_conflict"),
         _ => None,
     }
 }
@@ -713,6 +732,18 @@ paths:
 
         assert_ne!(server.local_addr().port(), 0);
         assert!(server.local_addr().ip().is_loopback());
+    }
+
+    #[tokio::test]
+    async fn rejects_an_unknown_scenario_before_binding() {
+        let result = Server::bind_with_scenario(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            artifact(),
+            Some("missing".to_owned()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(Error::UnknownScenario(name)) if name == "missing"));
     }
 
     async fn serve_raw_with_artifact(artifact: Artifact, request: &[u8]) -> String {

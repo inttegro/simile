@@ -15,6 +15,7 @@ fn synthesizes_a_valid_response_without_request_context() {
             status: None,
             content_type: None,
             request_body: None,
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -76,6 +77,7 @@ paths:
             status: None,
             content_type: None,
             request_body: None,
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -120,6 +122,7 @@ fn carries_compatible_request_values_into_the_response() {
             status: Some(201),
             content_type: Some("application/json; charset=utf-8"),
             request_body: Some(&request),
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -145,6 +148,7 @@ fn returns_bodyless_responses_without_inventing_content() {
             status: Some(204),
             content_type: None,
             request_body: None,
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -179,6 +183,7 @@ fn rejects_request_context_from_another_operation() {
             status: None,
             content_type: None,
             request_body: Some(&request),
+            body: None,
         },
     );
 
@@ -211,6 +216,7 @@ behavior "startJob" {
             status: None,
             content_type: None,
             request_body: None,
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -240,6 +246,7 @@ paths:
                 status: requested,
                 content_type: None,
                 request_body: None,
+                body: None,
             },
         )
         .unwrap_or_else(|error| panic!("{error}"));
@@ -266,6 +273,7 @@ paths:
             status: None,
             content_type: None,
             request_body: None,
+            body: None,
         },
     )
     .unwrap_or_else(|error| panic!("{error}"));

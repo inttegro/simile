@@ -96,6 +96,8 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
                 body: br#"{"product":"beat_pack","quantity":2}"#,
             },
             ExecutionOptions {
+                outcome: None,
+                scenario: None,
                 response_status: Some(202),
                 response_content_type: None,
                 replay: None,
@@ -105,6 +107,73 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
 
     assert_eq!(result.response().status(), 202);
     assert!(result.response().bytes().is_empty());
+}
+
+#[test]
+fn selects_provider_outcomes_by_name_scenario_and_public_request_predicate() {
+    let artifact = artifact();
+    assert_eq!(artifact.summary().scenario_selections, 1);
+    let runtime = Runtime::new(&artifact);
+    let call = order_call(br#"{"product":"beat_pack","quantity":2}"#);
+
+    let named = runtime
+        .execute_with_options(
+            call,
+            ExecutionOptions {
+                outcome: Some("card_declined"),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(named.selected_outcome(), Some("card_declined"));
+    assert_eq!(named.response().status(), 402);
+    assert_eq!(
+        named.response().value(),
+        Some(&json!({
+            "error": {
+                "code": "card_declined",
+                "message": "The payment method was declined"
+            }
+        }))
+    );
+
+    let scenario = runtime
+        .execute_with_options(
+            call,
+            ExecutionOptions {
+                scenario: Some("payment_declined"),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(scenario.selected_outcome(), Some("card_declined"));
+    assert_eq!(scenario.response().value(), named.response().value());
+
+    let conditional = runtime
+        .execute(order_call(br#"{"product":"beat_pack","quantity":99}"#))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(conditional.selected_outcome(), Some("manual_review"));
+    assert_eq!(conditional.response().status(), 202);
+}
+
+#[test]
+fn maps_runtime_failures_through_provider_protocol_errors() {
+    let artifact = artifact();
+    let response = Runtime::new(&artifact)
+        .synthesize_protocol_error("POST /orders", "invalid_body")
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|| panic!("protocol error should be mapped"));
+
+    assert_eq!(response.status(), 422);
+    assert_eq!(
+        response.value(),
+        Some(&json!({
+            "error": {
+                "code": "invalid_body",
+                "message": "The request body is invalid"
+            }
+        }))
+    );
 }
 
 #[test]
@@ -294,6 +363,38 @@ paths:
                   product: { type: string }
                   quantity: { type: integer }
         "202": { description: Accepted }
+        "402":
+          description: Payment required
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [error]
+                properties:
+                  error:
+                    type: object
+                    additionalProperties: false
+                    required: [code, message]
+                    properties:
+                      code: { type: string }
+                      message: { type: string }
+        "422":
+          description: Invalid body
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [error]
+                properties:
+                  error:
+                    type: object
+                    additionalProperties: false
+                    required: [code, message]
+                    properties:
+                      code: { type: string }
+                      message: { type: string }
   /orders/{id}:
     get:
       responses:
@@ -351,8 +452,44 @@ async "send_receipt" {
   uses = ["mail.receipts"]
 }
 
+error_set "payment_errors" {
+  outcome "card_declined" {
+    status       = 402
+    content_type = "application/json"
+    body = {
+      error = {
+        code    = "card_declined"
+        message = "The payment method was declined"
+      }
+    }
+  }
+}
+
+protocol_error "invalid_body" {
+  statuses     = [422, 400]
+  content_type = "application/json"
+  body = {
+    error = {
+      code    = "invalid_body"
+      message = "The request body is invalid"
+    }
+  }
+}
+
+scenario "payment_declined" {
+  select "createOrder" { outcome = "card_declined" }
+}
+
 behavior "createOrder" {
+  error_sets = ["payment_errors"]
   response { status = 201 }
+  outcome "manual_review" {
+    status = 202
+    when {
+      path   = "/quantity"
+      equals = 99
+    }
+  }
   trigger "record_order" {}
   trigger "send_receipt" {}
 }

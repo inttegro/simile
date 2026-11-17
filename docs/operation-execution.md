@@ -19,9 +19,10 @@ formats remain adapter concerns while schema validation and response projection 
 normalized value model.
 
 The normal execution path selects its response from the compiled OpenAPI contract and optional HCL
-behavior. Test scenarios that need a particular declared response can use
-`Runtime::execute_with_options` with separate `ExecutionOptions`; those controls are not presented
-as part of the incoming operation call. An adapter can also supply an opaque `ReplayIdentity`:
+behavior. Public request predicates may select a named outcome automatically. Test scenarios that
+need a particular result can use `Runtime::execute_with_options` with a named outcome or opaque
+scenario; those controls are not presented as part of the incoming operation call. An adapter can
+also supply an opaque `ReplayIdentity`:
 `IdempotencyKey` for mutations or `Resource` for GET requests.
 
 It performs one ordered run:
@@ -58,6 +59,10 @@ selected operation, normalized request, provided headers, response metadata, and
 plan. Each invocation is a fresh process and therefore produces fresh schema-valid values; it is
 not an HTTP server or a persistent replay store.
 
+`--outcome NAME` selects one named result directly. `--scenario NAME` activates an opaque scenario
+selection. They are mutually exclusive. Both controls are outside the emulated request and never
+require magic provider headers.
+
 ## Replay identity
 
 A `Runtime` owns an in-memory replay index for its lifetime. A repeated idempotency key returns the
@@ -89,7 +94,7 @@ effects from route names.
 1. listen on the configured local port;
 2. match the incoming method and path to a compiled operation key;
 3. apply transport limits and gather the request values;
-4. pass the wire body to `Runtime::execute`; and
+4. pass the wire body and any process-selected scenario to `Runtime::execute`; and
 5. translate the result or runtime error into an HTTP response.
 
 It currently matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, extracts

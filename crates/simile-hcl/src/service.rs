@@ -5,8 +5,8 @@ use crate::ast::{
     ListenDeclaration, Module, OpenApiDeclaration, ServiceDeclaration, ServiceDocument, Source,
 };
 use crate::parse::{
-    async_operation, attribute, behavior, labels, reject_attributes, reject_blocks, resource,
-    string_array,
+    apply_error_set, async_operation, attribute, behavior, error_set, labels, protocol_error,
+    reject_attributes, reject_blocks, resource, scenario, string_array,
 };
 use crate::{Error, Result};
 
@@ -23,6 +23,10 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         source: source.name.to_owned(),
         resources: Vec::new(),
         behaviors: Vec::new(),
+        error_sets: Vec::new(),
+        error_set_applications: Vec::new(),
+        protocol_errors: Vec::new(),
+        scenarios: Vec::new(),
         async_operations: Vec::new(),
     };
 
@@ -49,6 +53,18 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "behavior" => inline_behavior
                     .behaviors
                     .push(behavior(block, source.name)?),
+                "error_set" => inline_behavior
+                    .error_sets
+                    .push(error_set(block, source.name)?),
+                "apply_error_set" => inline_behavior
+                    .error_set_applications
+                    .push(apply_error_set(block, source.name)?),
+                "protocol_error" => inline_behavior
+                    .protocol_errors
+                    .push(protocol_error(block, source.name)?),
+                "scenario" => inline_behavior
+                    .scenarios
+                    .push(scenario(block, source.name)?),
                 "async" => inline_behavior
                     .async_operations
                     .push(async_operation(block, source.name)?),

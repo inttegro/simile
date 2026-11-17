@@ -32,6 +32,8 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
         spec,
         behaviors: arguments.behavior,
         operation,
+        outcome: arguments.outcome,
+        scenario: arguments.scenario,
         request: arguments.request.map(ops::RequestInput::from_argument),
         content_type: arguments.content_type,
         heuristic_policy: arguments.heuristics.into(),
@@ -81,6 +83,11 @@ fn render_human(report: &ops::RunReport, terminal: &Terminal) -> Result<()> {
         report.response.status,
         media_suffix(report.response.content_type.as_deref())
     ))?;
+    if let (Some(outcome), Some(provenance)) = (&report.outcome, report.outcome_provenance) {
+        terminal.line(format_args!(
+            "{MUTED}outcome{MUTED:#} {outcome} · {provenance:?}"
+        ))?;
+    }
     if let Some(body) = &report.response.body {
         terminal.line(format_args!("{body}"))?;
     }

@@ -5,8 +5,8 @@ use simile_artifact::{Error, decode, encode};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorOrigin, CompiledOperation, CompiledService,
     HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation, OperationKey,
-    RequestBodyContract, Resource, ResourceKind, ResponseBodyContract, ResponseContract,
-    ResponseStatus, ServiceInfo,
+    Outcome, OutcomeProvenance, RequestBodyContract, Resource, ResourceKind, ResponseBodyContract,
+    ResponseContract, ResponseStatus, ServiceInfo,
 };
 
 #[test]
@@ -18,7 +18,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 8);
+    assert_eq!(summary.format_version, 9);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -190,6 +190,52 @@ fn rejects_wrong_format_and_trailing_bytes() {
     assert!(matches!(decode(&trailing), Err(Error::TrailingBytes)));
 }
 
+#[test]
+fn rejects_provider_outcome_body_that_violates_the_declared_response() {
+    let mut service = example_service();
+    let operation = service
+        .operations
+        .values_mut()
+        .next()
+        .unwrap_or_else(|| panic!("example operation should exist"));
+    operation.outcomes.push(Outcome {
+        name: "created".to_owned(),
+        status: 201,
+        content_type: Some("application/json".to_owned()),
+        body: Some(json!({"customerId": "cus_1"})),
+        provenance: OutcomeProvenance::ProviderAuthored,
+        when: Vec::new(),
+    });
+
+    assert!(matches!(
+        encode(&service),
+        Err(Error::InvalidOutcomeBody { outcome, .. }) if outcome == "created"
+    ));
+}
+
+#[test]
+fn rejects_private_implementation_markers_from_public_artifacts() {
+    let mut service = example_service();
+    let operation = service
+        .operations
+        .values_mut()
+        .next()
+        .unwrap_or_else(|| panic!("example operation should exist"));
+    operation.outcomes.push(Outcome {
+        name: "_internal_fraud_threshold".to_owned(),
+        status: 201,
+        content_type: Some("application/json".to_owned()),
+        body: Some(json!({"customerId": "cus_1", "id": "ord_1"})),
+        provenance: OutcomeProvenance::ProviderAuthored,
+        when: Vec::new(),
+    });
+
+    assert!(matches!(
+        encode(&service),
+        Err(Error::UnsafePublicExport(marker)) if marker == "_internal_fraud_threshold"
+    ));
+}
+
 fn example_service() -> CompiledService {
     let method = HttpMethod::Post;
     let key = OperationKey::new(&method, "/orders");
@@ -199,6 +245,7 @@ fn example_service() -> CompiledService {
         method,
         path: "/orders".to_owned(),
         summary: Some("Create an order".to_owned()),
+        tags: vec!["orders".to_owned()],
         request_body: Some(json!({"required": true, "schema": {"type": "object"}})),
         request: Some(RequestBodyContract {
             required: true,
@@ -297,6 +344,7 @@ fn example_service() -> CompiledService {
                         ]
                     })),
                     example: None,
+                    examples: BTreeMap::new(),
                 },
             )]),
         }),
@@ -330,6 +378,7 @@ fn example_service() -> CompiledService {
                             }
                         })),
                         example: None,
+                        examples: BTreeMap::new(),
                     },
                 )]),
             }),
@@ -350,8 +399,11 @@ fn example_service() -> CompiledService {
         behavior: Some(Behavior {
             operation_id: "createOrder".to_owned(),
             response_status: Some(201),
+            error_sets: Vec::new(),
+            outcomes: Vec::new(),
             triggers: vec![asynchronous.name.clone()],
         }),
+        outcomes: Vec::new(),
     };
     CompiledService {
         contract: ApiContract {
@@ -369,6 +421,8 @@ fn example_service() -> CompiledService {
         },
         heuristic_policy: simile_heuristics::Policy::Standard,
         operations: BTreeMap::from([(key, compiled)]),
+        protocol_errors: BTreeMap::new(),
+        scenarios: BTreeMap::new(),
         resources: BTreeMap::from([(resource_ref, resource)]),
         async_operations: BTreeMap::from([(asynchronous.name.clone(), asynchronous)]),
     }

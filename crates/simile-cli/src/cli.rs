@@ -158,6 +158,14 @@ pub struct RunArgs {
     #[arg(long, value_name = "ID")]
     pub operation_id: Option<String>,
 
+    /// Select one named public outcome for this invocation.
+    #[arg(long, value_name = "NAME", conflicts_with = "scenario")]
+    pub outcome: Option<String>,
+
+    /// Activate one opaque public scenario for this invocation.
+    #[arg(long, value_name = "NAME", conflicts_with = "outcome")]
+    pub scenario: Option<String>,
+
     /// Read a JSON request object inline, from a file path, or from stdin with `-`.
     #[arg(long, value_name = "JSON|FILE|-")]
     pub request: Option<String>,
@@ -187,6 +195,10 @@ pub struct StartArgs {
         value_parser = clap::value_parser!(u16).range(1..)
     )]
     pub port: Option<u16>,
+
+    /// Activate one opaque public scenario for the running emulator.
+    #[arg(long, value_name = "NAME")]
+    pub scenario: Option<String>,
 }
 
 #[derive(Debug, Args)]

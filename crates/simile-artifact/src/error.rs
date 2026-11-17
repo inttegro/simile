@@ -40,6 +40,18 @@ pub enum Error {
     #[error("compiled artifact references unknown {kind} `{name}`")]
     UnknownReference { kind: &'static str, name: String },
 
+    #[error("public artifact export rejected private implementation marker `{0}`")]
+    UnsafePublicExport(String),
+
+    #[error(
+        "outcome `{outcome}` for `{operation}` is not valid against its OpenAPI response: {issues}"
+    )]
+    InvalidOutcomeBody {
+        operation: String,
+        outcome: String,
+        issues: String,
+    },
+
     #[error("compiled artifact contains an invalid {0}")]
     Invalid(&'static str),
 }

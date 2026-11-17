@@ -12,6 +12,8 @@ pub struct ResponseSynthesisRequest<'a> {
     pub status: Option<u16>,
     pub content_type: Option<&'a str>,
     pub request_body: Option<&'a ValidatedBody>,
+    /// An exact public example selected by a named outcome.
+    pub body: Option<&'a Value>,
 }
 
 /// An HTTP response synthesized and proven sound against a compiled OpenAPI contract.
@@ -85,6 +87,12 @@ pub fn synthesize_response_with_seed(
     })?;
 
     let Some(body) = response.body() else {
+        if request.body.is_some() {
+            return Err(Error::ResponseBodyNotDeclared {
+                operation: request.operation.to_owned(),
+                status,
+            });
+        }
         return Ok(SynthesizedResponse {
             status,
             media_type: None,
@@ -136,13 +144,17 @@ fn synthesize_body(
             content_type: selected.requested().to_owned(),
         });
     }
-    let value = request
-        .request_body
-        .map_or_else(
-            || selected.synthesize_fuzz(seed),
-            |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
-        )
-        .map_err(|source| Error::ResponseSynthesis { source })?;
+    let value = if let Some(body) = request.body {
+        body.clone()
+    } else {
+        request
+            .request_body
+            .map_or_else(
+                || selected.synthesize_fuzz(seed),
+                |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
+            )
+            .map_err(|source| Error::ResponseSynthesis { source })?
+    };
     let issues = selected.validate(&value);
     if !issues.is_empty() {
         return Err(Error::InvalidResponseBody { issues });

@@ -92,6 +92,100 @@ paths:
     assert!(operation.contract.operation_id.is_none());
 }
 
+#[test]
+fn derives_named_outcomes_and_marks_schema_only_fallbacks() {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Payments, version: 1.0.0 }
+paths:
+  /payments:
+    post:
+      operationId: createPayment
+      responses:
+        "200":
+          description: Paid
+          content:
+            application/json:
+              schema: { type: object }
+              examples:
+                succeeded:
+                  value: { status: succeeded }
+        "402":
+          description: Declined
+          content:
+            application/json:
+              schema: { type: object }
+"#;
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("payments.yaml", source),
+            behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let outcomes = &compiled
+        .operations
+        .values()
+        .next()
+        .unwrap_or_else(|| panic!("compiled operation missing"))
+        .outcomes;
+
+    assert_eq!(outcomes[0].name, "succeeded");
+    assert_eq!(
+        outcomes[0].provenance,
+        simile_spec::OutcomeProvenance::OpenApiDerived
+    );
+    assert_eq!(outcomes[1].name, "http_402");
+    assert_eq!(
+        outcomes[1].provenance,
+        simile_spec::OutcomeProvenance::SchemaSynthesized
+    );
+}
+
+#[test]
+fn applies_reusable_error_sets_by_openapi_tag() {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      tags: [orders]
+      responses:
+        "201": { description: Created }
+        "409": { description: Conflict }
+"#;
+    let behavior = r#"
+error_set "write_conflicts" {
+  outcome "conflict" { status = 409 }
+}
+
+apply_error_set "write_conflicts" {
+  tags = ["orders"]
+}
+"#;
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("orders.yaml", source),
+            behaviors: vec![Source::new("orders.hcl", behavior)],
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let operation = compiled
+        .operations
+        .values()
+        .next()
+        .unwrap_or_else(|| panic!("compiled operation missing"));
+
+    assert!(
+        operation
+            .outcomes
+            .iter()
+            .any(|outcome| outcome.name == "conflict")
+    );
+}
+
 fn openapi() -> &'static str {
     r#"
 openapi: 3.2.1

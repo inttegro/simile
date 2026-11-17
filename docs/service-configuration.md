@@ -140,8 +140,9 @@ protocol-neutral runtime. It currently provides:
 - an 8 MiB request-body limit;
 - JSON request-body decoding and compiled-schema validation through the runtime;
 - generated OpenAPI response status, media type, and body;
-- service-declared client-error responses for malformed or contract-invalid requests, with a Simile
-  diagnostic only when the operation has no suitable error response;
+- named OpenAPI and HCL outcomes, including an optional process-wide `--scenario NAME`;
+- service-declared protocol-error mappings for malformed or contract-invalid requests, with a
+  Simile diagnostic only when the operation has no suitable error response;
 - process-local replay for `Idempotency-Key` and for the full URI of GET requests; and
 - one-line access logs containing method, path, status, TCP peer IP, user agent, request content type
   and size, response content type and size, and elapsed microseconds; and

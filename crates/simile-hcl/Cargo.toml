@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 hcl-rs.workspace = true
+serde_json.workspace = true
 simile-spec.workspace = true
 thiserror.workspace = true
 

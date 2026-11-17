@@ -59,7 +59,10 @@ from a route name.
 An HCL `behavior` may select a response already declared by OpenAPI and attach observable work that
 OpenAPI cannot describe. It cannot add an endpoint, contradict a schema, or name a private
 production check. HCL may also declare non-HTTP async operations and the abstract resources they
-use.
+use. Named OpenAPI examples form the default outcome catalog. HCL may add reusable, schema-checked
+outcomes, map transport failures into public service errors, or group those outcomes behind opaque
+scenario names. The compiled artifact records whether an outcome is exact provider evidence or
+schema synthesis so approximation remains visible.
 
 The supported resource vocabulary describes Simile's local emulation substrate: `db`, `cache`,
 `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, and `http`. It deliberately excludes
@@ -111,7 +114,9 @@ imply production equivalence where the definition does not provide it.
 A distributed definition is inspectable. It may describe externally observable results and safe
 scenario controls, but it must not reveal private fraud rules, security thresholds, internal
 algorithms, credentials, or production topology. Sensitive production decisions are represented
-by provider-authored outcomes, never shipped logic.
+by provider-authored outcomes, never shipped logic. Public request predicates may depend only on
+published request values. Scenario controls select an observable result without explaining why
+production would make the same decision.
 
 ### Safe to run
 

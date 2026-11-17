@@ -10,6 +10,7 @@ const HEADING: Style = AnsiColor::Green.on_default().effects(Effects::BOLD);
 const MUTED: Style = AnsiColor::BrightBlack.on_default();
 
 pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Result<Status> {
+    let scenario = arguments.scenario;
     let prepared = ops::prepare_service(
         ctx,
         &ops::StartRequest {
@@ -22,11 +23,20 @@ pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Resu
         .enable_all()
         .build()
         .map_err(Error::AsyncRuntime)?;
-    runtime.block_on(run(prepared, terminal))
+    runtime.block_on(run(prepared, scenario, terminal))
 }
 
-async fn run(mut prepared: ops::PreparedService, terminal: &Terminal) -> Result<Status> {
-    let server = simile_server::Server::bind(prepared.report.listen, prepared.artifact).await?;
+async fn run(
+    mut prepared: ops::PreparedService,
+    scenario: Option<String>,
+    terminal: &Terminal,
+) -> Result<Status> {
+    let server = simile_server::Server::bind_with_scenario(
+        prepared.report.listen,
+        prepared.artifact,
+        scenario,
+    )
+    .await?;
     prepared.report.listen = server.local_addr();
     render(&prepared.report, terminal)?;
     server.run().await?;

@@ -118,6 +118,11 @@ fn operation(
     let body = object(value, &field)?;
     let operation_id = optional_string(body, "operationId", "operationId")?;
     let summary = optional_string(body, "summary", "summary")?;
+    let tags = body
+        .get("tags")
+        .map(|tags| string_list(tags, &format!("{field}.tags")))
+        .transpose()?
+        .unwrap_or_default();
     let responses = body
         .get("responses")
         .ok_or_else(|| Error::MissingResponses {
@@ -158,6 +163,7 @@ fn operation(
         method,
         path: path.to_owned(),
         summary,
+        tags,
         request_body: raw_request_body,
         request,
         responses,
@@ -221,10 +227,29 @@ fn media_types(
                 MediaTypeContract {
                     schema: definition.get("schema").cloned(),
                     example: media_example(definition),
+                    examples: media_examples(definition),
                 },
             ))
         })
         .collect()
+}
+
+fn media_examples(definition: &Map<String, Value>) -> BTreeMap<String, Value> {
+    definition
+        .get("examples")
+        .and_then(Value::as_object)
+        .map(|examples| {
+            examples
+                .iter()
+                .filter_map(|(name, example)| {
+                    example
+                        .get("value")
+                        .cloned()
+                        .map(|value| (name.clone(), value))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn media_example(definition: &Map<String, Value>) -> Option<Value> {
@@ -328,4 +353,15 @@ fn optional_string(object: &Map<String, Value>, key: &str, field: &str) -> Resul
         .get(key)
         .map(|value| string(value, field).map(ToOwned::to_owned))
         .transpose()
+}
+
+fn string_list(value: &Value, field: &str) -> Result<Vec<String>> {
+    let values = value.as_array().ok_or_else(|| Error::InvalidField {
+        field: field.to_owned(),
+        expected: "an array of strings",
+    })?;
+    values
+        .iter()
+        .map(|value| string(value, field).map(ToOwned::to_owned))
+        .collect()
 }

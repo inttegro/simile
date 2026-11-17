@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use simile_artifact::Artifact;
-use simile_spec::{ResourceRef, ResponseStatus};
+use simile_artifact::{Artifact, ArtifactOutcome};
+use simile_spec::{OutcomeProvenance, ResourceRef, ResponseStatus};
 
 use crate::{
     Error, IncomingBody, IncomingValue, ResponseSynthesisRequest, Result, SynthesizedResponse,
@@ -45,6 +45,8 @@ pub enum ReplayIdentity<'a> {
 /// Optional controls for scenarios that need a specific declared response.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExecutionOptions<'a> {
+    pub outcome: Option<&'a str>,
+    pub scenario: Option<&'a str>,
     pub response_status: Option<u16>,
     pub response_content_type: Option<&'a str>,
     pub replay: Option<ReplayIdentity<'a>>,
@@ -56,6 +58,8 @@ pub struct OperationOutcome {
     operation: String,
     request_body: Option<ValidatedBody>,
     response: SynthesizedResponse,
+    selected_outcome: Option<String>,
+    provenance: Option<OutcomeProvenance>,
     async_operations: Vec<PlannedAsyncOperation>,
 }
 
@@ -209,6 +213,43 @@ impl Runtime {
                 status: Some(status),
                 content_type: None,
                 request_body: None,
+                body: None,
+            },
+        )
+        .map(Some)
+    }
+
+    /// Render the service-declared response for a transport/runtime failure.
+    pub fn synthesize_protocol_error(
+        &self,
+        operation_key: &str,
+        cause: &str,
+    ) -> Result<Option<SynthesizedResponse>> {
+        let Some(mapping) = self.artifact.protocol_error(cause) else {
+            return Ok(None);
+        };
+        let operation =
+            self.artifact
+                .operation(operation_key)
+                .ok_or_else(|| Error::UnknownOperation {
+                    operation: operation_key.to_owned(),
+                })?;
+        let status = mapping.statuses().iter().copied().find(|status| {
+            operation
+                .responses()
+                .any(|response| response.status().matches(*status))
+        });
+        let Some(status) = status else {
+            return Ok(None);
+        };
+        synthesize_response(
+            &self.artifact,
+            ResponseSynthesisRequest {
+                operation: operation_key,
+                status: Some(status),
+                content_type: mapping.content_type(),
+                request_body: None,
+                body: mapping.body(),
             },
         )
         .map(Some)
@@ -259,13 +300,23 @@ impl Runtime {
                 .ok_or_else(|| Error::UnknownOperation {
                     operation: operation_key.to_owned(),
                 })?;
+        let selected = self.select_outcome(operation_key, request_body.as_ref(), options)?;
+        let response_status = selected
+            .as_ref()
+            .map_or(options.response_status, |outcome| Some(outcome.status()));
+        let response_content_type = selected
+            .as_ref()
+            .map_or(options.response_content_type, |outcome| {
+                outcome.content_type().or(options.response_content_type)
+            });
         let response = synthesize_response(
             &self.artifact,
             ResponseSynthesisRequest {
                 operation: operation_key,
-                status: options.response_status,
-                content_type: options.response_content_type,
+                status: response_status,
+                content_type: response_content_type,
                 request_body: request_body.as_ref(),
+                body: selected.as_ref().and_then(ArtifactOutcome::body),
             },
         )?;
         let async_operations = operation
@@ -283,8 +334,56 @@ impl Runtime {
             operation: operation_key.to_owned(),
             request_body,
             response,
+            selected_outcome: selected.as_ref().map(|outcome| outcome.name().to_owned()),
+            provenance: selected.as_ref().map(ArtifactOutcome::provenance),
             async_operations,
         })
+    }
+
+    fn select_outcome(
+        &self,
+        operation_key: &str,
+        request_body: Option<&ValidatedBody>,
+        options: ExecutionOptions<'_>,
+    ) -> Result<Option<ArtifactOutcome>> {
+        let operation =
+            self.artifact
+                .operation(operation_key)
+                .ok_or_else(|| Error::UnknownOperation {
+                    operation: operation_key.to_owned(),
+                })?;
+        let named = if let Some(outcome) = options.outcome {
+            Some(outcome)
+        } else if let Some(scenario) = options.scenario {
+            if !self.artifact.has_scenario(scenario) {
+                return Err(Error::UnknownScenario {
+                    scenario: scenario.to_owned(),
+                });
+            }
+            self.artifact.scenario_outcome(scenario, operation_key)
+        } else {
+            None
+        };
+        if let Some(name) = named {
+            return operation
+                .outcomes()
+                .find(|outcome| outcome.name() == name)
+                .map(Some)
+                .ok_or_else(|| Error::UnknownOutcome {
+                    operation: operation_key.to_owned(),
+                    outcome: name.to_owned(),
+                });
+        }
+        let Some(body) = request_body.map(ValidatedBody::value) else {
+            return Ok(None);
+        };
+        Ok(operation.outcomes().find(|outcome| {
+            !outcome.conditions().is_empty()
+                && outcome
+                    .conditions()
+                    .iter()
+                    .all(|condition| body.pointer(condition.path()) == Some(condition.equals()))
+        }))
     }
 }
 
@@ -332,6 +431,16 @@ impl OperationOutcome {
     #[must_use]
     pub const fn response(&self) -> &SynthesizedResponse {
         &self.response
+    }
+
+    #[must_use]
+    pub fn selected_outcome(&self) -> Option<&str> {
+        self.selected_outcome.as_deref()
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> Option<OutcomeProvenance> {
+        self.provenance
     }
 
     #[must_use]

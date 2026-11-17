@@ -3,7 +3,7 @@
 `.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
 and reviewable source formats; the runtime never needs to parse either one on startup.
 
-## Envelope version 8
+## Envelope version 9
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -11,7 +11,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 8 |
+| 10 | 2 | unsigned big-endian flags; zero in version 9 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -22,13 +22,13 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 8 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 9 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
 3. service metadata;
 4. operations in stable operation-key order;
-5. an indexed value arena used by response definitions;
+5. an indexed value arena used by response definitions, exact outcome bodies, and predicates;
 6. resources in stable resource-reference order;
 7. asynchronous operations in stable name order; and
 8. one shared request/response schema catalog.
@@ -37,6 +37,11 @@ Strings, value nodes, resources, and asynchronous operations are referenced with
 identifiers. Behavior records therefore point directly to asynchronous-operation records, and
 those records point directly to abstract resources. The runtime does not repeatedly compare or
 allocate names to follow those edges.
+
+Service metadata also carries the provider-neutral protocol-error table and opaque scenario
+selections. Each operation carries a named outcome catalog with exact status, optional media type
+and body, fidelity provenance, and public request predicates. Scenario records map an operation
+key to one of those names; they never carry the private production decision that selected it.
 
 Each operation embeds a compact request-body plan and a body plan for every response that declares
 content. Plans contain declared media types, schema root identifiers, and optional declared media
@@ -49,14 +54,18 @@ interpreted as schema metadata. The runtime therefore validates requests and syn
 or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
 schemas into every operation.
 
+Before encoding, provider-authored outcome bodies are checked against their selected OpenAPI
+response schema. The public-export audit rejects explicit private implementation markers. This
+audit is a guardrail; the provider remains responsible for reviewing all published values.
+
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 8 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 9 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their OpenAPI extension syntax.
 
-Version 8 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 9 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

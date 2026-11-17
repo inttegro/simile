@@ -81,6 +81,7 @@ fn matches_content_type_parameters_and_wildcards() {
                 MediaTypeContract {
                     schema: None,
                     example: None,
+                    examples: BTreeMap::new(),
                 },
             ),
             (
@@ -88,6 +89,7 @@ fn matches_content_type_parameters_and_wildcards() {
                 MediaTypeContract {
                     schema: None,
                     example: None,
+                    examples: BTreeMap::new(),
                 },
             ),
         ]),
@@ -127,6 +129,7 @@ fn shares_component_nodes_across_request_bodies() {
             MediaTypeContract {
                 schema: Some(json!({"$ref": "#/components/schemas/Customer"})),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -231,6 +234,7 @@ fn projects_compatible_request_values_without_reflecting_write_only_fields() {
                     }
                 })),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -258,6 +262,7 @@ fn projects_compatible_request_values_without_reflecting_write_only_fields() {
                     }
                 })),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -313,6 +318,7 @@ fn rejects_empty_type_arrays() {
             MediaTypeContract {
                 schema: Some(json!({"type": []})),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -836,6 +842,7 @@ fn response_synthesis_is_proven_against_ordered_relationships() {
                     ]
                 })),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -900,6 +907,7 @@ fn response_synthesis_is_proven_against_derived_relationships() {
                     ]
                 })),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -1812,6 +1820,7 @@ fn compile_error(schema: serde_json::Value) -> String {
             MediaTypeContract {
                 schema: Some(schema),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -1838,6 +1847,7 @@ fn plan(
             MediaTypeContract {
                 schema: Some(schema),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };
@@ -1857,6 +1867,7 @@ fn plan_with_policy(schema: serde_json::Value, policy: Policy) -> (RequestBodyPl
             MediaTypeContract {
                 schema: Some(schema),
                 example: None,
+                examples: BTreeMap::new(),
             },
         )]),
     };

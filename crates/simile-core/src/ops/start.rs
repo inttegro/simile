@@ -163,7 +163,13 @@ fn verify_service_name(requested: &str, document: &ServiceDocument) -> Result<()
 }
 
 fn module_is_empty(module: &simile_hcl::Module) -> bool {
-    module.resources.is_empty() && module.behaviors.is_empty() && module.async_operations.is_empty()
+    module.resources.is_empty()
+        && module.behaviors.is_empty()
+        && module.error_sets.is_empty()
+        && module.error_set_applications.is_empty()
+        && module.protocol_errors.is_empty()
+        && module.scenarios.is_empty()
+        && module.async_operations.is_empty()
 }
 
 #[cfg(test)]
