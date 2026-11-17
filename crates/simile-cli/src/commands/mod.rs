@@ -2,6 +2,7 @@ mod compile;
 mod doctor;
 mod inspect;
 mod register;
+mod remove;
 mod run;
 mod start;
 mod update;
@@ -25,6 +26,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
         Command::Register(arguments) => register::execute(arguments, ctx, terminal),
+        Command::Remove(arguments) => remove::execute(arguments, ctx, terminal),
         Command::Run(arguments) => run::execute(arguments, terminal),
         Command::Start(arguments) => start::execute(arguments, ctx, terminal),
         Command::Update(arguments) => update::execute(arguments, ctx, terminal),

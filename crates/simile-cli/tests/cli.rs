@@ -266,6 +266,69 @@ fn registers_a_service_from_a_remote_configuration() {
 }
 
 #[test]
+fn removes_only_an_exactly_confirmed_registered_service() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["remove", "orders"])
+        .assert()
+        .failure()
+        .stderr_eq(concat!(
+            "error: the following required arguments were not provided:\n",
+            "  --confirm <SERVICE>\n",
+            "\n",
+            "Usage: simile remove --confirm <SERVICE> <SERVICE>\n",
+            "\n",
+            "For more information, try '--help'.\n"
+        ));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "orders",
+            "--config",
+            &fixture("service-orders.hcl"),
+        ])
+        .assert()
+        .success();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["remove", "orders", "--confirm", "payments"])
+        .assert()
+        .failure()
+        .stderr_eq("service removal not confirmed; --confirm must exactly match `orders`\n");
+    assert!(home.join("services/orders/current").is_file());
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "remove",
+            "orders",
+            "--confirm",
+            "orders",
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"service\": \"orders\",\n",
+            "  \"directory\": \"[..]/services/orders\"\n",
+            "}\n"
+        ))
+        .stderr_eq("");
+
+    assert!(!home.join("services/orders").exists());
+    assert!(home.join("layout-version").is_file());
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
 fn updates_a_registered_service_from_a_remote_configuration() {
     let home = registry_home();
     drop(fs::remove_dir_all(&home));

@@ -90,6 +90,8 @@ pub enum Command {
     Run(RunArgs),
     /// Compile and register a named service for later use.
     Register(RegisterArgs),
+    /// Permanently remove a registered service and its local data.
+    Remove(RemoveArgs),
     /// Start a configured service emulator.
     Start(StartArgs),
     /// Reload and recompile a registered service.
@@ -213,6 +215,16 @@ pub struct RegisterArgs {
     /// Replace the current registration when the service already exists.
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RemoveArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Repeat the service name to confirm permanent deletion.
+    #[arg(long, value_name = "SERVICE", required = true)]
+    pub confirm: String,
 }
 
 #[derive(Debug, Args)]

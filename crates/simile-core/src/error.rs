@@ -61,6 +61,9 @@ pub enum Error {
     #[error("service `{service}` is already registered; pass --force to replace it")]
     ServiceAlreadyRegistered { service: String },
 
+    #[error("service removal not confirmed; --confirm must exactly match `{service}`")]
+    ServiceRemovalNotConfirmed { service: String },
+
     #[error("registered service `{service}` is invalid: {reason}")]
     InvalidRegistration { service: String, reason: String },
 

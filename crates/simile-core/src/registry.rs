@@ -248,6 +248,47 @@ impl Registry {
         })
     }
 
+    pub(crate) fn remove(&self, service: &str) -> Result<PathBuf> {
+        validate_service_name(service)?;
+        if !self.root.join("layout-version").exists() {
+            return Err(Error::ServiceNotRegistered {
+                service: service.to_owned(),
+            });
+        }
+        self.verify_layout()?;
+
+        let directory = self.service_directory(service);
+        let current = directory.join(CURRENT_FILE);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                return Err(Error::InvalidRegistration {
+                    service: service.to_owned(),
+                    reason: "current revision pointer is not a regular file".to_owned(),
+                });
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::ServiceNotRegistered {
+                    service: service.to_owned(),
+                });
+            }
+            Err(source) => {
+                return Err(Error::RegistryIo {
+                    action: "inspect current service revision",
+                    path: current,
+                    source,
+                });
+            }
+        }
+
+        fs::remove_dir_all(&directory).map_err(|source| Error::RegistryIo {
+            action: "remove registered service",
+            path: directory.clone(),
+            source,
+        })?;
+        Ok(directory)
+    }
+
     fn ensure_layout(&self) -> Result<()> {
         create_private_directory(&self.root)?;
         create_private_directory(&self.root.join("services"))?;

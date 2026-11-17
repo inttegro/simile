@@ -2,6 +2,7 @@ mod compile;
 mod doctor;
 mod inspect;
 mod register;
+mod remove;
 mod run;
 mod start;
 mod update;
@@ -11,6 +12,7 @@ pub use compile::{CompileReport, CompileRequest, WrittenArtifact, compile};
 pub use doctor::{Check, CheckStatus, DoctorReport, doctor};
 pub use inspect::{InspectRequest, inspect};
 pub use register::{RegisterRequest, RegistrationReport, register};
+pub use remove::{RemoveReport, RemoveRequest, remove};
 pub use run::{
     ExecutedRequest, ExecutedResponse, OperationSelector, PlannedAsyncOperation, RequestInput,
     RequestSource, RunReport, RunRequest, SpecSource, run,
