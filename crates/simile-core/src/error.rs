@@ -1,6 +1,7 @@
 use std::io;
 use std::net::AddrParseError;
 use std::path::PathBuf;
+use std::string::FromUtf8Error;
 
 use thiserror::Error;
 
@@ -10,6 +11,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("could not determine the current directory")]
     CurrentDirectory(#[source] io::Error),
+
+    #[error("could not determine the user home directory; set SIMILE_HOME explicitly")]
+    UserHome,
 
     #[error("could not read service source `{path}`: {source}")]
     ReadSource {
@@ -44,6 +48,40 @@ pub enum Error {
         configured: String,
     },
 
+    #[error(
+        "invalid registered service name `{name}`; use lowercase letters or digits followed by lowercase letters, digits, `.`, `_`, or `-`"
+    )]
+    InvalidRegisteredServiceName { name: String },
+
+    #[error(
+        "service `{service}` is not registered; run `simile register {service} --config URL_OR_FILE`"
+    )]
+    ServiceNotRegistered { service: String },
+
+    #[error("service `{service}` is already registered; pass --force to replace it")]
+    ServiceAlreadyRegistered { service: String },
+
+    #[error("registered service `{service}` is invalid: {reason}")]
+    InvalidRegistration { service: String, reason: String },
+
+    #[error("unsupported Simile registry layout version `{version}` at `{path}`")]
+    UnsupportedRegistryLayout { version: String, path: PathBuf },
+
+    #[error("could not {action} registry path `{path}`: {source}")]
+    RegistryIo {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("could not decode registry manifest `{path}`: {source}")]
+    RegistryManifest {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
     #[error("service listen host `{host}` is not an IP address: {source}")]
     InvalidListenHost {
         host: String,
@@ -58,6 +96,39 @@ pub enum Error {
     FetchSource {
         #[source]
         source: ureq::Error,
+    },
+
+    #[error("could not fetch service configuration `{url}`: {source}")]
+    FetchConfig {
+        url: String,
+        #[source]
+        source: ureq::Error,
+    },
+
+    #[error("could not read remote service configuration `{url}`: {source}")]
+    ReadRemoteConfig {
+        url: String,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("remote service configuration `{url}` exceeds the {limit}-byte limit")]
+    RemoteConfigTooLarge { url: String, limit: u64 },
+
+    #[error("remote service configuration `{url}` is not UTF-8: {source}")]
+    RemoteConfigUtf8 {
+        url: String,
+        #[source]
+        source: FromUtf8Error,
+    },
+
+    #[error(
+        "remote service configuration `{config}` uses {field} path `{value}`; use a URL or an inline declaration"
+    )]
+    RemoteConfigPath {
+        config: String,
+        field: &'static str,
+        value: String,
     },
 
     #[error("operation `{operation}` is not present in the compiled service")]

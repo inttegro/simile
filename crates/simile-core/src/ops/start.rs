@@ -1,6 +1,5 @@
-use std::fs;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 use simile_artifact::Artifact;
@@ -9,12 +8,14 @@ use simile_hcl::{OpenApiDeclaration, ServiceDocument};
 use simile_heuristics::Policy;
 
 use super::run::{SpecSource, read_spec};
-use crate::{Error, Result};
+use crate::registry::{Registry, SourceLocation};
+use crate::service_config::{LoadedServiceConfig, ServiceConfigSource};
+use crate::{Context, Error, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartRequest {
     pub service: String,
-    pub config: PathBuf,
+    pub config: Option<PathBuf>,
     pub port: Option<u16>,
 }
 
@@ -34,24 +35,44 @@ pub struct ServiceReport {
 pub struct PreparedService {
     pub report: ServiceReport,
     pub artifact: Artifact,
+    pub(crate) artifact_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedConfiguration {
+    pub service: PreparedService,
+    pub openapi_source: SourceLocation,
 }
 
 /// Resolve, validate, and compile a runnable service without binding its socket.
-pub fn prepare_service(request: &StartRequest) -> Result<PreparedService> {
-    let config_contents =
-        fs::read_to_string(&request.config).map_err(|source| Error::ReadSource {
-            path: request.config.clone(),
-            source,
-        })?;
-    let config_name = request.config.to_string_lossy().into_owned();
-    let document =
-        simile_hcl::parse_service(simile_hcl::Source::new(&config_name, &config_contents))?;
-    verify_service_name(&request.service, &document)?;
+pub fn prepare_service(ctx: &Context, request: &StartRequest) -> Result<PreparedService> {
+    match &request.config {
+        Some(config) => {
+            let loaded = LoadedServiceConfig::load(ctx, ServiceConfigSource::Path(config.clone()))?;
+            Ok(prepare_loaded_service(&request.service, request.port, &loaded)?.service)
+        }
+        None => prepare_registered_service(ctx, request),
+    }
+}
 
-    let base = request.config.parent().unwrap_or_else(|| Path::new("."));
+pub(crate) fn prepare_loaded_service(
+    requested_service: &str,
+    port: Option<u16>,
+    config: &LoadedServiceConfig,
+) -> Result<PreparedConfiguration> {
+    let document =
+        simile_hcl::parse_service(simile_hcl::Source::new(&config.name, &config.contents))?;
+    verify_service_name(requested_service, &document)?;
+
     let spec = match &document.service.openapi {
-        OpenApiDeclaration::Path(path) => SpecSource::Path(resolve(base, path)),
+        OpenApiDeclaration::Path(path) => SpecSource::Path(config.resolve(path, "OpenAPI")?),
         OpenApiDeclaration::Url(url) => SpecSource::Url(url.clone()),
+    };
+    let openapi_source = match &spec {
+        SpecSource::Path(path) => SourceLocation::Path {
+            value: path.to_string_lossy().into_owned(),
+        },
+        SpecSource::Url(url) => SourceLocation::Url { value: url.clone() },
     };
     let (openapi_name, openapi) = read_spec(&spec)?;
     let mut behaviors = Vec::with_capacity(document.service.behaviors.len() + 1);
@@ -59,8 +80,8 @@ pub fn prepare_service(request: &StartRequest) -> Result<PreparedService> {
         behaviors.push(document.inline_behavior);
     }
     for behavior in &document.service.behaviors {
-        let path = resolve(base, behavior);
-        let contents = fs::read_to_string(&path).map_err(|source| Error::ReadSource {
+        let path = config.resolve(behavior, "behavior")?;
+        let contents = std::fs::read_to_string(&path).map_err(|source| Error::ReadSource {
             path: path.clone(),
             source,
         })?;
@@ -86,7 +107,7 @@ pub fn prepare_service(request: &StartRequest) -> Result<PreparedService> {
             host: document.service.listen.host.clone(),
             source,
         })?;
-    let listen = SocketAddr::new(host, request.port.unwrap_or(document.service.listen.port));
+    let listen = SocketAddr::new(host, port.unwrap_or(document.service.listen.port));
     let summary = artifact.summary();
     let report = ServiceReport {
         service: document.service.name,
@@ -98,7 +119,37 @@ pub fn prepare_service(request: &StartRequest) -> Result<PreparedService> {
         async_operations: summary.async_operations,
     };
 
-    Ok(PreparedService { report, artifact })
+    Ok(PreparedConfiguration {
+        service: PreparedService {
+            report,
+            artifact,
+            artifact_bytes: encoded,
+        },
+        openapi_source,
+    })
+}
+
+fn prepare_registered_service(ctx: &Context, request: &StartRequest) -> Result<PreparedService> {
+    let registered = Registry::new(ctx.simile_home()?).load(&request.service)?;
+    let summary = registered.artifact.summary();
+    let listen = SocketAddr::new(
+        registered.manifest.listen.host,
+        request.port.unwrap_or(registered.manifest.listen.port),
+    );
+    let report = ServiceReport {
+        service: registered.manifest.name,
+        service_version: summary.service_version,
+        openapi_version: summary.openapi_version,
+        listen,
+        operations: summary.operations,
+        resources: summary.resources,
+        async_operations: summary.async_operations,
+    };
+    Ok(PreparedService {
+        report,
+        artifact: registered.artifact,
+        artifact_bytes: registered.artifact_bytes,
+    })
 }
 
 fn verify_service_name(requested: &str, document: &ServiceDocument) -> Result<()> {
@@ -115,18 +166,18 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
     module.resources.is_empty() && module.behaviors.is_empty() && module.async_operations.is_empty()
 }
 
-fn resolve(base: &Path, value: &str) -> PathBuf {
-    let path = Path::new(value);
-    if path.is_absolute() {
-        path.to_owned()
-    } else {
-        base.join(path)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    fn context() -> Context {
+        Context::with_simile_home(
+            crate::BuildInfo::new("0.1.0", None::<String>, "test", "test"),
+            env!("CARGO_MANIFEST_DIR"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-simile-home"),
+        )
+    }
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -136,11 +187,14 @@ mod tests {
 
     #[test]
     fn prepares_a_service_and_applies_the_port_override() {
-        let prepared = prepare_service(&StartRequest {
-            service: "orders".to_owned(),
-            config: fixture("service-orders.hcl"),
-            port: Some(8484),
-        })
+        let prepared = prepare_service(
+            &context(),
+            &StartRequest {
+                service: "orders".to_owned(),
+                config: Some(fixture("service-orders.hcl")),
+                port: Some(8484),
+            },
+        )
         .unwrap_or_else(|error| panic!("{error}"));
 
         assert_eq!(prepared.report.service, "orders");
@@ -156,11 +210,14 @@ mod tests {
 
     #[test]
     fn rejects_a_requested_name_that_differs_from_the_configuration() {
-        let result = prepare_service(&StartRequest {
-            service: "payments".to_owned(),
-            config: fixture("service-orders.hcl"),
-            port: None,
-        });
+        let result = prepare_service(
+            &context(),
+            &StartRequest {
+                service: "payments".to_owned(),
+                config: Some(fixture("service-orders.hcl")),
+                port: None,
+            },
+        );
 
         assert!(matches!(result, Err(Error::ServiceNameMismatch { .. })));
     }

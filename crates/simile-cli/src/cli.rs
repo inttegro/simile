@@ -88,8 +88,12 @@ pub enum Command {
     Inspect(InspectArgs),
     /// Execute one operation from an OpenAPI contract.
     Run(RunArgs),
+    /// Compile and register a named service for later use.
+    Register(RegisterArgs),
     /// Start a configured service emulator.
     Start(StartArgs),
+    /// Reload and recompile a registered service.
+    Update(UpdateArgs),
     /// Print detailed build information.
     Version,
 }
@@ -172,9 +176,9 @@ pub struct StartArgs {
     /// Service name declared by the configuration.
     pub service: String,
 
-    /// Runnable service HCL configuration.
+    /// Run directly from this HCL configuration instead of the registry.
     #[arg(long, value_name = "FILE")]
-    pub config: PathBuf,
+    pub config: Option<PathBuf>,
 
     /// Override the configured listener port for this invocation.
     #[arg(
@@ -183,4 +187,28 @@ pub struct StartArgs {
         value_parser = clap::value_parser!(u16).range(1..)
     )]
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Args)]
+pub struct RegisterArgs {
+    /// Service name declared by the configuration.
+    pub service: String,
+
+    /// Runnable service HCL configuration file or URL to compile and register.
+    #[arg(long, value_name = "URL_OR_FILE")]
+    pub config: String,
+
+    /// Replace the current registration when the service already exists.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Replace the service configuration from this HCL file or URL.
+    #[arg(long, value_name = "URL_OR_FILE")]
+    pub config: Option<String>,
 }

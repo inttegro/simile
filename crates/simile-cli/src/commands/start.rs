@@ -1,5 +1,5 @@
 use anstyle::{AnsiColor, Effects, Style};
-use simile_core::ops;
+use simile_core::{Context, ops};
 
 use crate::cli::{OutputFormat, StartArgs};
 use crate::commands::Status;
@@ -9,12 +9,15 @@ use crate::terminal::Terminal;
 const HEADING: Style = AnsiColor::Green.on_default().effects(Effects::BOLD);
 const MUTED: Style = AnsiColor::BrightBlack.on_default();
 
-pub fn execute(arguments: StartArgs, terminal: &Terminal) -> Result<Status> {
-    let prepared = ops::prepare_service(&ops::StartRequest {
-        service: arguments.service,
-        config: arguments.config,
-        port: arguments.port,
-    })?;
+pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Result<Status> {
+    let prepared = ops::prepare_service(
+        ctx,
+        &ops::StartRequest {
+            service: arguments.service,
+            config: arguments.config,
+            port: arguments.port,
+        },
+    )?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

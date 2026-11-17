@@ -2,6 +2,8 @@ use snapbox::cmd::Command;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 fn fixture(name: &str) -> String {
@@ -9,6 +11,50 @@ fn fixture(name: &str) -> String {
         "{}/../simile-core/tests/fixtures/{name}",
         env!("CARGO_MANIFEST_DIR")
     )
+}
+
+fn registry_home() -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    std::env::temp_dir().join(format!(
+        "simile-cli-registry-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn remote_service_configuration() -> (String, thread::JoinHandle<()>) {
+    let openapi =
+        fs::read_to_string(fixture("run-orders.yaml")).unwrap_or_else(|error| panic!("{error}"));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|error| panic!("{error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{error}"));
+    let config = format!(
+        "service \"orders\" {{\n  listen {{ port = 4343 }}\n  openapi {{ url = \"http://{address}/openapi.yaml\" }}\n}}\n"
+    );
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap_or_else(|error| panic!("{error}"));
+            let mut request = [0_u8; 2048];
+            let read = stream
+                .read(&mut request)
+                .unwrap_or_else(|error| panic!("{error}"));
+            let request = String::from_utf8_lossy(&request[..read]);
+            let (content_type, body) = if request.contains("GET /config.hcl ") {
+                ("text/plain", config.as_str())
+            } else {
+                ("application/yaml", openapi.as_str())
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        }
+    });
+    (format!("http://{address}/config.hcl"), server)
 }
 
 #[test]
@@ -112,6 +158,185 @@ fn start_rejects_port_zero_before_reading_the_configuration() {
             "error: invalid value '0' for '--port <PORT>': 0 is not in 1..=65535\n",
             "\n",
             "For more information, try '--help'.\n"
+        ));
+}
+
+#[test]
+fn registers_a_service_in_simile_home() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "register",
+            "orders",
+            "--config",
+            &fixture("service-orders.hcl"),
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"service\": \"orders\",\n",
+            "  \"revision\": \"[..]\",\n",
+            "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"openapiVersion\": \"3.1.2\",\n",
+            "  \"listen\": \"127.0.0.1:4242\",\n",
+            "  \"operations\": 3,\n",
+            "  \"resources\": 1,\n",
+            "  \"asyncOperations\": 1,\n",
+            "  \"directory\": \"[..]\",\n",
+            "  \"config\": \"[..]/config.hcl\",\n",
+            "  \"artifact\": \"[..]/service.similec\"\n",
+            "}\n"
+        ))
+        .stderr_eq("");
+
+    assert!(home.join("layout-version").is_file());
+    assert!(home.join("services/orders/current").is_file());
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "orders",
+            "--config",
+            &fixture("service-orders.hcl"),
+        ])
+        .assert()
+        .failure()
+        .stderr_eq("service `orders` is already registered; pass --force to replace it\n");
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "orders",
+            "--config",
+            &fixture("service-orders.hcl"),
+            "--force",
+        ])
+        .assert()
+        .success();
+
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn registers_a_service_from_a_remote_configuration() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+    let (config_url, server) = remote_service_configuration();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "register",
+            "orders",
+            "--config",
+            &config_url,
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"service\": \"orders\",\n",
+            "  \"revision\": \"[..]\",\n",
+            "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"openapiVersion\": \"3.1.2\",\n",
+            "  \"listen\": \"127.0.0.1:4343\",\n",
+            "  \"operations\": 3,\n",
+            "  \"resources\": 0,\n",
+            "  \"asyncOperations\": 0,\n",
+            "  \"directory\": \"[..]\",\n",
+            "  \"config\": \"[..]/config.hcl\",\n",
+            "  \"artifact\": \"[..]/service.similec\"\n",
+            "}\n"
+        ));
+
+    server
+        .join()
+        .unwrap_or_else(|error| std::panic::resume_unwind(error));
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn updates_a_registered_service_from_a_remote_configuration() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "orders",
+            "--config",
+            &fixture("service-orders.hcl"),
+        ])
+        .assert()
+        .success();
+
+    let (config_url, server) = remote_service_configuration();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "update",
+            "orders",
+            "--config",
+            &config_url,
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "{\n",
+            "  \"service\": \"orders\",\n",
+            "  \"revision\": \"[..]\",\n",
+            "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"openapiVersion\": \"3.1.2\",\n",
+            "  \"listen\": \"127.0.0.1:4343\",\n",
+            "  \"operations\": 3,\n",
+            "  \"resources\": 0,\n",
+            "  \"asyncOperations\": 0,\n",
+            "  \"directory\": \"[..]\",\n",
+            "  \"config\": \"[..]/config.hcl\",\n",
+            "  \"artifact\": \"[..]/service.similec\"\n",
+            "}\n"
+        ));
+
+    server
+        .join()
+        .unwrap_or_else(|error| std::panic::resume_unwind(error));
+    let revision = fs::read_to_string(home.join("services/orders/current"))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let manifest = fs::read_to_string(
+        home.join("services/orders/revisions")
+            .join(revision.trim())
+            .join("manifest.json"),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(manifest.contains(&config_url));
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn start_reports_an_unregistered_service_without_config() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["start", "orders"])
+        .assert()
+        .failure()
+        .stderr_eq(concat!(
+            "service `orders` is not registered; run `simile register orders --config URL_OR_FILE`\n"
         ));
 }
 

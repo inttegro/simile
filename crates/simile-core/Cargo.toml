@@ -19,6 +19,7 @@ simile-hcl.workspace = true
 simile-runtime.workspace = true
 simile-spec.workspace = true
 thiserror.workspace = true
+time.workspace = true
 ureq.workspace = true
 
 [lints]
