@@ -3,14 +3,14 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, HttpBody, to_bytes};
-use axum::extract::State;
-use axum::http::header::{ALLOW, CONTENT_TYPE};
+use axum::extract::{ConnectInfo, State};
+use axum::http::header::{ALLOW, CONTENT_TYPE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -87,6 +87,8 @@ struct AccessLine<'a> {
     method: &'a Method,
     path: &'a str,
     status: StatusCode,
+    origin_ip: Option<IpAddr>,
+    user_agent: Option<&'a str>,
     request_bytes: Option<u64>,
     request_content_type: Option<&'a str>,
     response_bytes: Option<u64>,
@@ -135,10 +137,14 @@ impl Server {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        axum::serve(self.listener, self.router)
-            .with_graceful_shutdown(shutdown)
-            .await
-            .map_err(Error::Serve)
+        axum::serve(
+            self.listener,
+            self.router
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
+        .map_err(Error::Serve)
     }
 }
 
@@ -146,11 +152,15 @@ impl fmt::Display for AccessLine<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{} {} {} request=",
+            "{} {} {} origin=",
             self.method,
             self.path,
             self.status.as_u16()
         )?;
+        write_ip(formatter, self.origin_ip)?;
+        formatter.write_str(" user-agent=")?;
+        write_label(formatter, self.user_agent)?;
+        formatter.write_str(" request=")?;
         write_size(formatter, self.request_bytes)?;
         formatter.write_str(" request-type=")?;
         write_label(formatter, self.request_content_type)?;
@@ -159,6 +169,13 @@ impl fmt::Display for AccessLine<'_> {
         formatter.write_str(" response-type=")?;
         write_label(formatter, self.response_content_type)?;
         write!(formatter, " elapsed={}us", self.elapsed.as_micros())
+    }
+}
+
+fn write_ip(formatter: &mut fmt::Formatter<'_>, address: Option<IpAddr>) -> fmt::Result {
+    match address {
+        Some(address) => write!(formatter, "{address}"),
+        None => formatter.write_str("-"),
     }
 }
 
@@ -259,6 +276,11 @@ fn split_path(path: &str) -> impl Iterator<Item = &str> {
 async fn access_log(request: Request<Body>, next: Next) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    let origin_ip = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connection| connection.0.ip());
+    let user_agent = text_header(request.headers(), USER_AGENT.as_str());
     let request_bytes = request.body().size_hint().exact();
     let request_content_type = text_header(request.headers(), CONTENT_TYPE.as_str());
     let started = Instant::now();
@@ -268,6 +290,8 @@ async fn access_log(request: Request<Body>, next: Next) -> Response {
         method: &method,
         path: &path,
         status: response.status(),
+        origin_ip,
+        user_agent: user_agent.as_deref(),
         request_bytes,
         request_content_type: request_content_type.as_deref(),
         response_bytes: response.body().size_hint().exact(),
@@ -333,7 +357,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
     );
     match outcome {
         Ok(outcome) => operation_response(outcome.response(), method == Method::HEAD),
-        Err(error) => runtime_error(error),
+        Err(error) => operation_error(&state.runtime, &operation, error, method == Method::HEAD),
     }
 }
 
@@ -374,12 +398,76 @@ fn operation_response(response: &simile_runtime::SynthesizedResponse, head: bool
     outgoing
 }
 
+fn operation_error(
+    runtime: &Runtime,
+    operation: &str,
+    error: simile_runtime::Error,
+    head: bool,
+) -> Response {
+    let Some(statuses) = service_error_statuses(&error) else {
+        return runtime_error(error);
+    };
+    match runtime.synthesize_first_declared_response(operation, statuses) {
+        Ok(Some(response)) => {
+            tracing::debug!(
+                target: "simile::http",
+                operation,
+                status = response.status(),
+                error = %error,
+                issues = ?error.issues(),
+                "request rejected using the emulated service contract"
+            );
+            operation_response(&response, head)
+        }
+        Ok(None) => runtime_error(error),
+        Err(synthesis_error) => {
+            tracing::warn!(
+                target: "simile::http",
+                operation,
+                error = %synthesis_error,
+                "could not synthesize the emulated service's declared error response"
+            );
+            runtime_error(error)
+        }
+    }
+}
+
+fn service_error_statuses(error: &simile_runtime::Error) -> Option<&'static [u16]> {
+    use simile_runtime::Error as RuntimeError;
+
+    match error {
+        RuntimeError::InvalidBody { .. } => Some(&[422, 400]),
+        RuntimeError::MalformedJson { .. }
+        | RuntimeError::BodyRequired { .. }
+        | RuntimeError::BodyNotDeclared { .. }
+        | RuntimeError::EmptyReplayIdentity => Some(&[400]),
+        RuntimeError::MissingContentType { .. }
+        | RuntimeError::UnsupportedMediaType { .. }
+        | RuntimeError::UnsupportedEncoding { .. } => Some(&[415, 400]),
+        RuntimeError::IdempotencyConflict { .. } => Some(&[409]),
+        _ => None,
+    }
+}
+
 fn runtime_error(error: simile_runtime::Error) -> Response {
     use simile_runtime::Error as RuntimeError;
 
+    if let RuntimeError::InvalidBody { issues } = &error {
+        let message = validation_error_message(issues.len());
+        return json_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({
+                "error": {
+                    "code": "invalid_body",
+                    "message": message,
+                    "issues": issues,
+                }
+            }),
+        );
+    }
+
     let (status, code) = match &error {
         RuntimeError::MalformedJson { .. } => (StatusCode::BAD_REQUEST, "malformed_json"),
-        RuntimeError::InvalidBody { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_body"),
         RuntimeError::MissingContentType { .. }
         | RuntimeError::UnsupportedMediaType { .. }
         | RuntimeError::UnsupportedEncoding { .. } => {
@@ -392,6 +480,16 @@ fn runtime_error(error: simile_runtime::Error) -> Response {
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "emulation_failed"),
     };
     error_response(status, code, &error.to_string())
+}
+
+fn validation_error_message(issue_count: usize) -> String {
+    if issue_count == 1 {
+        "request body is invalid; fix the issue listed in `issues` and retry".to_owned()
+    } else {
+        format!(
+            "request body is invalid; fix the {issue_count} issues listed in `issues` and retry"
+        )
+    }
 }
 
 fn method_not_allowed(methods: BTreeSet<&str>) -> Response {
@@ -408,16 +506,19 @@ fn method_not_allowed(methods: BTreeSet<&str>) -> Response {
 }
 
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
-    (
+    json_response(
         status,
-        axum::Json(json!({
+        json!({
             "error": {
                 "code": code,
                 "message": message,
             }
-        })),
+        }),
     )
-        .into_response()
+}
+
+fn json_response(status: StatusCode, payload: serde_json::Value) -> Response {
+    (status, axum::Json(payload)).into_response()
 }
 
 #[cfg(test)]
@@ -433,6 +534,52 @@ mod tests {
 openapi: 3.1.0
 info: { title: Orders, version: 1.0.0 }
 paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [customer, items]
+              properties:
+                customer:
+                  type: object
+                  required: [email]
+                  properties:
+                    email: { type: string }
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [quantity]
+                    properties:
+                      quantity: { type: integer, minimum: 1 }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string }
+        '400':
+          description: invalid order request
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [code, message]
+                properties:
+                  code: { const: invalid_order }
+                  message: { const: order request rejected }
   /orders/{id}:
     get:
       operationId: getOrder
@@ -452,6 +599,42 @@ paths:
       responses:
         '204': { description: empty }
 "#;
+        compile_artifact(source)
+    }
+
+    fn artifact_without_client_error() -> Artifact {
+        compile_artifact(
+            r#"
+openapi: 3.1.0
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer]
+              properties:
+                customer: { type: string }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string }
+"#,
+        )
+    }
+
+    fn compile_artifact(source: &str) -> Artifact {
         let compiled = Compiler::new()
             .compile(CompileRequest {
                 openapi: Source::new("orders.yml", source),
@@ -470,6 +653,8 @@ paths:
             method: &method,
             path: "/orders",
             status: StatusCode::CREATED,
+            origin_ip: Some(IpAddr::from([127, 0, 0, 1])),
+            user_agent: Some("simile-test/1.0"),
             request_bytes: Some(47),
             request_content_type: Some("application/json"),
             response_bytes: Some(58),
@@ -479,8 +664,21 @@ paths:
 
         assert_eq!(
             line.to_string(),
-            "POST /orders 201 request=47B request-type=\"application/json\" response=58B \
-             response-type=\"application/json\" elapsed=321us"
+            "POST /orders 201 origin=127.0.0.1 user-agent=\"simile-test/1.0\" request=47B \
+             request-type=\"application/json\" response=58B response-type=\"application/json\" \
+             elapsed=321us"
+        );
+    }
+
+    #[test]
+    fn formats_validation_error_summaries() {
+        assert_eq!(
+            validation_error_message(1),
+            "request body is invalid; fix the issue listed in `issues` and retry"
+        );
+        assert_eq!(
+            validation_error_message(3),
+            "request body is invalid; fix the 3 issues listed in `issues` and retry"
         );
     }
 
@@ -517,9 +715,8 @@ paths:
         assert!(server.local_addr().ip().is_loopback());
     }
 
-    #[tokio::test]
-    async fn serves_a_request_through_the_operation_runtime() {
-        let server = Server::bind(SocketAddr::from(([127, 0, 0, 1], 0)), artifact())
+    async fn serve_raw_with_artifact(artifact: Artifact, request: &[u8]) -> String {
+        let server = Server::bind(SocketAddr::from(([127, 0, 0, 1], 0)), artifact)
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         let address = server.local_addr();
@@ -531,9 +728,7 @@ paths:
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         stream
-            .write_all(
-                b"GET /orders/ord_123 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(request)
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         let mut response = Vec::new();
@@ -545,10 +740,75 @@ paths:
         task.await
             .unwrap_or_else(|error| panic!("{error}"))
             .unwrap_or_else(|error| panic!("{error}"));
-        let response = String::from_utf8(response).unwrap_or_else(|error| panic!("{error}"));
+        String::from_utf8(response).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    async fn serve_raw(request: &[u8]) -> String {
+        serve_raw_with_artifact(artifact(), request).await
+    }
+
+    #[tokio::test]
+    async fn serves_a_request_through_the_operation_runtime() {
+        let response = serve_raw(
+            b"GET /orders/ord_123 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
 
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("content-type: application/json"));
         assert!(response.contains(r#""id":"#));
+    }
+
+    #[tokio::test]
+    async fn returns_the_service_declared_validation_error() {
+        let body = br#"{"customer":{},"items":[{"quantity":0}],"debug":true}"#;
+        let request = format!(
+            "POST /orders HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            String::from_utf8_lossy(body)
+        );
+        let response = serve_raw(request.as_bytes()).await;
+        let (_, body) = response
+            .split_once("\r\n\r\n")
+            .unwrap_or_else(|| panic!("response should contain headers and a body"));
+        let payload: serde_json::Value =
+            serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
+        assert_eq!(
+            payload,
+            json!({
+                "code": "invalid_order",
+                "message": "order request rejected"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_simile_diagnostics_without_a_declared_client_error() {
+        let body = br#"{}"#;
+        let request = format!(
+            "POST /orders HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            String::from_utf8_lossy(body)
+        );
+        let response =
+            serve_raw_with_artifact(artifact_without_client_error(), request.as_bytes()).await;
+        let (_, body) = response
+            .split_once("\r\n\r\n")
+            .unwrap_or_else(|| panic!("response should contain headers and a body"));
+        let payload: serde_json::Value =
+            serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(response.starts_with("HTTP/1.1 422 Unprocessable Entity\r\n"));
+        assert_eq!(payload["error"]["code"], "invalid_body");
+        assert_eq!(
+            payload["error"]["issues"],
+            json!([{
+                "path": "/customer",
+                "rule": "required",
+                "message": "required property `customer` is missing"
+            }])
+        );
     }
 }

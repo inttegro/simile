@@ -21,6 +21,40 @@ undeclared media type is not a schema error; and malformed JSON has a source lin
 Schema failures contain a bounded list of issues with a JSON Pointer `path`, a stable `rule`, and a
 human-readable `message`.
 
+When an operation declares a suitable client-error response, the HTTP service returns that response
+instead of exposing Simile's runtime error. For example, an operation that declares a `400` error
+object receives a contract-sound instance of that object when request validation fails. This keeps
+the emulator's observable behavior inside the service's OpenAPI contract.
+
+If the operation declares no suitable error response, Simile falls back to its own HTTP 422
+diagnostic and preserves every discovered problem under `error.issues`, for example:
+
+```json
+{
+  "error": {
+    "code": "invalid_body",
+    "message": "request body is invalid; fix the 2 issues listed in `issues` and retry",
+    "issues": [
+      {
+        "path": "/customer/email",
+        "rule": "required",
+        "message": "required property `email` is missing"
+      },
+      {
+        "path": "/items/0/quantity",
+        "rule": "minimum",
+        "message": "number must be greater than or equal to 1"
+      }
+    ]
+  }
+}
+```
+
+`path` is an RFC 6901 JSON Pointer into the submitted body. Callers can use it to highlight the
+corresponding input, while `rule` is a stable programmatic category and `message` explains the
+specific correction. Simile also records these issues at debug level when it successfully renders a
+service-declared error. Validation responses and diagnostics never echo rejected request values.
+
 The same compiled graph can synthesize a request body. Fresh synthesis varies unconstrained values
 instead of pinning every call to a published example or default. Constants and finite enums remain
 within their declared choices; generated strings, numbers, booleans, identifiers, and formatted
@@ -69,5 +103,5 @@ See [payload soundness](payload-soundness.md) for the exact proof boundary and r
 semantics.
 
 The validation pass caps both traversal depth and reported issue count. Those bounds protect the
-runtime and keep an invalid request response useful. A future HTTP server must additionally apply a
-body-size limit before decoding.
+runtime and keep an invalid request response useful. The HTTP server applies its body-size limit
+before decoding.

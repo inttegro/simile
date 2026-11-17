@@ -94,15 +94,18 @@ protocol-neutral runtime. It currently provides:
 - an 8 MiB request-body limit;
 - JSON request-body decoding and compiled-schema validation through the runtime;
 - generated OpenAPI response status, media type, and body;
+- service-declared client-error responses for malformed or contract-invalid requests, with a Simile
+  diagnostic only when the operation has no suitable error response;
 - process-local replay for `Idempotency-Key` and for the full URI of GET requests; and
-- one-line access logs containing method, path, status, request content type and size, response
-  content type and size, and elapsed microseconds; and
+- one-line access logs containing method, path, status, TCP peer IP, user agent, request content type
+  and size, response content type and size, and elapsed microseconds; and
 - graceful shutdown on Ctrl-C.
 
 Access logs are emitted to stderr at `info` level by default for `simile start`. Pass `--quiet` to
-disable them, or use `SIMILE_LOG` to select a tracing filter explicitly. Request and response
-bodies, query strings, credentials, idempotency keys, and other header values are never written to
-the access log.
+disable them, or use `SIMILE_LOG` to select a tracing filter explicitly. The origin is the accepted
+socket's peer IP; Simile does not trust forwarding headers. Request and response bodies, query
+strings, credentials, idempotency keys, and header values other than `User-Agent` are never written
+to the access log.
 
 Path, query, and header schema validation are not yet compiled into the runtime artifact. Form and
 multipart codecs are also not yet implemented. HCL-declared asynchronous operations are returned
