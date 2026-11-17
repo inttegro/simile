@@ -21,8 +21,15 @@ sequenceDiagram
   Graph-->>Run: validated value or structured issues
   Run->>Graph: select and synthesize response
   Graph-->>Run: validated response value
-  Run-->>HTTP: operation result
-  HTTP-->>App: status, headers, encoded body
+  Run-->>HTTP: committed outcome + transport plan
+  alt ordinary response
+    HTTP-->>App: status, headers, encoded body
+  else delay before response
+    HTTP->>HTTP: wait declared duration
+    HTTP-->>App: status, headers, encoded body
+  else disconnect after commit
+    HTTP--xApp: response stream reset
+  end
 ```
 
 ## Route table
@@ -41,6 +48,17 @@ decoded media choice to the runtime. It also normalizes replay identity:
 
 Those identities allow deterministic replay without pretending that every operation is globally
 stateful.
+
+## Fault delivery
+
+The runtime returns a protocol-neutral transport plan after completing the service outcome. The
+server implements the current plans by delaying before response delivery or by ending the response
+stream after commit. It does not select faults or convert them into service error bodies.
+
+This order matters for retries. The runtime records a replayable outcome before a
+disconnect-after-commit reaches the adapter. Repeating the request with the same idempotency key
+therefore returns the committed response rather than repeating the first attempt's connection
+failure. See [Fault injection](/fault-injection) for activation and profile controls.
 
 ## Errors belong to the public contract
 

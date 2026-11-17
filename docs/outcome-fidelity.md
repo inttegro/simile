@@ -24,6 +24,11 @@ Every compiled outcome reports one fidelity source:
 Scenarios are selectors, not a body-provenance source. `simile inspect` reports scenario selections
 separately while the selected outcome retains the provenance of its response body.
 
+Environmental faults are also separate from outcomes. A fault can delay or disrupt delivery of a
+selected result, but cannot replace a valid operation with a random domain error. Parameter- and
+state-dependent failures remain deterministic outcomes selected by public request predicates or
+opaque scenarios.
+
 `simile inspect service.similec` lists each operation's outcomes and calls out operations for which
 every outcome is schema-synthesized. This is an authoring worklist, not a claim that those operations
 are production-faithful.
@@ -154,4 +159,5 @@ passed this audit. This is a guardrail, not a substitute for provider review of 
 examples and scenario names.
 
 Read [OpenAPI and HCL](/openapi-and-hcl) for the source boundary and
+[Fault injection](/fault-injection) for delivery disruptions, or
 [Current boundaries](/current-boundaries) for what an exact outcome does—and does not—prove.

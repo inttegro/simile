@@ -48,7 +48,12 @@
 					},
 					{
 						"group": "Model behavior",
-						"pages": ["outcome-fidelity", "state-and-replay", "dependencies-and-effects"]
+						"pages": [
+							"outcome-fidelity",
+							"fault-injection",
+							"state-and-replay",
+							"dependencies-and-effects"
+						]
 					},
 					{
 						"group": "Prove payloads",

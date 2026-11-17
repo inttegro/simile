@@ -27,6 +27,8 @@ service described by the long-term charter.
 - structural request-to-response value projection
 - provider-declared protocol-error rendering, with Simile diagnostics as a fallback
 - process-local replay by idempotency key and GET URI
+- deterministic scenario faults and bounded, seeded stochastic fault profiles
+- response delay before delivery and disconnect after commit
 - resolved planning of HCL-declared async work
 
 ### HTTP server
@@ -36,6 +38,7 @@ service described by the long-term charter.
 - an 8 MiB body limit
 - request body content-type handling
 - one process-wide opaque scenario selection
+- one optional process-wide stochastic fault profile
 - one-line safe access logs and graceful Ctrl-C shutdown
 
 ## Not implemented yet
@@ -58,9 +61,10 @@ manual async advancement interface yet.
 
 ### Production equivalence
 
-Simile does not reproduce provider latency, capacity, private risk decisions, undocumented
-behavior, or infrastructure. Schema-synthesized outcomes are contract-valid approximations, not
-evidence of exact production bodies.
+Simile does not infer provider latency, capacity, private risk decisions, undocumented behavior,
+or infrastructure. It can apply explicitly authored delays and disconnect-after-commit faults, but
+those controls are test scenarios—not measurements of production behavior. Schema-synthesized
+outcomes are contract-valid approximations, not evidence of exact production bodies.
 
 ## How to write tests today
 
@@ -70,11 +74,13 @@ You can confidently test:
 - how your integration handles declared success and error bodies;
 - public scenarios published by the provider;
 - same-path values returned from a request-aware response;
-- idempotency conflict handling and stable process-local replay; and
+- idempotency conflict handling and stable process-local replay;
+- how an integration handles declared latency or a lost response after commit; and
 - which follow-up operations the definition declares as planned.
 
 Do not yet assert that cross-operation resource state changed or that a declared async effect was
 delivered. Those would convert a documented future boundary into a false test guarantee.
 
 Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
+[Fault injection](/fault-injection) for the environmental failure model, or
 [State, identity, and replay](/state-and-replay) for the current persistence model.

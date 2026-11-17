@@ -100,6 +100,7 @@ $ simile start inttegro
 $ simile start inttegro --config inttegro.simile.hcl
 $ simile start inttegro --config inttegro.simile.hcl --port 8484
 $ simile start inttegro --scenario payment_declined
+$ simile start inttegro --fault-profile rough_network
 ```
 
 `run` accepts exactly one contract source and one operation selector. A positional source path is
@@ -213,6 +214,13 @@ Providers can publish exact failure families once, attach them to operations, an
 scenario controls without shipping private decision logic. `simile inspect` lists every compiled
 outcome and marks operations that still depend entirely on schema synthesis. See
 [outcome fidelity](docs/outcome-fidelity.md) for the HCL forms and trust model.
+
+Environmental faults are modeled independently from domain errors. Deterministic scenarios can
+delay a response or disconnect after commit, while bounded seeded profiles can apply those faults
+stochastically without ever inventing a bad parameter or declined payment. The runtime completes
+and stores the service outcome before returning a protocol-neutral transport plan to the server;
+an idempotent retry after a lost response therefore receives the committed result normally. See
+[fault injection](docs/fault-injection.md) for the fault vocabulary and activation controls.
 
 Resource kinds are intentionally abstract. A definition may declare `db`, `cache`, `queue`,
 `mail`, `object_store`, `event_bus`, `scheduler`, or `http`; it cannot couple local emulation to a

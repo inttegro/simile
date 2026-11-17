@@ -44,6 +44,8 @@ $ simile remove inttegro --confirm inttegro
 $ simile start inttegro
 $ simile start inttegro --config ./inttegro.simile.hcl
 $ simile start inttegro --config ./inttegro.simile.hcl --port 8484
+$ simile start inttegro --scenario lost_after_commit
+$ simile start inttegro --fault-profile rough_network
 ```
 
 `--port` has invocation precedence over `listen.port`; it does not edit the configuration.
@@ -125,8 +127,8 @@ remote configuration are rejected rather than resolved against the process worki
 ## Behavior modules
 
 `behaviors` is an optional list of HCL module paths. Relative paths resolve from the configuration
-directory. The service document may also contain the existing `resource`, `async`, and `behavior`
-blocks after the `service` block:
+directory. The service document may also contain `resource`, `async`, `behavior`, `scenario`,
+`fault`, and `fault_profile` blocks after the `service` block:
 
 ```hcl
 resource "queue" "orders" {}
@@ -160,6 +162,8 @@ protocol-neutral runtime. It currently provides:
 - JSON request-body decoding and compiled-schema validation through the runtime;
 - generated OpenAPI response status, media type, and body;
 - named OpenAPI and HCL outcomes, including an optional process-wide `--scenario NAME`;
+- deterministic scenario fault injection and an optional bounded stochastic
+  `--fault-profile NAME`;
 - service-declared protocol-error mappings for malformed or contract-invalid requests, with a
   Simile diagnostic only when the operation has no suitable error response;
 - process-local replay for `Idempotency-Key` and for the full URI of GET requests; and
@@ -180,4 +184,5 @@ service state. These omissions are reported here so that starting a service is n
 full behavioral fidelity.
 
 Continue with [Lifecycle](/service-lifecycle) to see how this file becomes a registered
-revision, or [OpenAPI and HCL](/openapi-and-hcl) to decide what belongs in each source.
+revision, [Fault injection](/fault-injection) for environmental failure controls, or
+[OpenAPI and HCL](/openapi-and-hcl) to decide what belongs in each source.

@@ -126,7 +126,8 @@ Use HCL only for public observable behavior that OpenAPI cannot express adequate
 - public request predicates;
 - opaque test scenarios;
 - protocol-error mappings;
-- declared asynchronous work and abstract dependencies.
+- declared asynchronous work and abstract dependencies; and
+- environmental delivery faults and bounded stochastic fault profiles.
 
 Prefer OpenAPI named examples before introducing HCL outcomes.
 
@@ -154,6 +155,24 @@ Only use public request values in predicates. Represent dependencies with portab
 Do not use implementation-specific names such as PostgreSQL, Redis, SQS, or SendGrid.
 
 Remember that the current runtime plans declared async work but does not yet execute those resources. Document this honestly.
+
+Model domain failures and transport faults separately. Invalid parameters, declined payment methods, and forbidden states are deterministic named outcomes selected by public predicates or opaque scenarios. They must never be members of a stochastic profile.
+
+Use `fault` only for environmental delivery behavior. The current safe vocabulary is:
+
+```hcl
+fault "slow_response" {
+  phase = "before_response"
+  delay { milliseconds = 250 }
+}
+
+fault "response_lost" {
+  phase = "after_commit"
+  disconnect {}
+}
+```
+
+Use scenario `inject` blocks for deterministic tests. Use a `fault_profile` only for bounded stochastic resilience testing, with a conservative probability, operation scope, `max_consecutive`, `cooldown_requests`, and an optional reproducible seed. Do not claim that profile probabilities reproduce production measurements unless the provider supplies that evidence.
 
 Service configuration
 

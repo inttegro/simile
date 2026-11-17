@@ -28,7 +28,8 @@ The service provider defines:
 - request validation, responses, errors, and state transitions;
 - optional HCL behaviour attached to operations by their published `operationId`;
 - asynchronous work such as events, webhooks, queues, retries, and delayed outcomes;
-- supported scenarios, including deliberate failures and edge cases; and
+- supported scenarios, including deliberate failures and edge cases;
+- environmental fault definitions and bounded resilience profiles; and
 - the relationship between a definition version and the corresponding service contract.
 
 Simile provides:
@@ -60,9 +61,14 @@ An HCL `behavior` may select a response already declared by OpenAPI and attach o
 OpenAPI cannot describe. It cannot add an endpoint, contradict a schema, or name a private
 production check. HCL may also declare non-HTTP async operations and the abstract resources they
 use. Named OpenAPI examples form the default outcome catalog. HCL may add reusable, schema-checked
-outcomes, map transport failures into public service errors, or group those outcomes behind opaque
+outcomes, map protocol failures into public service errors, or group those outcomes behind opaque
 scenario names. The compiled artifact records whether an outcome is exact provider evidence or
 schema synthesis so approximation remains visible.
+
+Domain failures and environmental faults are different definition units. Invalid parameters,
+declined payment methods, and forbidden states are deterministic service outcomes. Delays and lost
+connections are attempt-scoped delivery faults. A scenario may activate either deliberately;
+bounded stochastic profiles may activate only environmental faults, never invent a domain error.
 
 The supported resource vocabulary describes Simile's local emulation substrate: `db`, `cache`,
 `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, and `http`. It deliberately excludes
@@ -108,6 +114,12 @@ account.
 
 Simile must distinguish implemented behaviour from approximation or omission. It should never
 imply production equivalence where the definition does not provide it.
+
+### Controlled adversity
+
+Tests must be able to reproduce transport adversity deliberately and exercise it stochastically
+without becoming capricious. Stochastic faults are seeded, scoped, and bounded by consecutive and
+cooldown controls. Parameter- and state-dependent errors remain deterministic.
 
 ### Public behavior, not private implementation
 

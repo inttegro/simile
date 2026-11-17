@@ -98,6 +98,17 @@ adapter normalizes the idempotency header or addressed resource into `ReplayIden
 This keeps HTTP policy out of the schema and operation layers, and prevents route names from being
 mistaken for storage semantics.
 
+## Attempt-scoped delivery faults
+
+After the operation result is complete, the runtime may attach a fault activation selected by a
+deterministic scenario or a bounded stochastic profile. It returns an `OperationExecution`: the
+committed `OperationOutcome` plus a protocol-neutral transport plan such as respond after a delay
+or disconnect after commit. Outcome selection never receives fault actions as candidate responses.
+
+The replay index stores only `OperationOutcome`. Consequently, a disconnect after commit affects
+the first delivery, while an idempotent retry returns the already committed response normally. The
+HTTP adapter enacts the transport plan; the runtime never sleeps or manipulates a socket.
+
 ## Asynchronous work
 
 The runtime plans declared work; it does not claim that the work has executed. Each planned entry
@@ -128,3 +139,4 @@ the current body-oriented runtime.
 For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
 current persistence model, read [State, identity, and replay](/state-and-replay). For routing,
 wire limits, error adaptation, and listener lifecycle, continue to the [HTTP server](/http-server).
+For deterministic and stochastic activation controls, read [Fault injection](/fault-injection).
