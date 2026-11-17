@@ -18,6 +18,12 @@ install-updater = false
 github-attestations = true
 install-path = "CARGO_HOME"
 
+# GitHub retired the macos-14 ARM runner that dist 0.32 selects by default. Pinning the current
+# standard ARM runner keeps Apple Silicon artifacts—and therefore the universal shell
+# installer—publishable without hand-editing the generated workflow.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 [dist.github-action-commits]
 "actions/checkout" = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 "actions/upload-artifact" = "bbbca2ddaa5d8feaa63e36b76fdaad77386f024f"

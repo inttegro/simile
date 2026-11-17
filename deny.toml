@@ -1,5 +1,9 @@
 [advisories]
-ignore = []
+ignore = [
+  # RUSTSEC-2026-0009 affects time's RFC 2822 parser. Simile statically selects only Rfc3339;
+  # remove this waiver when the Rust 1.85 MSRV can be raised to time 0.3.47 or newer.
+  "RUSTSEC-2026-0009",
+]
 
 [licenses]
 confidence-threshold = 0.8

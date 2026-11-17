@@ -29,6 +29,30 @@ integration.
 Read the [service charter](CHARTER.md) for the product boundary and design principles, and the
 [compiler architecture](docs/architecture.md) for the source and ownership boundaries.
 
+## Install
+
+Install the latest release on macOS or Linux with the shell installer:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/inttegro/simile/HEAD/install.sh)"
+```
+
+The bootstrap downloads the platform-specific release artifact, verifies its checksum, and installs
+`simile` under Cargo's binary directory. Set `SIMILE_VERSION` to install a specific release:
+
+```bash
+SIMILE_VERSION=0.1.1 /bin/bash -c \
+  "$(curl -fsSL https://raw.githubusercontent.com/inttegro/simile/HEAD/install.sh)"
+```
+
+With Homebrew:
+
+```bash
+brew tap inttegro/tap
+brew trust --formula inttegro/tap/simile
+brew install inttegro/tap/simile
+```
+
 ## Status
 
 Simile is at its compiler-foundation stage. It can normalize OpenAPI 3.0, 3.1 and 3.2 contracts,

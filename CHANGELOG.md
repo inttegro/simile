@@ -4,6 +4,13 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-17
+
+- Add a stable shell-install bootstrap for macOS and Linux.
+- Publish Apple Silicon release artifacts on GitHub's supported macOS 15 runner.
+
+## 0.1.0 - 2026-11-17
+
 - Establish the Rust workspace, command architecture, tests, CI and release configuration.
 - Execute operations directly from local or hosted OpenAPI contracts, with structural or
   `operationId` selection, schema-valid request synthesis for declared media types, and a
