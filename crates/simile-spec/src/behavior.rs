@@ -81,6 +81,64 @@ pub struct Scenario {
     pub name: String,
     /// `operationId -> outcome name`.
     pub selections: BTreeMap<String, String>,
+    /// `operationId -> fault name`.
+    ///
+    /// Scenario faults are deterministic test controls. They never inspect
+    /// private provider state and are distinct from outcomes: an outcome is a
+    /// service result, while a fault changes how that result reaches a caller.
+    pub faults: BTreeMap<String, String>,
+}
+
+/// The point in a completed operation at which an environmental fault applies.
+///
+/// The initial vocabulary is deliberately small. More phases can be added
+/// without teaching outcome selection about transport mechanics.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultPhase {
+    /// The operation has produced a response but the adapter has not sent it.
+    BeforeResponse,
+    /// The operation is committed; only delivery to the caller is disrupted.
+    AfterCommit,
+}
+
+/// One environmental disruption Simile may apply to an operation attempt.
+///
+/// Domain errors are intentionally absent. A bad payment method or invalid
+/// state remains a deterministic named outcome selected by a public condition
+/// or scenario; stochastic activation can reference only these transport-safe
+/// actions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum FaultAction {
+    Delay { milliseconds: u64 },
+    Disconnect,
+}
+
+/// A named, provider-authored environmental fault.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Fault {
+    pub name: String,
+    pub phase: FaultPhase,
+    pub action: FaultAction,
+}
+
+/// A bounded stochastic activation policy for environmental faults.
+///
+/// Probability is stored as parts per million to keep compiled artifacts
+/// deterministic and avoid floating-point policy comparisons at runtime.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaultProfile {
+    pub name: String,
+    pub probability_ppm: u32,
+    pub faults: Vec<String>,
+    /// Empty means every operation; otherwise these are OpenAPI operationIds.
+    pub operations: Vec<String>,
+    pub max_consecutive: u32,
+    pub cooldown_requests: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -203,6 +261,8 @@ pub struct BehaviorSpec {
     pub error_set_applications: Vec<ErrorSetApplication>,
     pub protocol_errors: BTreeMap<String, ProtocolError>,
     pub scenarios: BTreeMap<String, Scenario>,
+    pub faults: BTreeMap<String, Fault>,
+    pub fault_profiles: BTreeMap<String, FaultProfile>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
 }
 
@@ -231,6 +291,8 @@ pub struct CompiledService {
     pub operations: BTreeMap<OperationKey, CompiledOperation>,
     pub protocol_errors: BTreeMap<String, ProtocolError>,
     pub scenarios: BTreeMap<String, Scenario>,
+    pub faults: BTreeMap<String, Fault>,
+    pub fault_profiles: BTreeMap<String, FaultProfile>,
     pub resources: BTreeMap<ResourceRef, Resource>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
 }

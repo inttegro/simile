@@ -39,6 +39,8 @@ pub struct CompileReport {
     pub hcl_behaviors: usize,
     pub async_operations: usize,
     pub resources: usize,
+    pub faults: usize,
+    pub fault_profiles: usize,
     pub heuristic_policy: Policy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact: Option<WrittenArtifact>,
@@ -74,6 +76,8 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
         hcl_behaviors,
         async_operations: compiled.async_operations.len(),
         resources: compiled.resources.len(),
+        faults: compiled.faults.len(),
+        fault_profiles: compiled.fault_profiles.len(),
         heuristic_policy: compiled.heuristic_policy,
         artifact,
     })

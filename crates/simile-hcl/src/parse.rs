@@ -3,11 +3,12 @@ use std::str::FromStr;
 use hcl::eval::{Context, Evaluate};
 use hcl::expr::Expression;
 use hcl::{Attribute, Block, Body, Structure};
-use simile_spec::{ResourceKind, ResourceRef};
+use simile_spec::{FaultAction, FaultPhase, ResourceKind, ResourceRef};
 
 use crate::ast::{
     AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
-    Module, OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration,
+    FaultDeclaration, FaultProfileDeclaration, Module, OutcomeDeclaration,
+    ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, Source,
 };
 use crate::{Error, Result};
@@ -25,6 +26,8 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
         error_set_applications: Vec::new(),
         protocol_errors: Vec::new(),
         scenarios: Vec::new(),
+        faults: Vec::new(),
+        fault_profiles: Vec::new(),
         async_operations: Vec::new(),
     };
 
@@ -47,6 +50,10 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                     .protocol_errors
                     .push(protocol_error(block, &module.source)?),
                 "scenario" => module.scenarios.push(scenario(block, &module.source)?),
+                "fault" => module.faults.push(fault(block, &module.source)?),
+                "fault_profile" => module
+                    .fault_profiles
+                    .push(fault_profile(block, &module.source)?),
                 "async" => module
                     .async_operations
                     .push(async_operation(block, &module.source)?),
@@ -260,29 +267,155 @@ pub(crate) fn protocol_error(block: &Block, source: &str) -> Result<ProtocolErro
 pub(crate) fn scenario(block: &Block, source: &str) -> Result<ScenarioDeclaration> {
     labels(block, source, 1)?;
     reject_attributes(block.body(), source, "scenario", &[])?;
-    let selections = block
-        .body()
-        .blocks()
-        .map(|child| {
-            if child.identifier() != "select" {
+    let mut selections = Vec::new();
+    let mut faults = Vec::new();
+    for child in block.body().blocks() {
+        labels(child, source, 1)?;
+        reject_blocks(child.body(), source, child.identifier())?;
+        match child.identifier() {
+            "select" => {
+                reject_attributes(child.body(), source, "select", &["outcome"])?;
+                selections.push(ScenarioSelectionDeclaration {
+                    operation_id: child.labels()[0].as_str().to_owned(),
+                    outcome: required_string(child.body(), source, "select", "outcome")?,
+                });
+            }
+            "inject" => {
+                reject_attributes(child.body(), source, "inject", &["fault"])?;
+                faults.push(ScenarioFaultDeclaration {
+                    operation_id: child.labels()[0].as_str().to_owned(),
+                    fault: required_string(child.body(), source, "inject", "fault")?,
+                });
+            }
+            unknown => {
                 return Err(Error::UnknownNestedBlock {
                     file: source.to_owned(),
                     block: "scenario".to_owned(),
-                    nested: child.identifier().to_owned(),
+                    nested: unknown.to_owned(),
                 });
             }
-            labels(child, source, 1)?;
-            reject_blocks(child.body(), source, "select")?;
-            reject_attributes(child.body(), source, "select", &["outcome"])?;
-            Ok(ScenarioSelectionDeclaration {
-                operation_id: child.labels()[0].as_str().to_owned(),
-                outcome: required_string(child.body(), source, "select", "outcome")?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+        }
+    }
     Ok(ScenarioDeclaration {
         name: block.labels()[0].as_str().to_owned(),
         selections,
+        faults,
+    })
+}
+
+pub(crate) fn fault(block: &Block, source: &str) -> Result<FaultDeclaration> {
+    labels(block, source, 1)?;
+    reject_attributes(block.body(), source, "fault", &["phase"])?;
+    let phase = match required_string(block.body(), source, "fault", "phase")?.as_str() {
+        "before_response" => FaultPhase::BeforeResponse,
+        "after_commit" => FaultPhase::AfterCommit,
+        _ => {
+            return Err(Error::InvalidAttribute {
+                file: source.to_owned(),
+                block: "fault".to_owned(),
+                attribute: "phase".to_owned(),
+                expected: "`before_response` or `after_commit`",
+            });
+        }
+    };
+    let actions = block.body().blocks().collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(Error::FaultActionCount {
+            file: source.to_owned(),
+            fault: block.labels()[0].as_str().to_owned(),
+        });
+    }
+    let action = match actions[0].identifier() {
+        "delay" => {
+            labels(actions[0], source, 0)?;
+            reject_blocks(actions[0].body(), source, "delay")?;
+            reject_attributes(actions[0].body(), source, "delay", &["milliseconds"])?;
+            FaultAction::Delay {
+                milliseconds: required_u64(
+                    actions[0].body(),
+                    source,
+                    "delay",
+                    "milliseconds",
+                    1,
+                    86_400_000,
+                )?,
+            }
+        }
+        "disconnect" => {
+            labels(actions[0], source, 0)?;
+            empty_body(actions[0].body(), source, "disconnect")?;
+            FaultAction::Disconnect
+        }
+        unknown => {
+            return Err(Error::UnknownNestedBlock {
+                file: source.to_owned(),
+                block: "fault".to_owned(),
+                nested: unknown.to_owned(),
+            });
+        }
+    };
+    Ok(FaultDeclaration {
+        name: block.labels()[0].as_str().to_owned(),
+        phase,
+        action,
+    })
+}
+
+pub(crate) fn fault_profile(block: &Block, source: &str) -> Result<FaultProfileDeclaration> {
+    labels(block, source, 1)?;
+    reject_blocks(block.body(), source, "fault_profile")?;
+    reject_attributes(
+        block.body(),
+        source,
+        "fault_profile",
+        &[
+            "probability",
+            "faults",
+            "operations",
+            "max_consecutive",
+            "cooldown_requests",
+            "seed",
+        ],
+    )?;
+    let probability = attribute(block.body(), "probability")
+        .and_then(|attribute| match attribute.expr() {
+            Expression::Number(value) => value.as_f64(),
+            _ => None,
+        })
+        .filter(|value| *value >= 0.000_001 && *value <= 1.0)
+        .ok_or_else(|| Error::InvalidAttribute {
+            file: source.to_owned(),
+            block: "fault_profile".to_owned(),
+            attribute: "probability".to_owned(),
+            expected: "a number from 0.000001 through 1",
+        })?;
+    let probability_ppm = (probability * 1_000_000.0).round() as u32;
+    let faults = required_string_array(block.body(), source, "fault_profile", "faults")?;
+    let operations = attribute(block.body(), "operations")
+        .map(|value| string_array(value, source, "fault_profile", "operations"))
+        .transpose()?
+        .unwrap_or_default();
+    let max_consecutive =
+        optional_u32(block.body(), source, "fault_profile", "max_consecutive")?.unwrap_or(1);
+    if max_consecutive == 0 {
+        return Err(Error::InvalidAttribute {
+            file: source.to_owned(),
+            block: "fault_profile".to_owned(),
+            attribute: "max_consecutive".to_owned(),
+            expected: "a positive integer",
+        });
+    }
+    let cooldown_requests =
+        optional_u32(block.body(), source, "fault_profile", "cooldown_requests")?.unwrap_or(20);
+    let seed = optional_u64(block.body(), source, "fault_profile", "seed")?;
+    Ok(FaultProfileDeclaration {
+        name: block.labels()[0].as_str().to_owned(),
+        probability_ppm,
+        faults,
+        operations,
+        max_consecutive,
+        cooldown_requests,
+        seed,
     })
 }
 
@@ -350,6 +483,82 @@ fn status_array(attribute: &Attribute, source: &str, block: &str, name: &str) ->
         });
     }
     Ok(statuses)
+}
+
+fn required_string_array(
+    body: &Body,
+    source: &str,
+    block: &str,
+    name: &'static str,
+) -> Result<Vec<String>> {
+    let values = attribute(body, name)
+        .ok_or_else(|| Error::MissingAttribute {
+            file: source.to_owned(),
+            block: block.to_owned(),
+            attribute: name,
+        })
+        .and_then(|attribute| string_array(attribute, source, block, name))?;
+    if values.is_empty() {
+        return Err(Error::InvalidAttribute {
+            file: source.to_owned(),
+            block: block.to_owned(),
+            attribute: name.to_owned(),
+            expected: "a non-empty array of strings",
+        });
+    }
+    Ok(values)
+}
+
+fn required_u64(
+    body: &Body,
+    source: &str,
+    block: &str,
+    name: &'static str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<u64> {
+    optional_u64(body, source, block, name)?
+        .filter(|value| (*value >= minimum) && (*value <= maximum))
+        .ok_or_else(|| Error::InvalidAttribute {
+            file: source.to_owned(),
+            block: block.to_owned(),
+            attribute: name.to_owned(),
+            expected: "an integer in the supported range",
+        })
+}
+
+fn optional_u32(body: &Body, source: &str, block: &str, name: &str) -> Result<Option<u32>> {
+    optional_u64(body, source, block, name).and_then(|value| {
+        value
+            .map(|value| {
+                u32::try_from(value).map_err(|_| Error::InvalidAttribute {
+                    file: source.to_owned(),
+                    block: block.to_owned(),
+                    attribute: name.to_owned(),
+                    expected: "an unsigned 32-bit integer",
+                })
+            })
+            .transpose()
+    })
+}
+
+fn optional_u64(body: &Body, source: &str, block: &str, name: &str) -> Result<Option<u64>> {
+    attribute(body, name)
+        .map(|attribute| match attribute.expr() {
+            Expression::Number(value) => value.as_u64().ok_or_else(|| Error::InvalidAttribute {
+                file: source.to_owned(),
+                block: block.to_owned(),
+                attribute: name.to_owned(),
+                expected: "an unsigned integer",
+            }),
+            _ => Err(Error::InvalidAttribute {
+                file: source.to_owned(),
+                block: block.to_owned(),
+                attribute: name.to_owned(),
+                expected: "an unsigned integer",
+            }),
+        })
+        .transpose()
 }
 
 fn required_string(body: &Body, source: &str, block: &str, name: &'static str) -> Result<String> {

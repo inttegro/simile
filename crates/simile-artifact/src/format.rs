@@ -12,13 +12,13 @@ use simile_schema::{
     SchemaCatalog,
 };
 use simile_spec::{
-    BehaviorOrigin, CompiledService, HttpMethod, OpenApiFeature, OutcomeProvenance, ResourceKind,
-    ResourceRef, ResponseStatus,
+    BehaviorOrigin, CompiledService, FaultAction, FaultPhase, HttpMethod, OpenApiFeature,
+    OutcomeProvenance, ResourceKind, ResourceRef, ResponseStatus,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 9;
+pub const FORMAT_VERSION: u16 = 10;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -49,6 +49,9 @@ pub struct ArtifactSummary {
     pub outcomes: usize,
     pub provider_authored_outcomes: usize,
     pub scenario_selections: usize,
+    pub scenario_faults: usize,
+    pub faults: usize,
+    pub fault_profiles: usize,
     pub schema_synthesized_outcomes: usize,
     pub underspecified_operations: usize,
     pub public_export_safe: bool,
@@ -132,6 +135,26 @@ pub struct ArtifactProtocolError {
     content_type: Option<String>,
     body: Option<Value>,
     provenance: OutcomeProvenance,
+}
+
+/// One environmental fault loaded from a compiled artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactFault {
+    name: String,
+    phase: FaultPhase,
+    action: FaultAction,
+}
+
+/// One bounded stochastic fault policy loaded from a compiled artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactFaultProfile {
+    name: String,
+    probability_ppm: u32,
+    faults: Vec<String>,
+    operations: Vec<String>,
+    max_consecutive: u32,
+    cooldown_requests: u32,
+    seed: Option<u64>,
 }
 
 /// One asynchronous operation triggered by a compiled behavior.
@@ -318,6 +341,60 @@ impl ArtifactProtocolError {
     }
 }
 
+impl ArtifactFault {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn phase(&self) -> FaultPhase {
+        self.phase
+    }
+
+    #[must_use]
+    pub const fn action(&self) -> &FaultAction {
+        &self.action
+    }
+}
+
+impl ArtifactFaultProfile {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn probability_ppm(&self) -> u32 {
+        self.probability_ppm
+    }
+
+    #[must_use]
+    pub fn faults(&self) -> &[String] {
+        &self.faults
+    }
+
+    #[must_use]
+    pub fn operations(&self) -> &[String] {
+        &self.operations
+    }
+
+    #[must_use]
+    pub const fn max_consecutive(&self) -> u32 {
+        self.max_consecutive
+    }
+
+    #[must_use]
+    pub const fn cooldown_requests(&self) -> u32 {
+        self.cooldown_requests
+    }
+
+    #[must_use]
+    pub const fn seed(&self) -> Option<u64> {
+        self.seed
+    }
+}
+
 impl<'a> ArtifactAsyncOperation<'a> {
     #[must_use]
     pub const fn name(&self) -> &'a str {
@@ -426,6 +503,15 @@ impl Artifact {
                 .iter()
                 .map(|scenario| scenario.1.len())
                 .sum(),
+            scenario_faults: self
+                .payload
+                .2
+                .7
+                .iter()
+                .map(|scenario| scenario.2.len())
+                .sum(),
+            faults: self.payload.2.8.len(),
+            fault_profiles: self.payload.2.9.len(),
             schema_synthesized_outcomes: outcomes
                 .iter()
                 .filter(|outcome| outcome.provenance == OutcomeProvenance::SchemaSynthesized)
@@ -514,6 +600,92 @@ impl Artifact {
             .7
             .iter()
             .any(|record| self.string(record.0) == scenario)
+    }
+
+    /// Resolve an opaque scenario into the environmental fault for one operation.
+    #[must_use]
+    pub fn scenario_fault(&self, scenario: &str, operation: &str) -> Option<&str> {
+        self.payload
+            .2
+            .7
+            .iter()
+            .find(|record| self.string(record.0) == scenario)
+            .and_then(|record| {
+                record
+                    .2
+                    .iter()
+                    .find(|(key, _)| self.string(*key) == operation)
+            })
+            .map(|(_, fault)| self.string(*fault))
+    }
+
+    #[must_use]
+    pub fn fault(&self, name: &str) -> Option<ArtifactFault> {
+        self.payload
+            .2
+            .8
+            .iter()
+            .find(|record| self.string(record.0) == name)
+            .map(|record| ArtifactFault {
+                name: self.string(record.0).to_owned(),
+                phase: decode_fault_phase(record.1),
+                action: decode_fault_action(record.2, record.3),
+            })
+    }
+
+    pub fn faults(&self) -> impl Iterator<Item = ArtifactFault> + '_ {
+        self.payload.2.8.iter().map(|record| ArtifactFault {
+            name: self.string(record.0).to_owned(),
+            phase: decode_fault_phase(record.1),
+            action: decode_fault_action(record.2, record.3),
+        })
+    }
+
+    #[must_use]
+    pub fn fault_profile(&self, name: &str) -> Option<ArtifactFaultProfile> {
+        self.payload
+            .2
+            .9
+            .iter()
+            .find(|record| self.string(record.0) == name)
+            .map(|record| self.decode_fault_profile(record))
+    }
+
+    pub fn fault_profiles(&self) -> impl Iterator<Item = ArtifactFaultProfile> + '_ {
+        self.payload
+            .2
+            .9
+            .iter()
+            .map(|record| self.decode_fault_profile(record))
+    }
+
+    #[must_use]
+    pub fn has_fault_profile(&self, name: &str) -> bool {
+        self.payload
+            .2
+            .9
+            .iter()
+            .any(|record| self.string(record.0) == name)
+    }
+
+    fn decode_fault_profile(&self, record: &FaultProfileRecord) -> ArtifactFaultProfile {
+        ArtifactFaultProfile {
+            name: self.string(record.0).to_owned(),
+            probability_ppm: record.1,
+            faults: record
+                .2
+                .iter()
+                .map(|id| self.string(*id).to_owned())
+                .collect(),
+            operations: record
+                .3
+                .iter()
+                .map(|id| self.string(*id).to_owned())
+                .collect(),
+            max_consecutive: record.4,
+            cooldown_requests: record.5,
+            seed: record.6,
+        }
     }
 
     fn operation_at(&self, index: usize) -> ArtifactOperation<'_> {
@@ -702,6 +874,8 @@ struct ServiceRecord(
     u8,
     Vec<ProtocolErrorRecord>,
     Vec<ScenarioRecord>,
+    Vec<FaultRecord>,
+    Vec<FaultProfileRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -742,7 +916,25 @@ struct ConditionRecord(StringId, ValueId);
 struct ProtocolErrorRecord(StringId, Vec<u16>, Option<StringId>, Option<ValueId>, u8);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ScenarioRecord(StringId, Vec<(StringId, StringId)>);
+struct ScenarioRecord(
+    StringId,
+    Vec<(StringId, StringId)>,
+    Vec<(StringId, StringId)>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct FaultRecord(StringId, u8, u8, u64);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct FaultProfileRecord(
+    StringId,
+    u32,
+    Vec<StringId>,
+    Vec<StringId>,
+    u32,
+    u32,
+    Option<u64>,
+);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ResourceRecord(u8, StringId);
@@ -914,7 +1106,60 @@ impl Payload {
                         Ok((strings.id(operation.as_str())?, strings.id(outcome)?))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(ScenarioRecord(strings.id(&scenario.name)?, selections))
+                let faults = scenario
+                    .faults
+                    .iter()
+                    .map(|(operation_id, fault)| {
+                        let operation = operation_key_for_id(service, operation_id)?;
+                        Ok((strings.id(operation.as_str())?, strings.id(fault)?))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(ScenarioRecord(
+                    strings.id(&scenario.name)?,
+                    selections,
+                    faults,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let faults = service
+            .faults
+            .values()
+            .map(|fault| {
+                let (action, value) = encode_fault_action(&fault.action);
+                Ok(FaultRecord(
+                    strings.id(&fault.name)?,
+                    encode_fault_phase(fault.phase),
+                    action,
+                    value,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let fault_profiles = service
+            .fault_profiles
+            .values()
+            .map(|profile| {
+                let faults = profile
+                    .faults
+                    .iter()
+                    .map(|fault| strings.id(fault))
+                    .collect::<Result<Vec<_>>>()?;
+                let operations = profile
+                    .operations
+                    .iter()
+                    .map(|operation_id| {
+                        operation_key_for_id(service, operation_id)
+                            .and_then(|key| strings.id(key.as_str()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(FaultProfileRecord(
+                    strings.id(&profile.name)?,
+                    profile.probability_ppm,
+                    faults,
+                    operations,
+                    profile.max_consecutive,
+                    profile.cooldown_requests,
+                    profile.seed,
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
         let service_record = ServiceRecord(
@@ -926,6 +1171,8 @@ impl Payload {
             encode_heuristic_policy(service.heuristic_policy),
             protocol_errors,
             scenarios,
+            faults,
+            fault_profiles,
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -1068,6 +1315,17 @@ impl Payload {
         let values = self.4.len();
         let resources = self.5.len();
         let async_operations = self.6.len();
+        let operation_keys = self
+            .3
+            .iter()
+            .map(|operation| operation.0)
+            .collect::<BTreeSet<_>>();
+        let fault_names = self
+            .2
+            .8
+            .iter()
+            .map(|fault| fault.0)
+            .collect::<BTreeSet<_>>();
         validate_index(self.0, strings, "compiler version")?;
         validate_index(self.2.0, strings, "service title")?;
         validate_index(self.2.1, strings, "service version")?;
@@ -1095,6 +1353,54 @@ impl Payload {
             for (operation, outcome) in &scenario.1 {
                 validate_index(*operation, strings, "scenario operation")?;
                 validate_index(*outcome, strings, "scenario outcome")?;
+            }
+            for (operation, fault) in &scenario.2 {
+                validate_index(*operation, strings, "scenario fault operation")?;
+                validate_index(*fault, strings, "scenario fault")?;
+                if !operation_keys.contains(operation) {
+                    return Err(Error::Invalid("scenario fault operation reference"));
+                }
+                if !fault_names.contains(fault) {
+                    return Err(Error::Invalid("scenario fault reference"));
+                }
+            }
+        }
+        for fault in &self.2.8 {
+            validate_index(fault.0, strings, "fault name")?;
+            if fault.1 > 1 {
+                return Err(Error::Invalid("fault phase"));
+            }
+            if fault.2 > 1 {
+                return Err(Error::Invalid("fault action"));
+            }
+            if fault.1 != fault.2 {
+                return Err(Error::Invalid("fault phase and action"));
+            }
+            if (fault.2 == 0 && !(1..=86_400_000).contains(&fault.3))
+                || (fault.2 == 1 && fault.3 != 0)
+            {
+                return Err(Error::Invalid("fault action payload"));
+            }
+        }
+        for profile in &self.2.9 {
+            validate_index(profile.0, strings, "fault profile name")?;
+            if profile.1 == 0 || profile.1 > 1_000_000 || profile.2.is_empty() {
+                return Err(Error::Invalid("fault profile probability or faults"));
+            }
+            for fault in &profile.2 {
+                validate_index(*fault, strings, "fault profile fault")?;
+                if !fault_names.contains(fault) {
+                    return Err(Error::Invalid("fault profile fault reference"));
+                }
+            }
+            for operation in &profile.3 {
+                validate_index(*operation, strings, "fault profile operation")?;
+                if !operation_keys.contains(operation) {
+                    return Err(Error::Invalid("fault profile operation reference"));
+                }
+            }
+            if profile.4 == 0 {
+                return Err(Error::Invalid("fault profile maximum consecutive faults"));
             }
         }
 
@@ -1207,6 +1513,21 @@ impl Payload {
     }
 }
 
+fn operation_key_for_id<'a>(
+    service: &'a CompiledService,
+    operation_id: &str,
+) -> Result<&'a simile_spec::OperationKey> {
+    service
+        .operations
+        .iter()
+        .find(|(_, operation)| operation.contract.operation_id.as_deref() == Some(operation_id))
+        .map(|(key, _)| key)
+        .ok_or_else(|| Error::UnknownReference {
+            kind: "fault operation",
+            name: operation_id.to_owned(),
+        })
+}
+
 fn validate_outcome_bodies(
     operations: &[OperationRecord],
     values: &[ValueRecord],
@@ -1285,6 +1606,12 @@ fn audit_public_export(service: &CompiledService) -> Result<()> {
     }
     for scenario in service.scenarios.values() {
         audit_public_name(&scenario.name)?;
+    }
+    for fault in service.faults.values() {
+        audit_public_name(&fault.name)?;
+    }
+    for profile in service.fault_profiles.values() {
+        audit_public_name(&profile.name)?;
     }
     Ok(())
 }
@@ -1385,6 +1712,18 @@ impl StringTable {
                 values.insert(operation_id.clone());
                 values.insert(outcome.clone());
             }
+            for (operation_id, fault) in &scenario.faults {
+                values.insert(operation_id.clone());
+                values.insert(fault.clone());
+            }
+        }
+        for fault in service.faults.values() {
+            values.insert(fault.name.clone());
+        }
+        for profile in service.fault_profiles.values() {
+            values.insert(profile.name.clone());
+            values.extend(profile.faults.iter().cloned());
+            values.extend(profile.operations.iter().cloned());
         }
         for resource in service.resources.values() {
             values.insert(resource.name.clone());
@@ -1589,6 +1928,38 @@ fn decode_outcome_provenance(provenance: u8) -> OutcomeProvenance {
     }
 }
 
+const fn encode_fault_phase(phase: FaultPhase) -> u8 {
+    match phase {
+        FaultPhase::BeforeResponse => 0,
+        FaultPhase::AfterCommit => 1,
+    }
+}
+
+fn decode_fault_phase(phase: u8) -> FaultPhase {
+    match phase {
+        0 => FaultPhase::BeforeResponse,
+        1 => FaultPhase::AfterCommit,
+        _ => unreachable!("artifact validation rejects unknown fault phases"),
+    }
+}
+
+const fn encode_fault_action(action: &FaultAction) -> (u8, u64) {
+    match action {
+        FaultAction::Delay { milliseconds } => (0, *milliseconds),
+        FaultAction::Disconnect => (1, 0),
+    }
+}
+
+fn decode_fault_action(action: u8, value: u64) -> FaultAction {
+    match action {
+        0 => FaultAction::Delay {
+            milliseconds: value,
+        },
+        1 => FaultAction::Disconnect,
+        _ => unreachable!("artifact validation rejects unknown fault actions"),
+    }
+}
+
 const fn encode_resource_kind(kind: ResourceKind) -> u8 {
     match kind {
         ResourceKind::Db => 0,
@@ -1645,7 +2016,18 @@ mod tests {
                 "3.2.1".to_owned(),
                 "/orders".to_owned(),
             ],
-            ServiceRecord(1, 2, None, 3, 2, 2, Vec::new(), Vec::new()),
+            ServiceRecord(
+                1,
+                2,
+                None,
+                3,
+                2,
+                2,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
             vec![OperationRecord(
                 99,
                 2,
@@ -1668,6 +2050,42 @@ mod tests {
         assert!(matches!(
             payload.validate(),
             Err(Error::Invalid("operation key"))
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_incompatible_fault_records() {
+        let payload = Payload(
+            0,
+            vec![
+                "0.1.0".to_owned(),
+                "Orders".to_owned(),
+                "1.0.0".to_owned(),
+                "3.2.1".to_owned(),
+                "early_disconnect".to_owned(),
+            ],
+            ServiceRecord(
+                1,
+                2,
+                None,
+                3,
+                2,
+                2,
+                Vec::new(),
+                Vec::new(),
+                vec![FaultRecord(4, 0, 1, 0)],
+                Vec::new(),
+            ),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            SchemaCatalog::default(),
+        );
+
+        assert!(matches!(
+            payload.validate(),
+            Err(Error::Invalid("fault phase and action"))
         ));
     }
 }

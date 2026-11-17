@@ -128,6 +128,113 @@ resource "queue" "orders" {}
     assert_eq!(compiled.resources.len(), 1);
 }
 
+#[test]
+fn compiles_environmental_faults_separately_from_error_outcomes() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+fault "slow_response" {
+  phase = "before_response"
+  delay { milliseconds = 250 }
+}
+
+fault "response_lost" {
+  phase = "after_commit"
+  disconnect {}
+}
+
+fault_profile "rough_network" {
+  probability       = 0.02
+  faults            = ["slow_response", "response_lost"]
+  operations        = ["createOrder"]
+  max_consecutive   = 1
+  cooldown_requests = 20
+  seed              = 42
+}
+
+scenario "lost_after_commit" {
+  inject "createOrder" { fault = "response_lost" }
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(compiled.faults.len(), 2);
+    assert_eq!(
+        compiled.fault_profiles["rough_network"].probability_ppm,
+        20_000
+    );
+    assert_eq!(
+        compiled.scenarios["lost_after_commit"].faults["createOrder"],
+        "response_lost"
+    );
+}
+
+#[test]
+fn rejects_faults_that_are_unsafe_or_unresolvable() {
+    let incompatible = compile_error([module(
+        r#"
+fault "early_disconnect" {
+  phase = "before_response"
+  disconnect {}
+}
+"#,
+    )]);
+    assert!(incompatible.to_string().contains("incompatible phase"));
+
+    let unknown = compile_error([module(
+        r#"
+fault_profile "broken" {
+  probability = 0.1
+  faults      = ["missing"]
+}
+"#,
+    )]);
+    assert!(unknown.to_string().contains("unknown fault `missing`"));
+
+    let empty = parse_error(
+        r#"
+fault_profile "empty" {
+  probability = 0.1
+  faults      = []
+}
+"#,
+    );
+    assert!(empty.to_string().contains("non-empty array of strings"));
+
+    let duplicated = compile_error([module(
+        r#"
+fault "slow" {
+  phase = "before_response"
+  delay { milliseconds = 10 }
+}
+
+fault_profile "biased_by_accident" {
+  probability = 0.1
+  faults      = ["slow", "slow"]
+}
+"#,
+    )]);
+    assert!(duplicated.to_string().contains("more than once"));
+
+    let ambiguous = compile_error([module(
+        r#"
+fault "slow" {
+  phase = "before_response"
+  delay { milliseconds = 10 }
+}
+
+scenario "ambiguous" {
+  inject "createOrder" { fault = "slow" }
+  inject "createOrder" { fault = "slow" }
+}
+"#,
+    )]);
+    assert!(ambiguous.to_string().contains("more than once"));
+}
+
 fn module(source: &str) -> simile_hcl::Module {
     simile_hcl::parse(Source::new("test.hcl", source)).unwrap_or_else(|error| panic!("{error}"))
 }

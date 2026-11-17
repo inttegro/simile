@@ -40,6 +40,10 @@ pub fn execute(arguments: InspectArgs, terminal: &Terminal) -> Result<Status> {
                 report.underspecified_operations
             ))?;
             terminal.line(format_args!(
+                "{MUTED}faults{MUTED:#} {} definitions · {} profiles · {} scenario injections",
+                report.faults, report.fault_profiles, report.scenario_faults
+            ))?;
+            terminal.line(format_args!(
                 "{MUTED}export{MUTED:#} {}",
                 if report.public_export_safe {
                     "public-safe"

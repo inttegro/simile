@@ -121,6 +121,8 @@ fn compiles_a_service_contract_as_json() {
             "  \"hclBehaviors\": 1,\n",
             "  \"asyncOperations\": 1,\n",
             "  \"resources\": 1,\n",
+            "  \"faults\": 0,\n",
+            "  \"faultProfiles\": 0,\n",
             "  \"heuristicPolicy\": \"standard\"\n",
             "}\n"
         ))
@@ -430,8 +432,9 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "contract OpenAPI 3.2.1 · 1 operations\n",
                 "behavior 0 OpenAPI defaults · 1 HCL overlays\n",
                 "runtime 1 async operations · 1 resources\n",
+                "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 9 · [..] bytes\n",
+                "artifact {} · format 10 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -443,7 +446,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 9,\n",
+            "  \"formatVersion\": 10,\n",
             "  \"compilerVersion\": \"0.1.1\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -458,6 +461,9 @@ fn writes_and_inspects_a_compiled_artifact() {
             "  \"outcomes\": 1,\n",
             "  \"providerAuthoredOutcomes\": 0,\n",
             "  \"scenarioSelections\": 0,\n",
+            "  \"scenarioFaults\": 0,\n",
+            "  \"faults\": 0,\n",
+            "  \"faultProfiles\": 0,\n",
             "  \"schemaSynthesizedOutcomes\": 0,\n",
             "  \"underspecifiedOperations\": 0,\n",
             "  \"publicExportSafe\": true,\n",

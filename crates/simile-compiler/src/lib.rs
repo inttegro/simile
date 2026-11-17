@@ -100,6 +100,8 @@ impl Compiler {
             operations,
             protocol_errors: behaviors.protocol_errors,
             scenarios: behaviors.scenarios,
+            faults: behaviors.faults,
+            fault_profiles: behaviors.fault_profiles,
             resources: behaviors.resources,
             async_operations: behaviors.async_operations,
         })

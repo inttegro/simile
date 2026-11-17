@@ -96,6 +96,54 @@ pub enum Error {
     #[error("scenario `{name}` is declared more than once")]
     DuplicateScenario { name: String },
 
+    #[error("scenario `{scenario}` selects operationId `{operation_id}` more than once")]
+    DuplicateScenarioSelection {
+        scenario: String,
+        operation_id: String,
+    },
+
+    #[error(
+        "scenario `{scenario}` injects a fault into operationId `{operation_id}` more than once"
+    )]
+    DuplicateScenarioFault {
+        scenario: String,
+        operation_id: String,
+    },
+
+    #[error("fault `{name}` is declared more than once")]
+    DuplicateFault { name: String },
+
+    #[error("fault profile `{name}` is declared more than once")]
+    DuplicateFaultProfile { name: String },
+
+    #[error("fault profile `{profile}` lists fault `{fault}` more than once")]
+    DuplicateFaultProfileFault { profile: String, fault: String },
+
+    #[error("fault profile `{profile}` lists operationId `{operation_id}` more than once")]
+    DuplicateFaultProfileOperation {
+        profile: String,
+        operation_id: String,
+    },
+
+    #[error("{file}: fault `{fault}` must contain exactly one action block")]
+    FaultActionCount { file: String, fault: String },
+
+    #[error("fault `{fault}` uses action `{action}` at incompatible phase `{phase}`")]
+    IncompatibleFaultPhase {
+        fault: String,
+        action: &'static str,
+        phase: &'static str,
+    },
+
+    #[error("{owner} references unknown fault `{fault}`")]
+    UnknownFault { owner: String, fault: String },
+
+    #[error("fault profile `{profile}` references unknown OpenAPI operationId `{operation_id}`")]
+    UnknownFaultProfileOperation {
+        profile: String,
+        operation_id: String,
+    },
+
     #[error("async operation `{name}` is declared more than once")]
     DuplicateAsyncOperation { name: String },
 
@@ -125,6 +173,12 @@ pub enum Error {
 
     #[error("scenario `{scenario}` references unknown operationId `{operation_id}`")]
     UnknownScenarioOperation {
+        scenario: String,
+        operation_id: String,
+    },
+
+    #[error("scenario `{scenario}` injects a fault into unknown operationId `{operation_id}`")]
+    UnknownScenarioFaultOperation {
         scenario: String,
         operation_id: String,
     },

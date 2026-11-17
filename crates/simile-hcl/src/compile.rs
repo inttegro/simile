@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use simile_spec::{
-    ApiContract, AsyncOperation, Behavior, BehaviorSpec, ErrorSet, ErrorSetApplication, Outcome,
-    OutcomeProvenance, ProtocolError, Resource, Scenario,
+    ApiContract, AsyncOperation, Behavior, BehaviorSpec, ErrorSet, ErrorSetApplication, Fault,
+    FaultAction, FaultPhase, FaultProfile, Outcome, OutcomeProvenance, ProtocolError, Resource,
+    Scenario,
 };
 
 use crate::{Error, Module, Result};
@@ -21,11 +22,14 @@ pub fn compile(
         collect_error_set_applications(&mut spec, module.error_set_applications);
         collect_protocol_errors(&mut spec, module.protocol_errors)?;
         collect_behaviors(&mut spec, module.behaviors)?;
+        collect_faults(&mut spec, module.faults)?;
+        collect_fault_profiles(&mut spec, module.fault_profiles)?;
         collect_scenarios(&mut spec, module.scenarios)?;
     }
 
     validate_resources(&spec)?;
     validate_behaviors(&spec, api)?;
+    validate_faults(&spec, api)?;
     validate_scenarios(&spec, api)?;
     Ok(spec)
 }
@@ -194,17 +198,134 @@ fn collect_scenarios(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
-        let selections = declaration
-            .selections
-            .into_iter()
-            .map(|selection| (selection.operation_id, selection.outcome))
-            .collect::<BTreeMap<_, _>>();
+        let mut selections = BTreeMap::new();
+        for selection in declaration.selections {
+            if selections
+                .insert(selection.operation_id.clone(), selection.outcome)
+                .is_some()
+            {
+                return Err(Error::DuplicateScenarioSelection {
+                    scenario: name,
+                    operation_id: selection.operation_id,
+                });
+            }
+        }
+        let mut faults = BTreeMap::new();
+        for fault in declaration.faults {
+            if faults
+                .insert(fault.operation_id.clone(), fault.fault)
+                .is_some()
+            {
+                return Err(Error::DuplicateScenarioFault {
+                    scenario: name,
+                    operation_id: fault.operation_id,
+                });
+            }
+        }
         let scenario = Scenario {
             name: name.clone(),
             selections,
+            faults,
         };
         if spec.scenarios.insert(name.clone(), scenario).is_some() {
             return Err(Error::DuplicateScenario { name });
+        }
+    }
+    Ok(())
+}
+
+fn collect_faults(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::FaultDeclaration>,
+) -> Result<()> {
+    for declaration in declarations {
+        let name = declaration.name;
+        let fault = Fault {
+            name: name.clone(),
+            phase: declaration.phase,
+            action: declaration.action,
+        };
+        if spec.faults.insert(name.clone(), fault).is_some() {
+            return Err(Error::DuplicateFault { name });
+        }
+    }
+    Ok(())
+}
+
+fn collect_fault_profiles(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::FaultProfileDeclaration>,
+) -> Result<()> {
+    for declaration in declarations {
+        let name = declaration.name;
+        let profile = FaultProfile {
+            name: name.clone(),
+            probability_ppm: declaration.probability_ppm,
+            faults: declaration.faults,
+            operations: declaration.operations,
+            max_consecutive: declaration.max_consecutive,
+            cooldown_requests: declaration.cooldown_requests,
+            seed: declaration.seed,
+        };
+        if spec.fault_profiles.insert(name.clone(), profile).is_some() {
+            return Err(Error::DuplicateFaultProfile { name });
+        }
+    }
+    Ok(())
+}
+
+fn validate_faults(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
+    for fault in spec.faults.values() {
+        let compatible = matches!(
+            (&fault.phase, &fault.action),
+            (FaultPhase::BeforeResponse, FaultAction::Delay { .. })
+                | (FaultPhase::AfterCommit, FaultAction::Disconnect)
+        );
+        if !compatible {
+            let (phase, action) = match (&fault.phase, &fault.action) {
+                (FaultPhase::BeforeResponse, FaultAction::Disconnect) => {
+                    ("before_response", "disconnect")
+                }
+                (FaultPhase::AfterCommit, FaultAction::Delay { .. }) => ("after_commit", "delay"),
+                _ => unreachable!("all current fault phase/action pairs are covered"),
+            };
+            return Err(Error::IncompatibleFaultPhase {
+                fault: fault.name.clone(),
+                action,
+                phase,
+            });
+        }
+    }
+    for profile in spec.fault_profiles.values() {
+        let mut fault_names = BTreeSet::new();
+        for fault in &profile.faults {
+            if !fault_names.insert(fault) {
+                return Err(Error::DuplicateFaultProfileFault {
+                    profile: profile.name.clone(),
+                    fault: fault.clone(),
+                });
+            }
+            if !spec.faults.contains_key(fault) {
+                return Err(Error::UnknownFault {
+                    owner: format!("fault profile `{}`", profile.name),
+                    fault: fault.clone(),
+                });
+            }
+        }
+        let mut operation_ids = BTreeSet::new();
+        for operation_id in &profile.operations {
+            if !operation_ids.insert(operation_id) {
+                return Err(Error::DuplicateFaultProfileOperation {
+                    profile: profile.name.clone(),
+                    operation_id: operation_id.clone(),
+                });
+            }
+            if api.operation_by_id(operation_id).is_none() {
+                return Err(Error::UnknownFaultProfileOperation {
+                    profile: profile.name.clone(),
+                    operation_id: operation_id.clone(),
+                });
+            }
         }
     }
     Ok(())
@@ -317,6 +438,20 @@ fn validate_scenarios(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
                 return Err(Error::UnknownScenarioOperation {
                     scenario: scenario.name.clone(),
                     operation_id: operation_id.clone(),
+                });
+            }
+        }
+        for (operation_id, fault) in &scenario.faults {
+            if api.operation_by_id(operation_id).is_none() {
+                return Err(Error::UnknownScenarioFaultOperation {
+                    scenario: scenario.name.clone(),
+                    operation_id: operation_id.clone(),
+                });
+            }
+            if !spec.faults.contains_key(fault) {
+                return Err(Error::UnknownFault {
+                    owner: format!("scenario `{}`", scenario.name),
+                    fault: fault.clone(),
                 });
             }
         }

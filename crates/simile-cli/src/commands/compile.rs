@@ -35,6 +35,10 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
                 report.async_operations, report.resources
             ))?;
             terminal.line(format_args!(
+                "{MUTED}faults{MUTED:#} {} definitions · {} profiles",
+                report.faults, report.fault_profiles
+            ))?;
+            terminal.line(format_args!(
                 "{MUTED}heuristics{MUTED:#} {}",
                 report.heuristic_policy
             ))?;

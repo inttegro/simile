@@ -5,8 +5,9 @@ mod contract;
 
 pub use behavior::{
     AsyncOperation, Behavior, BehaviorOrigin, BehaviorSpec, CompiledOperation, CompiledService,
-    ErrorSet, ErrorSetApplication, Outcome, OutcomeCondition, OutcomeProvenance, ProtocolError,
-    Resource, ResourceKind, ResourceRef, Scenario,
+    ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase, FaultProfile, Outcome,
+    OutcomeCondition, OutcomeProvenance, ProtocolError, Resource, ResourceKind, ResourceRef,
+    Scenario,
 };
 pub use contract::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,

@@ -1,5 +1,5 @@
 use serde_json::Value;
-use simile_spec::{OutcomeCondition, ResourceKind, ResourceRef};
+use simile_spec::{FaultAction, FaultPhase, OutcomeCondition, ResourceKind, ResourceRef};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Source<'a> {
@@ -69,12 +69,37 @@ pub struct ProtocolErrorDeclaration {
 pub struct ScenarioDeclaration {
     pub name: String,
     pub selections: Vec<ScenarioSelectionDeclaration>,
+    pub faults: Vec<ScenarioFaultDeclaration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScenarioSelectionDeclaration {
     pub operation_id: String,
     pub outcome: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScenarioFaultDeclaration {
+    pub operation_id: String,
+    pub fault: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FaultDeclaration {
+    pub name: String,
+    pub phase: FaultPhase,
+    pub action: FaultAction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FaultProfileDeclaration {
+    pub name: String,
+    pub probability_ppm: u32,
+    pub faults: Vec<String>,
+    pub operations: Vec<String>,
+    pub max_consecutive: u32,
+    pub cooldown_requests: u32,
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +117,8 @@ pub struct Module {
     pub error_set_applications: Vec<ErrorSetApplicationDeclaration>,
     pub protocol_errors: Vec<ProtocolErrorDeclaration>,
     pub scenarios: Vec<ScenarioDeclaration>,
+    pub faults: Vec<FaultDeclaration>,
+    pub fault_profiles: Vec<FaultProfileDeclaration>,
     pub async_operations: Vec<AsyncDeclaration>,
 }
 
