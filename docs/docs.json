@@ -1,6 +1,6 @@
 {
 	"$schema": "https://mintlify.com/docs.json",
-	"theme": "willow",
+	"theme": "luma",
 	"name": "Simile",
 	"description": "Run faithful service emulators locally and in CI.",
 	"colors": {
