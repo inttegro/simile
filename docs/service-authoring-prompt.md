@@ -114,6 +114,17 @@ Constraint rules:
 - If a relationship is not part of the public contract, do not publish it.
 - A constraint must support both proof and construction. Do not add inert annotations.
 
+For operation results, add `x-simile-from-request` to a response media type whenever standalone
+request and response schemas are not enough to prove reachability. Declare only public behavior:
+
+- bind caller-owned values to their response paths;
+- derive public totals and other deterministic response values;
+- use guarded rules for lifecycle states controlled by request fields and their documented defaults;
+- omit optional response data that the selected request flow cannot produce; and
+- never encode private decision trees merely to make synthesis more specific.
+
+See [Request-response relations](/request-response-relations) for the executable grammar.
+
 Simile HCL requirements
 
 HCL is optional and additive. Do not duplicate routes, schemas, or response definitions already owned by OpenAPI.
@@ -259,5 +270,6 @@ The finished contract should be useful without HCL, faithful without exposing in
 ````
 
 Read [OpenAPI and HCL](/openapi-and-hcl) for the source-ownership model,
-[OpenAPI extensions](/openapi-extensions) for the supported constraint vocabulary, and
+[OpenAPI extensions](/openapi-extensions) for the supported constraint vocabulary,
+[Request-response relations](/request-response-relations) for cross-message reachability, and
 [Service configuration](/service-configuration) for the configuration grammar.

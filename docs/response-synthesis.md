@@ -49,10 +49,10 @@ seeded synthesis entry point reproduces a generated response when a test needs e
 
 This spec-only path is the baseline and works without request context.
 
-## Request-aware values
+## Request-aware proof
 
 When the caller supplies a body already returned by `validate_request_body`, response synthesis may
-project values from it. Projection is deliberately structural:
+project values from it. The baseline projection is deliberately structural:
 
 - only fields declared at the same path in the response are considered;
 - a value is copied only when the response field schema accepts it;
@@ -68,6 +68,17 @@ response synthesis.
 For example, if both request and response declare compatible `/product` and `/quantity` fields,
 those values can be copied into the generated response. A generated `/id` remains intact. A
 request-only secret marked `writeOnly` never enters the response graph.
+
+Structural projection improves a response but does not prove that it is an operationally reachable
+result. A provider establishes that stronger claim by declaring `x-simile-from-request` on the
+response media type. The compiled relation can bind differently nested fields, derive totals,
+apply request-controlled lifecycle rules, and exclude optional data that cannot appear in that
+flow. Simile applies the relation after synthesis, repairs response-local constraints, reapplies the
+authoritative request values, validates the complete response, and finally proves the relation.
+
+The runtime exposes the distinction as `ResponseSoundness::SchemaOnly` or
+`ResponseSoundness::RequestConstrained`. Read
+[Request-response relations](/request-response-relations) for the authoring language.
 
 Form, multipart, and non-JSON response encoders are outside the current slice. Declared non-JSON
 content produces an explicit unsupported-encoder error rather than unverified bytes.

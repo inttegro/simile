@@ -18,7 +18,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 10);
+    assert_eq!(summary.format_version, 11);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -347,6 +347,7 @@ fn example_service() -> CompiledService {
                     })),
                     example: None,
                     examples: BTreeMap::new(),
+                    request_relation: None,
                 },
             )]),
         }),
@@ -381,6 +382,7 @@ fn example_service() -> CompiledService {
                         })),
                         example: None,
                         examples: BTreeMap::new(),
+                        request_relation: None,
                     },
                 )]),
             }),

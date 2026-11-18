@@ -2,7 +2,8 @@ use serde_json::json;
 use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
-    Error, IncomingBody, ResponseSynthesisRequest, synthesize_response, validate_request_body,
+    Error, IncomingBody, ResponseSoundness, ResponseSynthesisRequest, synthesize_response,
+    synthesize_response_with_seed, validate_request_body,
 };
 
 #[test]
@@ -22,6 +23,7 @@ fn synthesizes_a_valid_response_without_request_context() {
 
     assert_eq!(response.status(), 201);
     assert_eq!(response.media_type(), Some("application/json"));
+    assert_eq!(response.soundness(), ResponseSoundness::SchemaOnly);
     assert!(
         response
             .value()
@@ -136,6 +138,277 @@ fn carries_compatible_request_values_into_the_response() {
     assert!(value["id"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(value["status"], "pending");
     assert!(value.get("secret").is_none());
+}
+
+#[test]
+fn proves_an_order_response_is_reachable_from_its_request() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders/create:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              x-simile-from-request:
+                bindings:
+                  - { from: /customer_id, to: /order/customer/id }
+                  - { from: /number, to: /order/number }
+                  - { from: /line_items, to: /order/line_item_group/line_items }
+                  - { from: /line_items/*/product/price/currency, to: /order/line_item_group/total/currency }
+                  - to: /order/line_item_group/total/value
+                    value:
+                      sum:
+                        each: /line_items/*
+                        value:
+                          multiply:
+                            - { path: /product/quantity }
+                            - { path: /product/price/value }
+                rules:
+                  - when:
+                      all:
+                        - { request: /execute_payment, equals: false, default: false }
+                        - { request: /finalize, equals: true, default: false }
+                    then:
+                      set: { /order/status: requires_payment }
+                      omit: [/order/paid_at, /order/refunds]
+components:
+  schemas:
+    Money:
+      type: object
+      additionalProperties: false
+      required: [currency, value]
+      properties:
+        currency: { type: string, enum: [ghs] }
+        value: { type: integer, minimum: 0 }
+    InputProduct:
+      type: object
+      additionalProperties: false
+      required: [name, quantity, price]
+      properties:
+        name: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        price: { $ref: '#/components/schemas/Money' }
+    InputLineItem:
+      type: object
+      additionalProperties: false
+      required: [type, product]
+      properties:
+        type: { type: string, enum: [product] }
+        product: { $ref: '#/components/schemas/InputProduct' }
+    CreateOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [customer_id, number, finalize, line_items]
+      properties:
+        customer_id: { type: string, pattern: '^cu_[a-z0-9]{16}$' }
+        number: { type: string }
+        finalize: { type: boolean }
+        execute_payment: { type: boolean, default: false }
+        line_items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/InputLineItem' }
+    OutputProduct:
+      type: object
+      additionalProperties: false
+      required: [id, name, quantity, price]
+      properties:
+        id: { type: string, pattern: '^oli_[a-z0-9]{16}$' }
+        name: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        price: { $ref: '#/components/schemas/Money' }
+    OutputLineItem:
+      type: object
+      additionalProperties: false
+      required: [type, product]
+      properties:
+        type: { type: string, enum: [product] }
+        product: { $ref: '#/components/schemas/OutputProduct' }
+    OrderResponse:
+      type: object
+      additionalProperties: false
+      required: [order]
+      properties:
+        order:
+          type: object
+          additionalProperties: false
+          required: [id, customer, number, status, initiated_at, line_item_group]
+          x-simile-constraints:
+            - implies:
+                when: { path: /status, equals: requires_payment }
+                then:
+                  all:
+                    - { path: /sealed_at, state: non-null }
+                    - { path: /paid_at, state: absent }
+          properties:
+            id: { type: string, pattern: '^or_[a-z0-9]{16}$' }
+            customer:
+              type: object
+              additionalProperties: false
+              required: [id]
+              properties:
+                id: { type: string, pattern: '^cu_[a-z0-9]{16}$' }
+            number: { type: string }
+            status: { type: string, enum: [draft, requires_payment, paid] }
+            initiated_at: { type: string, format: date-time }
+            sealed_at: { type: string, format: date-time }
+            paid_at: { type: string, format: date-time }
+            refunds:
+              type: array
+              items:
+                type: object
+                required: [id]
+                properties: { id: { type: string } }
+            line_item_group:
+              type: object
+              additionalProperties: false
+              required: [line_items, total]
+              properties:
+                line_items:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/OutputLineItem' }
+                total: { $ref: '#/components/schemas/Money' }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /orders/create",
+            content_type: Some("application/json"),
+            bytes: br#"{
+                "customer_id": "cu_0123456789abcdef",
+                "number": "ORDER-2026-0042",
+                "finalize": true,
+                "line_items": [
+                    {"type":"product","product":{"name":"Cocoa butter","quantity":2,"price":{"currency":"ghs","value":1250}}},
+                    {"type":"product","product":{"name":"Body oil","quantity":3,"price":{"currency":"ghs","value":500}}}
+                ]
+            }"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    for seed in 0..64 {
+        let response = synthesize_response_with_seed(
+            &artifact,
+            ResponseSynthesisRequest {
+                operation: "POST /orders/create",
+                status: Some(200),
+                content_type: Some("application/json"),
+                request_body: Some(&request),
+                body: None,
+            },
+            seed,
+        )
+        .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        let order = &response
+            .value()
+            .unwrap_or_else(|| panic!("response body should be present"))["order"];
+        assert_eq!(order["status"], "requires_payment");
+        assert!(order.get("sealed_at").is_some());
+        assert!(order.get("paid_at").is_none());
+    }
+
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /orders/create",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            body: None,
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let order = &response
+        .value()
+        .unwrap_or_else(|| panic!("response body should be present"))["order"];
+
+    assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+    assert_eq!(order["customer"]["id"], "cu_0123456789abcdef");
+    assert_eq!(order["number"], "ORDER-2026-0042");
+    assert_eq!(order["status"], "requires_payment");
+    assert_eq!(
+        order["line_item_group"]["total"],
+        json!({"currency":"ghs","value":4000})
+    );
+    assert_eq!(
+        order["line_item_group"]["line_items"][0]["product"]["name"],
+        "Cocoa butter"
+    );
+    assert_eq!(
+        order["line_item_group"]["line_items"][0]["product"]["quantity"],
+        2
+    );
+    assert!(
+        order["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("or_") && id.len() == 19)
+    );
+    assert!(
+        order["line_item_group"]["line_items"]
+            .as_array()
+            .is_some_and(|items| {
+                items.iter().all(|item| {
+                    item["product"]["id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("oli_") && id.len() == 20)
+                })
+            })
+    );
+    assert!(order.get("paid_at").is_none());
+    assert!(order.get("refunds").is_none());
+
+    let impossible = json!({
+        "order": {
+            "id": "or_0123456789abcdef",
+            "customer": {"id": "cu_ffffffffffffffff"},
+            "number": "RANDOM-ORDER",
+            "status": "paid",
+            "initiated_at": "2026-11-18T11:59:00Z",
+            "paid_at": "2026-11-18T12:00:00Z",
+            "refunds": [{"id": "re_unrelated"}],
+            "line_item_group": {
+                "line_items": [{"type":"product","product":{"id":"oli_0123456789abcdef","name":"Random","quantity":1,"price":{"currency":"ghs","value":1}}}],
+                "total": {"currency":"ghs","value":1}
+            }
+        }
+    });
+    let repaired = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /orders/create",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            body: Some(&impossible),
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let repaired_order = &repaired
+        .value()
+        .unwrap_or_else(|| panic!("response body should be present"))["order"];
+    assert_eq!(repaired_order["status"], "requires_payment");
+    assert_eq!(repaired_order["number"], "ORDER-2026-0042");
+    assert!(repaired_order.get("paid_at").is_none());
+    assert!(repaired_order.get("refunds").is_none());
 }
 
 #[test]

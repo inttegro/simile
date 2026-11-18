@@ -36,6 +36,7 @@
 						"group": "OpenAPI extensions",
 						"pages": [
 							"openapi-extensions",
+							"request-response-relations",
 							"constraint-mechanics",
 							"constraint-value-relationships",
 							"constraint-conditional-derived",

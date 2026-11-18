@@ -2,6 +2,7 @@
 
 mod compile;
 mod error;
+mod relation;
 mod soundness;
 mod synthesize;
 mod validate;
@@ -81,6 +82,8 @@ struct MediaTypePlan {
     schema: Option<SchemaRef>,
     #[serde(rename = "e", skip_serializing_if = "Option::is_none")]
     example: Option<Value>,
+    #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
+    relation: Option<relation::Plan>,
 }
 
 fn select_media<'a>(
@@ -109,6 +112,7 @@ fn select_media<'a>(
             declared,
             schema: plan.schema,
             example: plan.example.as_ref(),
+            relation: plan.relation.as_ref(),
         })
 }
 
@@ -118,9 +122,14 @@ fn content_is_well_formed(
 ) -> bool {
     !content.is_empty()
         && content.keys().all(|media_type| !media_type.is_empty())
-        && content
-            .values()
-            .all(|media| media.schema.is_none_or(|schema| schemas.contains(schema)))
+        && content.values().all(|media| {
+            media.schema.is_none_or(|schema| schemas.contains(schema))
+                && media.relation.as_ref().is_none_or(|relation| {
+                    media
+                        .schema
+                        .is_some_and(|schema| relation.is_well_formed(schemas, schema))
+                })
+        })
 }
 
 /// The declared media type and optional schema selected for an incoming body.
@@ -130,6 +139,7 @@ pub struct SelectedMediaType<'a> {
     declared: &'a str,
     schema: Option<SchemaRef>,
     example: Option<&'a Value>,
+    relation: Option<&'a relation::Plan>,
 }
 
 impl<'a> SelectedMediaType<'a> {
@@ -146,6 +156,10 @@ impl<'a> SelectedMediaType<'a> {
     #[must_use]
     const fn schema(&self) -> Option<SchemaRef> {
         self.schema
+    }
+
+    const fn relation(&self) -> Option<&'a relation::Plan> {
+        self.relation
     }
 }
 
@@ -228,6 +242,12 @@ impl<'a> BoundMediaType<'a> {
             .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
     }
 
+    /// Whether this response media type declares a compiled request-to-response proof plan.
+    #[must_use]
+    pub const fn is_request_constrained(&self) -> bool {
+        self.selected.relation().is_some()
+    }
+
     /// Produce a deterministic JSON value proven sound by this media type's compiled contract.
     pub fn synthesize(&self) -> std::result::Result<Value, SynthesisError> {
         if let Some(example) = self.selected.example {
@@ -265,10 +285,7 @@ impl<'a> BoundMediaType<'a> {
     /// Synthesize a valid value and project compatible fields from a request body.
     pub fn synthesize_from(&self, request: &Value) -> std::result::Result<Value, SynthesisError> {
         let baseline = self.synthesize()?;
-        Ok(match self.selected.schema() {
-            Some(schema) => self.schemas.project(schema, &baseline, request),
-            None => baseline,
-        })
+        self.project_from(baseline, request, true)
     }
 
     /// Produce a representative valid value and project compatible request fields into it.
@@ -277,10 +294,7 @@ impl<'a> BoundMediaType<'a> {
         request: &Value,
     ) -> std::result::Result<Value, SynthesisError> {
         let baseline = self.synthesize_representative()?;
-        Ok(match self.selected.schema() {
-            Some(schema) => self.schemas.project(schema, &baseline, request),
-            None => baseline,
-        })
+        self.project_from(baseline, request, true)
     }
 
     /// Produce a varying valid value and project compatible request fields into it.
@@ -289,11 +303,54 @@ impl<'a> BoundMediaType<'a> {
         request: &Value,
         seed: u64,
     ) -> std::result::Result<Value, SynthesisError> {
-        let baseline = self.synthesize_fuzz(seed)?;
-        Ok(match self.selected.schema() {
-            Some(schema) => self.schemas.project(schema, &baseline, request),
-            None => baseline,
-        })
+        let baseline = if self.selected.relation().is_some() {
+            self.selected.schema().map_or_else(
+                || Ok(Value::Object(serde_json::Map::new())),
+                |schema| self.schemas.synthesize_fuzz_minimal(schema, seed),
+            )?
+        } else {
+            self.synthesize_fuzz(seed)?
+        };
+        self.project_from(baseline, request, true)
+    }
+
+    /// Apply only explicitly declared request relations to a provider-authored exact body.
+    pub fn project_exact_from(
+        &self,
+        body: &Value,
+        request: &Value,
+    ) -> std::result::Result<Value, SynthesisError> {
+        self.project_from(body.clone(), request, false)
+    }
+
+    fn project_from(
+        &self,
+        baseline: Value,
+        request: &Value,
+        project_same_paths: bool,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let Some(schema) = self.selected.schema() else {
+            return Ok(baseline);
+        };
+        let mut candidate = if project_same_paths {
+            self.schemas.project(schema, &baseline, request)
+        } else {
+            baseline
+        };
+        let Some(relation) = self.selected.relation() else {
+            return Ok(candidate);
+        };
+        relation.apply(self.schemas, schema, request, &mut candidate)?;
+        // Why: response-local equations and implications may depend on a projected field; repair
+        // them before proving the cross-message relation, then reapply the authoritative request.
+        self.schemas.establish(schema, &mut candidate);
+        relation.apply(self.schemas, schema, request, &mut candidate)?;
+        let issues = self.schemas.validate(schema, &candidate);
+        if !issues.is_empty() {
+            return Err(SynthesisError::Exhausted { issues });
+        }
+        relation.prove(request, &candidate)?;
+        Ok(candidate)
     }
 }
 
@@ -391,6 +448,8 @@ struct SchemaNode {
     hint: Option<Value>,
     #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    #[serde(rename = "P", skip_serializing_if = "Option::is_none")]
+    pattern: Option<String>,
     #[serde(rename = "p", skip_serializing_if = "BTreeMap::is_empty")]
     properties: BTreeMap<String, SchemaId>,
     #[serde(rename = "r", skip_serializing_if = "BTreeSet::is_empty")]
@@ -442,6 +501,7 @@ impl Default for SchemaNode {
             const_value: None,
             hint: None,
             format: None,
+            pattern: None,
             properties: BTreeMap::new(),
             required: BTreeSet::new(),
             additional: AdditionalProperties::Allow,

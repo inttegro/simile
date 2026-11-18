@@ -57,9 +57,75 @@ impl<'a> BodySchemaCompiler<'a> {
     }
 
     pub fn compile_response(&mut self, body: &ResponseBodyContract) -> Result<ResponseBodyPlan> {
-        let content =
-            self.compile_content(&body.content, "responseBody", SchemaDirection::Response)?;
+        self.compile_response_for(body, None)
+    }
+
+    /// Compile a response body together with any public request-to-response relation.
+    pub fn compile_response_for(
+        &mut self,
+        body: &ResponseBodyContract,
+        request: Option<&RequestBodyPlan>,
+    ) -> Result<ResponseBodyPlan> {
+        let content = self.compile_response_content(&body.content, request)?;
         Ok(ResponseBodyPlan { content })
+    }
+
+    fn compile_response_content(
+        &mut self,
+        content: &BTreeMap<String, simile_spec::MediaTypeContract>,
+        request: Option<&RequestBodyPlan>,
+    ) -> Result<BTreeMap<String, MediaTypePlan>> {
+        content
+            .iter()
+            .map(|(media_type, contract)| {
+                let field = format!("responseBody.{media_type}");
+                let schema = contract
+                    .schema
+                    .as_ref()
+                    .map(|schema| {
+                        self.compile_schema(
+                            schema,
+                            &format!("{field}.schema"),
+                            SchemaDirection::Response,
+                        )
+                        .map(SchemaRef)
+                    })
+                    .transpose()?;
+                let relation = contract
+                    .request_relation
+                    .as_ref()
+                    .map(|definition| {
+                        let response_schema =
+                            schema.ok_or_else(|| CompileError::InvalidConstraint {
+                                field: format!("{field}.x-simile-from-request"),
+                                reason: "a request relation requires a response schema".to_owned(),
+                            })?;
+                        let request_schema = request
+                            .and_then(|request| request.select(media_type))
+                            .and_then(|selected| selected.schema())
+                            .ok_or_else(|| CompileError::InvalidConstraint {
+                                field: format!("{field}.x-simile-from-request"),
+                                reason: "a request relation requires a compatible request media type with a schema".to_owned(),
+                            })?;
+                        crate::relation::Plan::compile(
+                            definition,
+                            request_schema,
+                            response_schema,
+                            &self.structural_catalog()?,
+                            &format!("{field}.x-simile-from-request"),
+                        )
+                    })
+                    .transpose()?;
+                Ok((
+                    media_type.to_ascii_lowercase(),
+                    MediaTypePlan {
+                        schema,
+                        example: contract.example.clone(),
+                        relation,
+                    },
+                ))
+            })
+            .collect()
     }
 
     fn compile_content(
@@ -84,6 +150,7 @@ impl<'a> BodySchemaCompiler<'a> {
                     MediaTypePlan {
                         schema,
                         example: contract.example.clone(),
+                        relation: None,
                     },
                 ))
             })
@@ -109,6 +176,15 @@ impl<'a> BodySchemaCompiler<'a> {
             node.constraints = compiled;
         }
         Ok(catalog)
+    }
+
+    fn structural_catalog(&self) -> Result<SchemaCatalog> {
+        self.nodes
+            .iter()
+            .cloned()
+            .map(|node| node.ok_or(CompileError::IncompleteNode))
+            .collect::<Result<Vec<_>>>()
+            .map(|nodes| SchemaCatalog { nodes })
     }
 
     fn compile_schema(
@@ -246,6 +322,7 @@ impl<'a> BodySchemaCompiler<'a> {
             const_value: schema.get("const").cloned(),
             hint: schema_hint(schema),
             format: optional_string(schema, "format", field)?.map(str::to_owned),
+            pattern: compile_pattern(schema, field)?,
             properties: self.properties(schema, field, direction)?,
             required: self.direction_required(schema, field, direction)?,
             additional: self.additional_properties(schema, field, direction)?,
@@ -458,6 +535,17 @@ impl<'a> BodySchemaCompiler<'a> {
     fn fill(&mut self, id: SchemaId, node: SchemaNode) {
         self.nodes[id as usize] = Some(node);
     }
+}
+
+fn compile_pattern(schema: &Map<String, Value>, field: &str) -> Result<Option<String>> {
+    let Some(pattern) = optional_string(schema, "pattern", field)? else {
+        return Ok(None);
+    };
+    regress::Regex::new(pattern).map_err(|error| CompileError::InvalidFieldValue {
+        field: format!("{field}.pattern"),
+        reason: error.to_string(),
+    })?;
+    Ok(Some(pattern.to_owned()))
 }
 
 fn component_name(reference: &str) -> Option<String> {

@@ -10,6 +10,9 @@ pub enum CompileError {
         expected: &'static str,
     },
 
+    #[error("schema `{field}` is invalid: {reason}")]
+    InvalidFieldValue { field: String, reason: String },
+
     #[error("schema `{field}` uses unsupported reference `{reference}`")]
     UnsupportedReference { field: String, reference: String },
 

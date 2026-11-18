@@ -11,6 +11,8 @@ publish = false
 
 [dependencies]
 rand.workspace = true
+rand_regex.workspace = true
+regress.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 simile-heuristics.workspace = true

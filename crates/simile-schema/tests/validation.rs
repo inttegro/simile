@@ -72,6 +72,58 @@ fn enforces_combinators_and_openapi_30_nullable() {
 }
 
 #[test]
+fn compiles_validates_and_synthesizes_openapi_patterns() {
+    let (id_plan, id_schemas) = plan(
+        json!({"type": "string", "pattern": "^or_[a-z0-9]{16}$"}),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&id_plan, &id_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert_eq!(
+        media.validate(&json!("wrong"))[0].rule,
+        ValidationRule::Pattern
+    );
+    for seed in 0..32 {
+        let value = media
+            .synthesize_fuzz(seed)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let id = value
+            .as_str()
+            .unwrap_or_else(|| panic!("pattern should synthesize a string"));
+        assert!(id.starts_with("or_"));
+        assert_eq!(id.len(), 19);
+        assert!(
+            id[3..]
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        );
+        assert!(media.validate(&value).is_empty());
+    }
+
+    let error = compile_error(json!({"type": "string", "pattern": "["}));
+    assert!(error.contains("pattern"));
+
+    // OpenAPI patterns use the ECMA-262 dialect, which includes lookarounds that Rust's native
+    // regex dialect intentionally omits.
+    let (plan, schemas) = plan(
+        json!({"type": "string", "pattern": "^(?!bad$)[a-z]+$"}),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    assert!(media.validate(&json!("good")).is_empty());
+    assert_eq!(
+        media.validate(&json!("bad"))[0].rule,
+        ValidationRule::Pattern
+    );
+}
+
+#[test]
 fn matches_content_type_parameters_and_wildcards() {
     let body = RequestBodyContract {
         required: false,
@@ -82,6 +134,7 @@ fn matches_content_type_parameters_and_wildcards() {
                     schema: None,
                     example: None,
                     examples: BTreeMap::new(),
+                    request_relation: None,
                 },
             ),
             (
@@ -90,6 +143,7 @@ fn matches_content_type_parameters_and_wildcards() {
                     schema: None,
                     example: None,
                     examples: BTreeMap::new(),
+                    request_relation: None,
                 },
             ),
         ]),
@@ -130,6 +184,7 @@ fn shares_component_nodes_across_request_bodies() {
                 schema: Some(json!({"$ref": "#/components/schemas/Customer"})),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -235,6 +290,7 @@ fn projects_compatible_request_values_without_reflecting_write_only_fields() {
                 })),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -263,6 +319,7 @@ fn projects_compatible_request_values_without_reflecting_write_only_fields() {
                 })),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -319,6 +376,7 @@ fn rejects_empty_type_arrays() {
                 schema: Some(json!({"type": []})),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -843,6 +901,7 @@ fn response_synthesis_is_proven_against_ordered_relationships() {
                 })),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -908,6 +967,7 @@ fn response_synthesis_is_proven_against_derived_relationships() {
                 })),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -1821,6 +1881,7 @@ fn compile_error(schema: serde_json::Value) -> String {
                 schema: Some(schema),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -1848,6 +1909,7 @@ fn plan(
                 schema: Some(schema),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };
@@ -1868,6 +1930,7 @@ fn plan_with_policy(schema: serde_json::Value, policy: Policy) -> (RequestBodyPl
                 schema: Some(schema),
                 example: None,
                 examples: BTreeMap::new(),
+                request_relation: None,
             },
         )]),
     };

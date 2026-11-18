@@ -4,18 +4,18 @@ use serde_json::{Map, Value};
 
 use crate::{SchemaCatalog, SchemaId};
 
-pub(super) struct ResolvedProperty {
+pub(crate) struct ResolvedProperty {
     pub schema: SchemaId,
     pub required: bool,
 }
 
-pub(super) struct ResolvedSelector {
+pub(crate) struct ResolvedSelector {
     pub schema: SchemaId,
     pub required: bool,
     pub multiple: bool,
 }
 
-pub(super) struct SelectedValue<'a> {
+pub(crate) struct SelectedValue<'a> {
     pub pointer: String,
     pub value: &'a Value,
 }
@@ -26,7 +26,7 @@ enum SelectorSegment {
     Each,
 }
 
-pub(super) fn resolve_property(
+pub(crate) fn resolve_property(
     catalog: &SchemaCatalog,
     root: SchemaId,
     pointer: &str,
@@ -41,7 +41,7 @@ pub(super) fn resolve_property(
     })
 }
 
-pub(super) fn resolve_selector(
+pub(crate) fn resolve_selector(
     catalog: &SchemaCatalog,
     root: SchemaId,
     selector: &str,
@@ -68,7 +68,7 @@ pub(super) fn resolve_selector(
     })
 }
 
-pub(super) fn resolve_selector_syntax(selector: &str) -> std::result::Result<(), String> {
+pub(crate) fn resolve_selector_syntax(selector: &str) -> std::result::Result<(), String> {
     selector_segments(selector).map(|_| ())
 }
 
@@ -76,14 +76,14 @@ pub(super) fn item_schema(catalog: &SchemaCatalog, id: SchemaId) -> Option<Schem
     items(catalog, id, &mut BTreeSet::new())
 }
 
-pub(super) fn select<'a>(value: &'a Value, selector: &str) -> Option<Vec<SelectedValue<'a>>> {
+pub(crate) fn select<'a>(value: &'a Value, selector: &str) -> Option<Vec<SelectedValue<'a>>> {
     let segments = selector_segments(selector).ok()?;
     let mut selected = Vec::new();
     select_inner(value, &segments, "", &mut selected);
     Some(selected)
 }
 
-pub(super) fn apply(value: &mut Value, pointer: &str, replacement: Value) -> bool {
+pub(crate) fn apply(value: &mut Value, pointer: &str, replacement: Value) -> bool {
     if let Some(target) = value.pointer_mut(pointer) {
         *target = replacement;
         return true;
@@ -110,7 +110,7 @@ pub(super) fn apply(value: &mut Value, pointer: &str, replacement: Value) -> boo
     true
 }
 
-pub(super) fn remove(value: &mut Value, pointer: &str) -> bool {
+pub(crate) fn remove(value: &mut Value, pointer: &str) -> bool {
     let Ok(mut segments) = segments(pointer) else {
         return false;
     };
@@ -132,7 +132,7 @@ pub(super) fn remove(value: &mut Value, pointer: &str) -> bool {
         .is_some_and(|object| object.remove(&property).is_some())
 }
 
-pub(super) fn segments(pointer: &str) -> std::result::Result<Vec<String>, String> {
+pub(crate) fn segments(pointer: &str) -> std::result::Result<Vec<String>, String> {
     selector_segments(pointer).and_then(|segments| {
         segments
             .into_iter()
@@ -209,10 +209,16 @@ fn property(
     if let Some(property) = node.properties.get(name) {
         return Some(*property);
     }
-    node.all_of.iter().find_map(|child| {
-        let mut branch = visited.clone();
-        property(catalog, *child, name, &mut branch)
-    })
+    // Why: request relations can legitimately select a field shared by, or specific to, one
+    // public union branch; refusing to traverse unions would make those declared fields invisible.
+    node.all_of
+        .iter()
+        .chain(&node.any_of)
+        .chain(&node.one_of)
+        .find_map(|child| {
+            let mut branch = visited.clone();
+            property(catalog, *child, name, &mut branch)
+        })
 }
 
 fn items(

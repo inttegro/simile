@@ -33,6 +33,7 @@ pub enum ValidationRule {
     MultipleOf,
     MinLength,
     MaxLength,
+    Pattern,
     MinItems,
     MaxItems,
     UniqueItems,
@@ -69,6 +70,7 @@ impl fmt::Display for ValidationRule {
             Self::MultipleOf => "multipleOf",
             Self::MinLength => "minLength",
             Self::MaxLength => "maxLength",
+            Self::Pattern => "pattern",
             Self::MinItems => "minItems",
             Self::MaxItems => "maxItems",
             Self::UniqueItems => "uniqueItems",
@@ -254,6 +256,23 @@ impl Validator<'_> {
                 ValidationRule::MaxLength,
                 "characters",
             );
+            if let Some(pattern) = &node.pattern {
+                match regress::Regex::new(pattern) {
+                    Ok(pattern) if pattern.find(text).is_none() => push(
+                        issues,
+                        path,
+                        ValidationRule::Pattern,
+                        "string does not match the required pattern",
+                    ),
+                    Err(_) => push(
+                        issues,
+                        path,
+                        ValidationRule::Schema,
+                        "compiled schema contains an invalid pattern",
+                    ),
+                    Ok(_) => {}
+                }
+            }
         }
     }
 

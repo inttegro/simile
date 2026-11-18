@@ -148,6 +148,9 @@ pub struct MediaTypeContract {
     pub example: Option<Value>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub examples: BTreeMap<String, Value>,
+    /// Public request-to-response relationships declared by the OpenAPI adapter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_relation: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

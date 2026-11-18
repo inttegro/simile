@@ -18,7 +18,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 10;
+pub const FORMAT_VERSION: u16 = 11;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -1197,7 +1197,11 @@ impl Payload {
                         response
                             .body
                             .as_ref()
-                            .map(|body| schema_compiler.compile_response(body))
+                            // Why: a cross-message projection is meaningful only against this
+                            // operation's request schema, so compile both sides into one proof plan.
+                            .map(|body| {
+                                schema_compiler.compile_response_for(body, request_body.as_ref())
+                            })
                             .transpose()?,
                     ))
                 })

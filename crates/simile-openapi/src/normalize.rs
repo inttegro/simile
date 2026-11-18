@@ -228,6 +228,7 @@ fn media_types(
                     schema: definition.get("schema").cloned(),
                     example: media_example(definition),
                     examples: media_examples(definition),
+                    request_relation: definition.get("x-simile-from-request").cloned(),
                 },
             ))
         })

@@ -25,6 +25,8 @@ service described by the long-term charter.
 - request synthesis when `simile run` receives no request
 - response selection and schema-valid synthesis
 - structural request-to-response value projection
+- provider-declared request-to-response bindings, derived totals, reachable lifecycle rules, and
+  optional-data eligibility proofs
 - provider-declared protocol-error rendering, with Simile diagnostics as a fallback
 - process-local replay by idempotency key and GET URI
 - deterministic scenario faults and bounded, seeded stochastic fault profiles
@@ -74,6 +76,7 @@ You can confidently test:
 - how your integration handles declared success and error bodies;
 - public scenarios published by the provider;
 - same-path values returned from a request-aware response;
+- request-constrained results when the provider publishes `x-simile-from-request`;
 - idempotency conflict handling and stable process-local replay;
 - how an integration handles declared latency or a lost response after commit; and
 - which follow-up operations the definition declares as planned.

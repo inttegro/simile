@@ -13,7 +13,7 @@ mod equal;
 mod equation;
 mod lifecycle;
 mod ordered;
-mod path;
+pub(crate) mod path;
 mod predicate;
 mod scalar;
 mod set;

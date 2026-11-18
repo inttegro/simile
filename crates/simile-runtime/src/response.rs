@@ -5,6 +5,15 @@ use simile_spec::ResponseStatus;
 
 use crate::{Error, Result, ValidatedBody, is_json};
 
+/// The strongest proof Simile established for a synthesized response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponseSoundness {
+    /// The response satisfies its standalone OpenAPI response schema.
+    SchemaOnly,
+    /// The response also satisfies the service's compiled request-to-response relation.
+    RequestConstrained,
+}
+
 /// Selects an operation response and optionally supplies its validated request context.
 #[derive(Clone, Copy, Debug)]
 pub struct ResponseSynthesisRequest<'a> {
@@ -23,6 +32,7 @@ pub struct SynthesizedResponse {
     media_type: Option<String>,
     bytes: Vec<u8>,
     value: Option<Value>,
+    soundness: ResponseSoundness,
 }
 
 impl SynthesizedResponse {
@@ -44,6 +54,12 @@ impl SynthesizedResponse {
     #[must_use]
     pub const fn value(&self) -> Option<&Value> {
         self.value.as_ref()
+    }
+
+    /// Return the strongest proof established for this response.
+    #[must_use]
+    pub const fn soundness(&self) -> ResponseSoundness {
+        self.soundness
     }
 
     #[must_use]
@@ -98,6 +114,7 @@ pub fn synthesize_response_with_seed(
             media_type: None,
             bytes: Vec::new(),
             value: None,
+            soundness: ResponseSoundness::SchemaOnly,
         });
     };
     synthesize_body(request, status, body, seed)
@@ -139,22 +156,30 @@ fn synthesize_body(
                 content_type: content_type.clone(),
                 expected: body.media_types().map(str::to_owned).collect(),
             })?;
+    let soundness = if request.request_body.is_some() && selected.is_request_constrained() {
+        ResponseSoundness::RequestConstrained
+    } else {
+        ResponseSoundness::SchemaOnly
+    };
     if !is_json(selected.requested()) {
         return Err(Error::UnsupportedResponseEncoding {
             content_type: selected.requested().to_owned(),
         });
     }
     let value = if let Some(body) = request.body {
-        body.clone()
+        // Why: provider-authored outcomes remain exact except for relationships the provider
+        // explicitly declared; this preserves fidelity while still reflecting caller-owned data.
+        request.request_body.map_or_else(
+            || Ok(body.clone()),
+            |request_body| selected.project_exact_from(body, request_body.value()),
+        )
     } else {
-        request
-            .request_body
-            .map_or_else(
-                || selected.synthesize_fuzz(seed),
-                |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
-            )
-            .map_err(|source| Error::ResponseSynthesis { source })?
-    };
+        request.request_body.map_or_else(
+            || selected.synthesize_fuzz(seed),
+            |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
+        )
+    }
+    .map_err(|source| Error::ResponseSynthesis { source })?;
     let issues = selected.validate(&value);
     if !issues.is_empty() {
         return Err(Error::InvalidResponseBody { issues });
@@ -167,6 +192,7 @@ fn synthesize_body(
         media_type: Some(selected.requested().to_owned()),
         bytes,
         value: Some(value),
+        soundness,
     })
 }
 

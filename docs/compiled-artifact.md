@@ -29,7 +29,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 10
+## Envelope version 11
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -37,7 +37,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 10 |
+| 10 | 2 | unsigned big-endian flags; zero in version 11 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -48,7 +48,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 10 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 11 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -85,7 +85,8 @@ response graphs. The catalog also contains compact schema example and default hi
 OpenAPI `format` annotations used by seeded synthesis. Description prose is deliberately not
 interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
 or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
-schemas into every operation.
+schemas into every operation. String patterns are compiled into the schema graph and therefore
+participate in validation and synthesis without reparsing OpenAPI.
 
 Before encoding, provider-authored outcome bodies are checked against their selected OpenAPI
 response schema. The public-export audit rejects explicit private implementation markers. This
@@ -94,11 +95,16 @@ audit is a guardrail; the provider remains responsible for reviewing all publish
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 10 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 11 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their OpenAPI extension syntax.
 
-Version 10 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Response media plans may additionally carry a compiled `x-simile-from-request` relation. Its
+bindings, derivations, guarded lifecycle rules, and omission rules reference the shared request and
+response schema graph by validated identifiers. This is the proof material that distinguishes a
+merely schema-valid response from one proven reachable from the submitted request.
+
+Version 11 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

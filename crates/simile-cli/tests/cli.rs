@@ -434,7 +434,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "runtime 1 async operations · 1 resources\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 10 · [..] bytes\n",
+                "artifact {} · format 11 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -446,7 +446,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 10,\n",
+            "  \"formatVersion\": 11,\n",
             "  \"compilerVersion\": \"0.1.1\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",

@@ -20,7 +20,7 @@ pub use execution::{
 pub use fault::{FaultActivation, FaultSource, TransportPlan};
 pub use operation::Runtime;
 pub use response::{
-    ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
+    ResponseSoundness, ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
     synthesize_response_with_seed,
 };
 

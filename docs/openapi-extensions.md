@@ -4,7 +4,8 @@ description: An overview of the executable contract vocabulary Simile adds to Op
 ---
 
 OpenAPI describes individual fields well, but many valid service payloads depend on relationships
-between fields. Simile adds `x-simile-constraints` for those relationships.
+between fields. Simile adds `x-simile-constraints` for relationships inside one payload and
+`x-simile-from-request` for public relationships between an operation's request and response.
 
 For example, OpenAPI can require `created_at` and `updated_at` to be RFC 3339 timestamps. The Simile
 extension can additionally require them to appear in chronological order:
@@ -33,6 +34,7 @@ compilation. Simile never silently ignores a constraint it cannot execute.
 
 | Topic | What it covers | Reference |
 | --- | --- | --- |
+| Request-response relations | Preserved inputs, derived response values, reachable states, and ineligible optional data | [Request-response relations](/request-response-relations) |
 | Mechanics | Placement, JSON Pointers, selectors, predicates, guards, and authoring rules | [Constraint mechanics](/constraint-mechanics) |
 | Value relationships | Ordering, bounds, equality, distinct values, and scalar-set relationships | [Value relationships](/constraint-value-relationships) |
 | Conditional and derived values | Implications, arithmetic equations, and collection aggregates | [Conditional and derived values](/constraint-conditional-derived) |

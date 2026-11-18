@@ -21,6 +21,9 @@ pub enum SynthesisError {
 
     #[error("could not synthesize a valid finite value within the deterministic search limits")]
     Exhausted { issues: Vec<ValidationIssue> },
+
+    #[error("request-to-response relation could not be proven: {reason}")]
+    Unreachable { reason: String },
 }
 
 impl SchemaCatalog {
@@ -50,10 +53,28 @@ impl SchemaCatalog {
         root: SchemaRef,
         seed: u64,
     ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize_representative(root)?;
+        self.randomize(root, baseline, seed)
+    }
+
+    pub(crate) fn synthesize_fuzz_minimal(
+        &self,
+        root: SchemaRef,
+        seed: u64,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize(root)?;
+        self.randomize(root, baseline, seed)
+    }
+
+    fn randomize(
+        &self,
+        root: SchemaRef,
+        baseline: Value,
+        seed: u64,
+    ) -> std::result::Result<Value, SynthesisError> {
         if !self.contains(root) {
             return Err(SynthesisError::InvalidSchema);
         }
-        let baseline = self.synthesize_representative(root)?;
         for attempt in 0..MAX_VARIANTS {
             let attempt_seed =
                 seed.wrapping_add((attempt as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
@@ -63,7 +84,7 @@ impl SchemaCatalog {
             };
             let mut active = Vec::new();
             let mut candidate = randomizer.node(root.0, &baseline, 0, &mut active);
-            self.establish_heuristics(root, &mut candidate);
+            self.establish(root, &mut candidate);
             if validate::value(self, root, &candidate).is_empty() {
                 return Ok(candidate);
             }
@@ -97,7 +118,7 @@ impl SchemaCatalog {
             })
             .node(root.0, variant, 0, &mut active)
             {
-                self.establish_heuristics(root, &mut value);
+                self.establish(root, &mut value);
                 let issues = validate::value(self, root, &value);
                 if issues.is_empty() && predicate(&value) {
                     return Ok(value);
@@ -117,7 +138,7 @@ impl SchemaCatalog {
         let mut active = Vec::new();
         let mut candidate =
             Projector { catalog: self }.node(root.0, baseline, request, 0, &mut active);
-        self.establish_heuristics(root, &mut candidate);
+        self.establish(root, &mut candidate);
         if validate::value(self, root, &candidate).is_empty() {
             candidate
         } else {
@@ -127,7 +148,7 @@ impl SchemaCatalog {
 
     /// Run generation hints as a transaction. A hint can improve a synthesized candidate, but
     /// the complete candidate is retained only when the authoritative schema still accepts it.
-    fn establish_heuristics(&self, root: SchemaRef, value: &mut Value) {
+    pub(crate) fn establish(&self, root: SchemaRef, value: &mut Value) {
         let original = value.clone();
         let mut active = Vec::new();
         apply_heuristics(self, root.0, value, 0, &mut active);
@@ -174,6 +195,10 @@ fn apply_heuristics(
         }
     }
     let _ = node.heuristics.apply(value);
+    // Request projection can change a lifecycle discriminator after the baseline was synthesized.
+    // Re-establish the schema's authoritative cross-field constraints so newly triggered
+    // consequences (for example, `requires_payment` requiring `sealed_at`) are materialized.
+    soundness::establish(&node, value);
     active.pop();
 }
 
@@ -284,6 +309,32 @@ impl Projector<'_> {
         let Some(node) = self.catalog.nodes.get(id as usize) else {
             return baseline.clone();
         };
+
+        if let (Some(baseline), Some(request), Some(items)) =
+            (baseline.as_array(), request.as_array(), node.items)
+        {
+            active.push(id);
+            let mut projected = Vec::with_capacity(request.len());
+            for (index, request) in request.iter().enumerate() {
+                let seed = baseline.get(index).cloned().or_else(|| {
+                    self.catalog
+                        .synthesize_representative(SchemaRef(items))
+                        .ok()
+                });
+                let Some(seed) = seed else {
+                    active.pop();
+                    return Value::Array(baseline.to_vec());
+                };
+                projected.push(self.node(items, &seed, request, depth + 1, active));
+            }
+            active.pop();
+            let candidate = Value::Array(projected);
+            return if validate::value(self.catalog, SchemaRef(id), &candidate).is_empty() {
+                candidate
+            } else {
+                Value::Array(baseline.to_vec())
+            };
+        }
 
         if !baseline.is_object() || !request.is_object() {
             return if validate::value(self.catalog, SchemaRef(id), request).is_empty() {
@@ -575,6 +626,10 @@ fn candidate_types(node: &SchemaNode) -> Vec<JsonType> {
 }
 
 fn string(node: &SchemaNode, variant: usize) -> Option<String> {
+    if node.pattern.is_some() {
+        let mut rng = StdRng::seed_from_u64(0x8f4d_739a_2b61_c5e7_u64.wrapping_add(variant as u64));
+        return generated_pattern_string(node, &mut rng);
+    }
     if let Some(value) = node.format.as_deref().and_then(formatted_string) {
         return Some(value.to_owned());
     }
@@ -647,6 +702,11 @@ fn random_number(node: &SchemaNode, integer: bool, rng: &mut StdRng) -> Option<V
 }
 
 fn random_string(node: &SchemaNode, rng: &mut StdRng) -> String {
+    if node.pattern.is_some() {
+        return generated_pattern_string(node, rng)
+            .or_else(|| string(node, 0))
+            .unwrap_or_default();
+    }
     let minimum = node.min_length.unwrap_or(0);
     let maximum = node.max_length.unwrap_or(usize::MAX);
     if let Some(value) = node
@@ -670,6 +730,34 @@ fn random_string(node: &SchemaNode, rng: &mut StdRng) -> String {
     (0..length)
         .map(|_| ALPHANUMERIC[rng.random_range(0..ALPHANUMERIC.len())] as char)
         .collect()
+}
+
+fn generated_pattern_string(node: &SchemaNode, rng: &mut StdRng) -> Option<String> {
+    let pattern = node.pattern.as_deref()?;
+    let validator = regress::Regex::new(pattern).ok()?;
+    let generator_pattern = generation_pattern(pattern);
+    let max_repeat = node.max_length.unwrap_or(24).clamp(1, 64) as u32;
+    let generator = rand_regex::Regex::compile(generator_pattern, max_repeat).ok()?;
+    let minimum = node.min_length.unwrap_or(0);
+    let maximum = node.max_length.unwrap_or(usize::MAX);
+
+    for _ in 0..MAX_VARIANTS {
+        let mut candidate: String = rng.sample(&generator);
+        if pattern.starts_with('^') && !pattern.ends_with('$') && candidate.len() < minimum.max(12)
+        {
+            candidate.push_str(&random_token(rng, minimum.max(12) - candidate.len()));
+        }
+        let length = candidate.chars().count();
+        if (minimum..=maximum).contains(&length) && validator.find(&candidate).is_some() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn generation_pattern(pattern: &str) -> &str {
+    let pattern = pattern.strip_prefix('^').unwrap_or(pattern);
+    pattern.strip_suffix('$').unwrap_or(pattern)
 }
 
 fn random_formatted_string(format: &str, rng: &mut StdRng) -> Option<String> {
