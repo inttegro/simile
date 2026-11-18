@@ -112,6 +112,11 @@ schemas, and examples twice, while ordinary OpenAPI tooling could not see the em
 Keeping HCL additive makes source ownership clear and allows OpenAPI-only services to remain
 first-class.
 
+The complete block grammar, value types, defaults, and name-resolution rules are defined in the
+[Simile HCL language specification](/hcl-language-specification). Use the
+[HCL glossary](/hcl-glossary) when a term such as outcome, scenario, fault, or effect plan needs a
+precise definition.
+
 When ordinary OpenAPI Schema cannot express a public relationship between fields, Simile provides
 the executable `x-simile-constraints` extension. See the
 [OpenAPI extension reference](/openapi-extensions) for its clause glossary and authoring rules.

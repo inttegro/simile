@@ -11,7 +11,8 @@ installing it, while `simile start --config` retains the direct, unregistered pa
 The configuration does **not** describe endpoints. OpenAPI already owns them. Think of this file as
 the place where a deployable local service is assembled from independently reviewable sources.
 If an agent is preparing both the contract and configuration, start with the
-[service authoring prompt](/service-authoring-prompt).
+[service authoring prompt](/service-authoring-prompt). For the normative grammar rather than a
+task-oriented guide, use the [Simile HCL language specification](/hcl-language-specification).
 
 ```hcl
 service "inttegro" {

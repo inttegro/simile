@@ -33,6 +33,10 @@
 						]
 					},
 					{
+						"group": "Simile HCL",
+						"pages": ["hcl-language-specification", "hcl-glossary"]
+					},
+					{
 						"group": "OpenAPI extensions",
 						"pages": [
 							"openapi-extensions",
