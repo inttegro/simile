@@ -158,19 +158,32 @@ Remember that the current runtime plans declared async work but does not yet exe
 
 Model domain failures and transport faults separately. Invalid parameters, declined payment methods, and forbidden states are deterministic named outcomes selected by public predicates or opaque scenarios. They must never be members of a stochastic profile.
 
-Use `fault` only for environmental delivery behavior. The current safe vocabulary is:
+Use faults only for environmental delivery behavior. Prefer Simile's built-in HTTP catalog so a
+service does not repeat standard phase and action mechanics:
 
 ```hcl
-fault "slow_response" {
-  phase = "before_response"
-  delay { milliseconds = 250 }
-}
-
-fault "response_lost" {
-  phase = "after_commit"
-  disconnect {}
+faults {
+  use "http.slow" {}
+  use "http.response_lost" {}
 }
 ```
+
+Use `"*"` to import the complete catalog, `"namespace.*"` to import a namespace, and a leading
+`^` to exclude an exact fault or namespace from the selected set. Prefer the narrowest selection
+that expresses the service's testing contract.
+
+Override a catalog default only when the service contract needs it:
+
+```hcl
+faults {
+  use "http.slow" {
+    latency = "2s"
+  }
+}
+```
+
+Define a custom `fault` only when no catalog entry represents the required environmental
+behavior. Never use catalog or custom faults to model domain rejection.
 
 Use scenario `inject` blocks for deterministic tests. Use a `fault_profile` only for bounded stochastic resilience testing, with a conservative probability, operation scope, `max_consecutive`, `cooldown_requests`, and an optional reproducible seed. Do not claim that profile probabilities reproduce production measurements unless the provider supplies that evidence.
 

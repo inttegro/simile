@@ -128,7 +128,7 @@ remote configuration are rejected rather than resolved against the process worki
 
 `behaviors` is an optional list of HCL module paths. Relative paths resolve from the configuration
 directory. The service document may also contain `resource`, `async`, `behavior`, `scenario`,
-`fault`, and `fault_profile` blocks after the `service` block:
+`faults`, `fault`, and `fault_profile` blocks after the `service` block:
 
 ```hcl
 resource "queue" "orders" {}
@@ -141,6 +141,11 @@ behavior "createOrder" {
   response { status = 201 }
   trigger "dispatch_order" {}
 }
+
+faults {
+  use "http.slow" {}
+  use "http.response_lost" {}
+}
 ```
 
 Resources are the portable dependencies of the emulated service. They name abstract capabilities
@@ -150,6 +155,11 @@ production vendor. Async declarations connect observable follow-up work to those
 Imported and inline declarations enter the same semantic compiler. Duplicate declarations,
 unknown OpenAPI operation IDs, undeclared resources, and contradictory response selections fail
 startup before the listener binds.
+
+The plural `faults` block imports complete environmental faults from Simile's built-in catalog.
+Catalog defaults can be overridden locally without repeating their phase and action mechanics. See
+[Fault injection](/fault-injection) for exact imports, whole-catalog and namespace wildcards,
+exclusions, available presets, and composition rules.
 
 ## Current HTTP boundary
 

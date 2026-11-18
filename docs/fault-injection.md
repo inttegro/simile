@@ -27,9 +27,85 @@ flowchart LR
   Replay --> Retry[Idempotent retry returns committed outcome]
 ```
 
-## Declare faults
+## Use the built-in HTTP catalog
 
-The first fault vocabulary is intentionally small:
+Simile includes complete, provider-neutral HTTP faults with sensible defaults. Select only the
+faults the service needs:
+
+```hcl
+faults {
+  use "http.slow" {}
+  use "http.response_lost" {}
+}
+```
+
+Catalog selection is set-based. Import the complete catalog in one line:
+
+```hcl
+faults {
+  use "*" {}
+}
+```
+
+Import one complete namespace with a suffix wildcard:
+
+```hcl
+faults {
+  use "http.*" {}
+}
+```
+
+Prefix a selector with `^` to subtract it. Exclusions apply to the complete configuration, so a
+later positive selector cannot accidentally add the fault again:
+
+```hcl
+faults {
+  use "*" {}
+  use "^http.response_lost" {}
+}
+```
+
+Exact selectors, namespace selectors, and exclusions may be composed across inline configuration
+and imported behavior modules. Repeated selection of the same unchanged fault is idempotent.
+Selectors that match nothing fail compilation, catching misspelled names and namespaces.
+
+`http.slow` delays a response by one second. `http.response_lost` completes and commits the
+operation, then closes delivery before the response reaches the caller. Catalog entries compile
+into the same self-contained artifact records as provider-authored faults; starting the service
+does not fetch or resolve a remote catalog.
+
+Defaults are optional, not restrictive. Override only the property that matters to the service:
+
+```hcl
+faults {
+  use "http.slow" {
+    latency = "2s"
+  }
+}
+```
+
+Latency accepts whole-number durations from `1ms` through `24h`, using `ms`, `s`, `m`, or `h`.
+An exact import keeps its catalog name, so scenarios and profiles refer directly to `http.slow`.
+Use an alias when the same preset needs more than one configuration:
+
+```hcl
+faults {
+  use "http.slow" {}
+  use "http.slow" {
+    as      = "very_slow"
+    latency = "5s"
+  }
+}
+```
+
+Unknown catalog names, unsupported overrides, aliases that collide with another fault, and
+invalid durations fail compilation. Wildcards and exclusions cannot contain aliases or overrides;
+configure an exact import instead. Simile never silently substitutes a different fault.
+
+## Define a custom fault
+
+The initial action vocabulary is intentionally small. Define a custom fault when a catalog preset
+does not express the service's public testing contract:
 
 ```hcl
 fault "slow_response" {
@@ -58,7 +134,7 @@ Use a scenario when a test must reproduce the same disruption every time:
 ```hcl
 scenario "lost_after_commit" {
   inject "createOrder" {
-    fault = "response_lost"
+    fault = "http.response_lost"
   }
 }
 ```
@@ -82,7 +158,7 @@ Use a profile to exercise resilience over a longer local or CI session:
 ```hcl
 fault_profile "rough_network" {
   probability       = 0.02
-  faults            = ["slow_response", "response_lost"]
+  faults            = ["http.slow", "http.response_lost"]
   operations        = ["createOrder"]
   max_consecutive   = 1
   cooldown_requests = 20
