@@ -305,6 +305,12 @@ fn removes_only_an_exactly_confirmed_registered_service() {
         .stderr_eq("service removal not confirmed; --confirm must exactly match `orders`\n");
     assert!(home.join("services/orders/current").is_file());
 
+    let removed_directory = home.join("services/orders");
+    let rendered_directory = serde_json::to_string(&removed_directory.display().to_string())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let expected_removal =
+        format!("{{\n  \"service\": \"orders\",\n  \"directory\": {rendered_directory}\n}}");
+
     Command::new(snapbox::cmd::cargo_bin!("simile"))
         .env("SIMILE_HOME", &home)
         .args([
@@ -317,15 +323,10 @@ fn removes_only_an_exactly_confirmed_registered_service() {
         ])
         .assert()
         .success()
-        .stdout_eq(concat!(
-            "{\n",
-            "  \"service\": \"orders\",\n",
-            "  \"directory\": \"[..]/services/orders\"\n",
-            "}\n"
-        ))
+        .stdout_eq(format!("{expected_removal}\n"))
         .stderr_eq("");
 
-    assert!(!home.join("services/orders").exists());
+    assert!(!removed_directory.exists());
     assert!(home.join("layout-version").is_file());
     fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
 }
