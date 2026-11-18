@@ -52,7 +52,10 @@
 						"group": "Model behavior",
 						"pages": [
 							"outcome-fidelity",
-							"fault-injection",
+							{
+								"group": "Faults",
+								"pages": ["fault-injection", "fault-glossary"]
+							},
 							"state-and-replay",
 							"dependencies-and-effects"
 						]

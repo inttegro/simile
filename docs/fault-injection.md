@@ -15,6 +15,10 @@ Simile models those concepts separately all the way from HCL to the HTTP adapter
 profile can therefore disrupt delivery, but it cannot invent a bad payment method when the caller
 sent a valid one.
 
+<Note>
+Need an exact catalog name or execution term? Use the [Fault glossary](/fault-glossary).
+</Note>
+
 ```mermaid
 flowchart LR
   Request[Validated request] --> Select[Select service outcome]
@@ -200,5 +204,6 @@ That split lets future adapters implement the same plan without importing HTTP i
 and lets future fault actions grow without becoming response-selection rules.
 
 Read [Outcome fidelity](/outcome-fidelity) for deterministic error selection,
+[Fault glossary](/fault-glossary) for catalog names and terminology,
 [State, identity, and replay](/state-and-replay) for retry semantics, and
 [Operation execution](/operation-execution) for the runtime pipeline.
