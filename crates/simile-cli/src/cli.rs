@@ -84,6 +84,8 @@ pub enum Command {
     Compile(CompileArgs),
     /// Check the local environment and report actionable problems.
     Doctor,
+    /// Explain the public semantics of a compiled service.
+    Describe(DescribeArgs),
     /// Verify and summarize a compiled Simile artifact.
     Inspect(InspectArgs),
     /// Execute one operation from an OpenAPI contract.
@@ -98,6 +100,28 @@ pub enum Command {
     Update(UpdateArgs),
     /// Print detailed build information.
     Version,
+}
+
+#[derive(Debug, Args)]
+pub struct DescribeArgs {
+    #[command(subcommand)]
+    pub target: DescribeTarget,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DescribeTarget {
+    /// Describe a registered service or a transient service configuration.
+    Service(DescribeServiceArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DescribeServiceArgs {
+    /// Registered or configured service name.
+    pub service: String,
+
+    /// Describe this HCL configuration file or URL instead of the registry entry.
+    #[arg(long, value_name = "URL_OR_FILE")]
+    pub config: Option<String>,
 }
 
 #[derive(Debug, Args)]

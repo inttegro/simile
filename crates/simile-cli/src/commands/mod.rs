@@ -1,4 +1,5 @@
 mod compile;
+mod describe;
 mod doctor;
 mod inspect;
 mod register;
@@ -24,6 +25,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
     match command {
         Command::Compile(arguments) => compile::execute(arguments, terminal),
         Command::Doctor => doctor::execute(ctx, terminal),
+        Command::Describe(arguments) => describe::execute(arguments, ctx, terminal),
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
         Command::Register(arguments) => register::execute(arguments, ctx, terminal),
         Command::Remove(arguments) => remove::execute(arguments, ctx, terminal),

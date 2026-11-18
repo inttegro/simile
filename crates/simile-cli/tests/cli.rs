@@ -228,6 +228,57 @@ fn registers_a_service_in_simile_home() {
 }
 
 #[test]
+fn describes_a_transient_service_from_the_compiled_artifact() {
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--output",
+            "json",
+            "--verbose",
+            "describe",
+            "service",
+            "orders",
+            "--config",
+            &fixture("service-described.hcl"),
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(report["service"], "orders");
+    assert_eq!(
+        report["description"],
+        "An emulator for order integration tests."
+    );
+    assert_eq!(report["operations"][0]["key"], "GET /health");
+    assert!(
+        report["operations"]
+            .as_array()
+            .is_some_and(|operations| operations.iter().any(|operation| {
+                operation["operationId"] == "createOrder"
+                    && operation["description"] == "Create and accept an order."
+            }))
+    );
+    assert_eq!(
+        report["scenarios"][0]["description"],
+        "Return a valid order response slowly."
+    );
+    assert_eq!(
+        report["faults"][0]["description"],
+        "Delay the completed response before delivery."
+    );
+    assert_eq!(
+        report["resources"][0]["description"],
+        "Carries accepted orders to background processors."
+    );
+}
+
+#[test]
 fn registers_a_service_from_a_remote_configuration() {
     let home = registry_home();
     drop(fs::remove_dir_all(&home));
@@ -437,7 +488,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "runtime 1 async operations · 1 resources\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 11 · [..] bytes\n",
+                "artifact {} · format 12 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -449,7 +500,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 11,\n",
+            "  \"formatVersion\": 12,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
