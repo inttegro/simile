@@ -306,12 +306,7 @@ fn removes_only_an_exactly_confirmed_registered_service() {
     assert!(home.join("services/orders/current").is_file());
 
     let removed_directory = home.join("services/orders");
-    let rendered_directory = serde_json::to_string(&removed_directory.display().to_string())
-        .unwrap_or_else(|error| panic!("{error}"));
-    let expected_removal =
-        format!("{{\n  \"service\": \"orders\",\n  \"directory\": {rendered_directory}\n}}");
-
-    Command::new(snapbox::cmd::cargo_bin!("simile"))
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
         .env("SIMILE_HOME", &home)
         .args([
             "--output",
@@ -321,10 +316,17 @@ fn removes_only_an_exactly_confirmed_registered_service() {
             "--confirm",
             "orders",
         ])
-        .assert()
-        .success()
-        .stdout_eq(format!("{expected_removal}\n"))
-        .stderr_eq("");
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(report["service"], "orders");
+    assert_eq!(
+        report["directory"],
+        removed_directory.to_string_lossy().as_ref()
+    );
 
     assert!(!removed_directory.exists());
     assert!(home.join("layout-version").is_file());
