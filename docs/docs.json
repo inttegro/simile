@@ -28,13 +28,14 @@
 						"pages": [
 							"openapi-and-hcl",
 							"service-configuration",
+							"describe-service",
 							"service-authoring-prompt",
 							"service-lifecycle"
 						]
 					},
 					{
 						"group": "Simile HCL",
-						"pages": ["hcl-language-specification", "hcl-glossary"]
+						"pages": ["hcl-language-specification", "hcl-glossary", "learn-simile-hcl"]
 					},
 					{
 						"group": "OpenAPI extensions",

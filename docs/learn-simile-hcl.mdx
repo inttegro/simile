@@ -1,0 +1,334 @@
+---
+title: Learn Simile HCL
+sidebarTitle: Learn
+description: A guided course in service configuration, public behavior, scenarios, effects, and faults.
+---
+
+This course teaches the mental model behind Simile HCL before it asks you to memorize syntax. Each
+lesson ends with a multiple-choice check. Choose an answer before opening the explanation.
+
+## 1. Start with the contract boundary
+
+OpenAPI describes the HTTP contract: routes, operation IDs, request schemas, response statuses,
+media types, and response schemas. Simile HCL describes public behavior that cannot be proved from
+those schemas alone.
+
+```hcl
+behavior "createOrder" {
+  response { status = 201 }
+}
+```
+
+`createOrder` must exactly match an OpenAPI `operationId`. The HCL cannot invent a route or choose a
+status that OpenAPI does not declare.
+
+**Question 1.** Where should a required JSON request field be defined?
+
+- A. In the OpenAPI request schema
+- B. In a `behavior` block
+- C. In a scenario
+
+<Accordion title="Show answer">
+  **A.** OpenAPI owns the HTTP shape. HCL may refine behavior, but it does not replace the contract.
+</Accordion>
+
+**Question 2.** What happens if `response.status = 201` is not declared by that OpenAPI operation?
+
+- A. Simile silently adds it
+- B. Compilation fails
+- C. Simile changes it to `200`
+
+<Accordion title="Show answer">
+  **B.** Cross-source contradictions fail before the service starts.
+</Accordion>
+
+## 2. Name reachable outcomes
+
+An outcome is one concrete result the operation can publicly produce.
+
+```hcl
+behavior "createOrder" {
+  description = "Create an order and optionally execute payment."
+
+  outcome "requires_payment" {
+    description  = "The order is finalized and still needs payment."
+    status       = 201
+    content_type = "application/json"
+    body = {
+      order = {
+        status = "requires_payment"
+      }
+    }
+
+    when {
+      path   = "/body/execute_payment"
+      equals = false
+    }
+  }
+}
+```
+
+`when.path` is a JSON Pointer into Simile's normalized request document. Multiple `when` blocks are
+combined with logical **AND**: all predicates must match. The body is provider-authored and must
+validate against the OpenAPI response schema for the selected status and media type.
+
+**Question 3.** Two `when` blocks appear in one outcome. When is it eligible?
+
+- A. When either predicate matches
+- B. When both predicates match
+- C. Only when a scenario selects it
+
+<Accordion title="Show answer">
+  **B.** Conditions within one outcome are conjunctive.
+</Accordion>
+
+## 3. Reuse error families
+
+An `error_set` collects named outcomes that many operations can share. Attach it to one behavior or
+apply it by OpenAPI tag.
+
+```hcl
+error_set "payment_errors" {
+  description = "Public payment failures shared by payable operations."
+
+  outcome "payment_method_declined" {
+    status = 402
+    body = {
+      error = {
+        code    = "payment_method_declined"
+        message = "The payment method was declined."
+      }
+    }
+  }
+}
+
+apply_error_set "payment_errors" {
+  tags = ["Payments"]
+}
+```
+
+Use `protocol_error` for failures discovered by the protocol adapter—malformed JSON, unsupported
+media types, authentication failure—not for an ordinary domain outcome.
+
+**Question 4.** A card is valid JSON but the provider declines it. Which construct fits?
+
+- A. `protocol_error`
+- B. A named outcome, possibly in an `error_set`
+- C. A stochastic fault
+
+<Accordion title="Show answer">
+  **B.** Decline is a service result. Protocol errors describe failures at the request/transport
+  boundary.
+</Accordion>
+
+## 4. Use scenarios for exact tests
+
+A scenario is an opaque, deterministic test control. It can select named outcomes and inject named
+environmental faults for several operations.
+
+```hcl
+scenario "payment_declines" {
+  description = "Force the public declined-payment path for checkout tests."
+
+  select "createOrder" {
+    outcome = "payment_method_declined"
+  }
+}
+```
+
+For a long-running service, select it when the process starts:
+
+```console
+$ simile start inttegro --scenario payment_declines
+```
+
+For a one-shot operation, select it on `run`:
+
+```console
+$ simile run --spec commerce.yml --operation-id createOrder --scenario payment_declines
+```
+
+Public request conditions can still trigger the same outcome without a scenario. A scenario exists
+so a test can request one case directly and repeatably, especially when the real provider decision
+is intentionally private.
+
+**Question 5.** Does a scenario describe the provider's internal decision tree?
+
+- A. Yes
+- B. No; it names a public test case and its observable result
+- C. Only in verbose mode
+
+<Accordion title="Show answer">
+  **B.** Scenarios preserve the public behavior while hiding private rules and thresholds.
+</Accordion>
+
+**Question 6.** What does `simile start inttegro --scenario payment_declines` do?
+
+- A. Activates that scenario for the lifetime of the server process
+- B. Applies it only to the first request
+- C. Rewrites the registered configuration
+
+<Accordion title="Show answer">
+  **A.** The selection is process-wide for that invocation and does not mutate the registry.
+</Accordion>
+
+## 5. Model effects without vendors
+
+Resources name abstract capabilities. Async operations describe observable follow-up work and the
+capabilities it uses.
+
+```hcl
+resource "queue" "orders" {
+  description = "Carries order work to background processors."
+}
+
+resource "mail" "receipts" {
+  description = "Delivers customer receipts."
+}
+
+async "dispatch_order" {
+  description = "Queue fulfillment and send the customer receipt."
+  uses = ["queue.orders", "mail.receipts"]
+}
+
+behavior "createOrder" {
+  trigger "dispatch_order" {}
+}
+```
+
+Use `queue`, not SQS; `db`, not PostgreSQL; `cache`, not Redis. The emulator needs the capability,
+not a leak of the production implementation. Today the runtime reports these plans; resource
+adapters are a documented future boundary.
+
+**Question 7.** Which resource declaration is portable?
+
+- A. `resource "db" "orders" {}`
+- B. `resource "postgres" "orders" {}`
+- C. `resource "rds" "orders" {}`
+
+<Accordion title="Show answer">
+  **A.** Resource kinds deliberately describe provider-neutral capabilities.
+</Accordion>
+
+## 6. Separate service results from environmental faults
+
+A domain error is a deterministic outcome. A fault changes how an otherwise valid operation is
+delivered: delay, disconnection, or another environmental disruption.
+
+```hcl
+faults {
+  use "http.slow" {}
+  use "http.response_lost" {}
+}
+
+scenario "lost_after_commit" {
+  description = "Commit the order, then make the response unavailable to the caller."
+
+  inject "createOrder" {
+    fault = "http.response_lost"
+  }
+}
+```
+
+Catalog faults bring their own descriptions and sensible defaults. Custom faults may provide a
+`description` explicitly.
+
+**Question 8.** A request commits successfully, but the caller never receives the response. Is
+that an outcome or a fault?
+
+- A. Outcome
+- B. Fault
+- C. Protocol error
+
+<Accordion title="Show answer">
+  **B.** The service result exists; delivery was disrupted after commit.
+</Accordion>
+
+## 7. Bound stochastic testing
+
+Fault profiles opt a service into controlled random environmental failures.
+
+```hcl
+fault_profile "rough_network" {
+  description       = "Occasionally exercise slow or lost HTTP responses."
+  probability       = 0.01
+  faults            = ["http.slow", "http.response_lost"]
+  operations        = ["createOrder"]
+  max_consecutive   = 1
+  cooldown_requests = 20
+}
+```
+
+Parameter and domain errors are never randomized. A profile can activate only environmental
+faults. Probability, cooldown, and maximum consecutive activations keep stochastic testing useful
+instead of hostile.
+
+**Question 9.** May a profile randomly return `payment_method_declined` for a valid payment method?
+
+- A. Yes
+- B. No
+- C. Only with a seed
+
+<Accordion title="Show answer">
+  **B.** Domain outcomes require a matching public condition or an explicit scenario.
+</Accordion>
+
+## 8. Compose and compile the service
+
+The service block connects the listener, OpenAPI source, and behavior modules.
+
+```hcl
+service "inttegro" {
+  description = "A local emulator for Inttegro Commerce integrations."
+  behaviors   = ["./orders.hcl", "./payments.hcl"]
+
+  listen {
+    host = "127.0.0.1"
+    port = 4242
+  }
+
+  openapi {
+    path = "./commerce.yml"
+  }
+}
+```
+
+Compilation resolves every operation ID, outcome, resource, trigger, scenario, and fault before a
+listener binds. Human-readable descriptions are stored in the compiled artifact for
+`simile describe`; they never influence behavior.
+
+```console
+$ simile register inttegro --config ./inttegro.simile.hcl
+$ simile describe service inttegro
+$ simile describe service inttegro --verbose
+$ simile --output json describe service inttegro
+```
+
+**Question 10.** What is the runtime authority for a registered service?
+
+- A. The original files at their old paths
+- B. The compiled artifact installed in the registry revision
+- C. The current working directory
+
+<Accordion title="Show answer">
+  **B.** Registration is a compiled, immutable snapshot. `describe` reads that same artifact.
+</Accordion>
+
+## 9. Capstone
+
+You need a test that creates an order, forces a public `requires_payment` result, reports a queued
+receipt job, and can independently test a response lost after commit. Which design is sound?
+
+- A. Put every rule and vendor name into one large `scenario`
+- B. Define the HTTP shapes in OpenAPI; define the named outcome and async plan in HCL; use one
+  scenario to select the outcome and another to inject the environmental fault
+- C. Return a random valid response and let the client infer what happened
+
+<Accordion title="Show answer">
+  **B.** Each unit owns one concern, and their composition expresses a larger public behavior
+  without exposing private implementation details.
+</Accordion>
+
+Continue with the [language specification](/hcl-language-specification) for normative syntax, the
+[glossary](/hcl-glossary) for terms, or [Configuration](/service-configuration) to assemble a real
+service.

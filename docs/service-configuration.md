@@ -16,6 +16,8 @@ task-oriented guide, use the [Simile HCL language specification](/hcl-language-s
 
 ```hcl
 service "inttegro" {
+  description = "A local emulator for Inttegro Commerce integrations."
+
   listen {
     host = "127.0.0.1"
     port = 4242
@@ -47,9 +49,13 @@ $ simile start inttegro --config ./inttegro.simile.hcl
 $ simile start inttegro --config ./inttegro.simile.hcl --port 8484
 $ simile start inttegro --scenario lost_after_commit
 $ simile start inttegro --fault-profile rough_network
+$ simile describe service inttegro
+$ simile describe service inttegro --verbose
 ```
 
 `--port` has invocation precedence over `listen.port`; it does not edit the configuration.
+`simile describe service` reads the same compiled artifact that `start` runs. Pass `--config` to
+describe a file or URL without registering it. See [Describe a service](/describe-service).
 
 ```mermaid
 flowchart LR

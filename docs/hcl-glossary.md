@@ -70,6 +70,12 @@ within a payload; they are distinct from HCL behavior. See the
 
 ## D
 
+### Description
+
+Optional public presentation metadata on a named semantic HCL object. It is retained in the
+compiled artifact for `simile describe service` and never changes runtime behavior. Structural
+blocks such as `listen`, `when`, and `select` do not have descriptions.
+
 ### Deterministic fault
 
 An environmental fault selected explicitly by a scenario. Given the same scenario and operation,

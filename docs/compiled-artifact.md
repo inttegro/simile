@@ -29,7 +29,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 11
+## Envelope version 12
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -37,7 +37,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 11 |
+| 10 | 2 | unsigned big-endian flags; zero in version 12 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -48,7 +48,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 11 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 12 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -57,20 +57,21 @@ The payload is an ordered CBOR array rather than a serialized Rust struct map. V
 5. an indexed value arena used by response definitions, exact outcome bodies, and predicates;
 6. resources in stable resource-reference order;
 7. asynchronous operations in stable name order;
-8. one shared request/response schema catalog;
-9. environmental faults in stable name order; and
-10. bounded stochastic fault profiles in stable name order.
+8. one shared request/response schema catalog.
 
 Strings, value nodes, resources, and asynchronous operations are referenced with unsigned numeric
 identifiers. Behavior records therefore point directly to asynchronous-operation records, and
 those records point directly to abstract resources. The runtime does not repeatedly compare or
 allocate names to follow those edges.
 
-Service metadata also carries the provider-neutral protocol-error table and opaque scenario
-selections. Each operation carries a named outcome catalog with exact status, optional media type
-and body, fidelity provenance, and public request predicates. Scenario records map an operation
-key to one of those names and may map an operation to a declared environmental fault; they never
-carry the private production decision that selected an outcome.
+Service metadata also carries the provider-neutral protocol-error table, opaque scenario
+selections, environmental faults, bounded stochastic fault profiles, and a sorted public
+description catalogue. Description records identify a semantic kind, optional parent, name, and
+text. They let `simile describe` explain the service from the artifact without reopening HCL and
+never participate in execution. Each operation carries a named outcome catalog with exact status,
+optional media type and body, fidelity provenance, and public request predicates. Scenario records
+map an operation key to one of those names and may map an operation to a declared environmental
+fault; they never carry the private production decision that selected an outcome.
 
 Fault records contain a typed phase and action. Profile records contain probability in integer
 parts per million, linked fault indexes, linked operation indexes, repetition bounds, and an
@@ -82,8 +83,8 @@ examples. Those roots point into the shared catalog, where component schemas are
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
 response graphs. The catalog also contains compact schema example and default hints, plus explicit
-OpenAPI `format` annotations used by seeded synthesis. Description prose is deliberately not
-interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
+OpenAPI `format` annotations used by seeded synthesis. OpenAPI schema description prose is
+deliberately not interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
 or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
 schemas into every operation. String patterns are compiled into the schema graph and therefore
 participate in validation and synthesis without reparsing OpenAPI.
@@ -95,7 +96,7 @@ audit is a guardrail; the provider remains responsible for reviewing all publish
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 11 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 12 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their OpenAPI extension syntax.
 
@@ -104,7 +105,7 @@ bindings, derivations, guarded lifecycle rules, and omission rules reference the
 response schema graph by validated identifiers. This is the proof material that distinguishes a
 merely schema-valid response from one proven reachable from the submitted request.
 
-Version 11 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 12 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

@@ -96,6 +96,9 @@ $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
 $ simile update inttegro --config https://example.com/inttegro.simile.hcl
 $ simile remove inttegro --confirm inttegro
+$ simile describe service inttegro
+$ simile describe service inttegro --verbose
+$ simile --output json describe service inttegro
 $ simile start inttegro
 $ simile start inttegro --config inttegro.simile.hcl
 $ simile start inttegro --config inttegro.simile.hcl --port 8484
@@ -167,6 +170,8 @@ the registry layout are preserved.
 
 ```hcl
 service "inttegro" {
+  description = "A local emulator for Inttegro Commerce integrations."
+
   listen {
     host = "127.0.0.1"
     port = 4242
@@ -189,6 +194,13 @@ for CI or isolated development. The server prefers literal routes over parameter
 templates, returns `404` or `405` before entering the runtime, limits bodies to 8 MiB, and preserves
 process-local replay for `Idempotency-Key` and repeated GET identities. See
 [service configuration](docs/service-configuration.md) for the complete current boundary.
+
+`simile describe service NAME` renders the public meaning retained in the registered artifact:
+service metadata, scenarios, environmental faults, profiles, resources, and async plans. Add
+`--verbose` for operations and outcomes, or `--config URL_OR_FILE` to compile and describe a
+transient configuration without changing the registry. Named semantic HCL blocks accept an
+optional public `description`; catalog faults provide one automatically. See
+[Describe a service](docs/describe-service.md).
 
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
 default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a

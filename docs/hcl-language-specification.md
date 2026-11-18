@@ -109,6 +109,20 @@ The following rules apply throughout the language:
 Most attributes require a literal of one exact type. The `body` and `equals` attributes accept any
 expression that evaluates without external variables or functions and converts to a JSON value.
 
+### Public descriptions
+
+Named semantic blocks accept an optional `description` attribute: `service`, `resource`, `async`,
+`behavior`, `outcome`, `error_set`, `protocol_error`, `scenario`, custom `fault`, and
+`fault_profile`. Its value must be a non-empty string. Descriptions are presentation metadata
+retained in the compiled artifact and displayed by `simile describe service`; they never influence
+matching, selection, synthesis, or execution.
+
+Structural blocks do not accept `description`: `listen`, `openapi`, `response`, `when`, `trigger`,
+`apply_error_set`, `faults`, `use`, `select`, `inject`, `delay`, and `disconnect`. Their meaning
+belongs to the named object that contains or references them. Descriptions are public integration
+documentation and must not contain secrets, internal thresholds, private rules, or production
+system names.
+
 ### Notation used below
 
 In syntax summaries:
@@ -122,6 +136,7 @@ In syntax summaries:
 
 ```hcl
 service "NAME" {
+  description = "PUBLIC_DESCRIPTION"
   behaviors = ["PATH", ...]
 
   listen {
@@ -140,6 +155,7 @@ The block is the composition root for a runnable service.
 | Member | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
 | label | yes | non-empty string | — | Service name. It must match the name used by `register`, `update`, or `start`. |
+| `description` | no | non-empty string | — | Public human-readable service description retained for `simile describe`. |
 | `behaviors` | no | array of strings | `[]` | Local behavior-module paths, resolved relative to the configuration file. |
 | `listen` | yes | one block | — | Listener configuration. |
 | `openapi` | yes | one block | — | OpenAPI source. |
@@ -191,10 +207,13 @@ module.
 ### `resource`
 
 ```hcl
-resource "KIND" "NAME" {}
+resource "KIND" "NAME" {
+  description = "PUBLIC_DESCRIPTION"
+}
 ```
 
-A resource names an abstract capability used by emulated asynchronous work. Its body must be empty.
+A resource names an abstract capability used by emulated asynchronous work. `description` is the
+only optional attribute.
 The supported kinds are:
 
 | Kind | Capability |
@@ -215,12 +234,14 @@ provider-neutral; names such as `postgres`, `redis`, or `s3` are rejected.
 
 ```hcl
 async "NAME" {
+  description = "PUBLIC_DESCRIPTION"
   uses = ["RESOURCE_REFERENCE", ...]
 }
 ```
 
 | Attribute | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
+| `description` | no | non-empty string | — | Public explanation of the planned work. |
 | `uses` | no | array of strings | `[]` | Resource references required by the planned work. |
 
 Every reference must resolve to a declared resource. An `async` declaration describes a plan; the
@@ -230,6 +251,7 @@ current HTTP server reports the plan but does not yet execute the resources.
 
 ```hcl
 behavior "OPERATION_ID" {
+  description = "PUBLIC_DESCRIPTION"
   error_sets = ["ERROR_SET", ...]
 
   response { status = STATUS }
@@ -243,6 +265,7 @@ complete service.
 
 | Member | Required | Multiplicity | Meaning |
 | --- | --- | --- | --- |
+| `description` | no | one string | Public explanation of the operation behavior. |
 | `error_sets` | no | one array | Reusable outcome families attached to this operation. |
 | `response` | no | zero or one | Default response-status preference. |
 | `outcome` | no | zero or more | Provider-authored named result. |
@@ -274,6 +297,7 @@ The block has one label and an empty body. The label must resolve to an `async` 
 
 ```hcl
 outcome "manual_review" {
+  description  = "The public result while the order awaits review."
   status       = 202
   content_type = "application/json"
   body = {
@@ -290,6 +314,7 @@ outcome "manual_review" {
 | Member | Required | Type or multiplicity | Meaning |
 | --- | --- | --- | --- |
 | label | yes | string | Public outcome name. |
+| `description` | no | non-empty string | Public explanation of the result. |
 | `status` | yes | integer `100`–`599` | Response status already declared by OpenAPI. |
 | `content_type` | no | string | Response media type. |
 | `body` | no | JSON-compatible HCL value | Exact provider-authored response body. |
@@ -316,6 +341,7 @@ on public request data; they cannot read headers, production state, resources, o
 
 ```hcl
 error_set "payment_errors" {
+  description = "Public payment failures shared by payable operations."
   outcome "card_declined" {
     status = 402
     body = {
@@ -325,9 +351,9 @@ error_set "payment_errors" {
 }
 ```
 
-An error set is a reusable collection of `outcome` blocks. A service may declare each error-set name
-once. An error set is inert until a `behavior.error_sets` attribute or `apply_error_set` block
-attaches it to operations.
+An error set is a reusable collection of `outcome` blocks. Its optional `description` is a non-empty
+public string. A service may declare each error-set name once. An error set is inert until a
+`behavior.error_sets` attribute or `apply_error_set` block attaches it to operations.
 
 ### `apply_error_set`
 
@@ -345,6 +371,7 @@ Each attached outcome is checked against every affected operation's declared res
 
 ```hcl
 protocol_error "invalid_body" {
+  description  = "The submitted body does not satisfy the operation contract."
   statuses     = [422, 400]
   content_type = "application/json"
   body = {
@@ -358,6 +385,7 @@ protocol_error "invalid_body" {
 
 | Attribute | Required | Type | Meaning |
 | --- | --- | --- | --- |
+| `description` | no | non-empty string | Public explanation of the protocol failure. |
 | `statuses` | yes | non-empty array of integers `100`–`599` | Acceptable service statuses, in preference order. |
 | `content_type` | no | string | Response media type. |
 | `body` | no | JSON-compatible HCL value | Exact error body. |
@@ -372,6 +400,7 @@ matched operation; otherwise it uses its diagnostic fallback.
 
 ```hcl
 scenario "decline_after_delay" {
+  description = "Return the public decline outcome after a slow response."
   select "createPayment" {
     outcome = "card_declined"
   }
@@ -382,7 +411,8 @@ scenario "decline_after_delay" {
 }
 ```
 
-A scenario is an opaque, deterministic test control. Its label is selected with `--scenario`.
+A scenario is an opaque, deterministic test control. Its optional `description` is retained for
+`simile describe`. Its label is selected with `--scenario`.
 
 | Nested block | Label | Required attribute | Meaning |
 | --- | --- | --- | --- |
@@ -452,6 +482,7 @@ listed in the [fault glossary](/fault-glossary).
 
 ```hcl
 fault "slow_response" {
+  description = "Delay the completed response by 250 milliseconds."
   phase = "before_response"
 
   delay {
@@ -467,7 +498,9 @@ fault "response_lost" {
 }
 ```
 
-A custom fault has one label, a required `phase`, and exactly one action block.
+A custom fault has one label, an optional non-empty `description`, a required `phase`, and exactly
+one action block. Imported catalog faults inherit the catalog's built-in description, including
+when aliased.
 
 | Phase | Legal action | Meaning |
 | --- | --- | --- |
@@ -481,6 +514,7 @@ combinations are rejected.
 
 ```hcl
 fault_profile "rough_network" {
+  description       = "Occasionally exercise slow or lost responses."
   probability       = 0.02
   faults            = ["http.slow", "http.response_lost"]
   operations        = ["createOrder", "createPayment"]
@@ -492,6 +526,7 @@ fault_profile "rough_network" {
 
 | Attribute | Required | Type | Default | Constraint |
 | --- | --- | --- | --- | --- |
+| `description` | no | non-empty string | — | Public explanation of the stochastic test policy. |
 | `probability` | yes | number | — | `0.000001` through `1`; stored as parts per million. |
 | `faults` | yes | non-empty array of strings | — | Each fault must exist and occur once. |
 | `operations` | no | array of strings | `[]` | OpenAPI `operationId` allowlist; empty means every operation. |
