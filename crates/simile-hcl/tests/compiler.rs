@@ -173,6 +173,214 @@ scenario "lost_after_commit" {
 }
 
 #[test]
+fn imports_catalog_faults_with_defaults_and_typed_overrides() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+faults {
+  use "http.slow" {}
+  use "http.slow" {
+    as      = "very_slow"
+    latency = "5s"
+  }
+  use "http.response_lost" {}
+}
+
+fault_profile "rough_network" {
+  probability = 0.02
+  faults      = ["http.slow", "http.response_lost"]
+}
+
+scenario "slow_order" {
+  inject "createOrder" { fault = "very_slow" }
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        compiled.faults["http.slow"].action,
+        simile_spec::FaultAction::Delay {
+            milliseconds: 1_000
+        }
+    );
+    assert_eq!(
+        compiled.faults["very_slow"].action,
+        simile_spec::FaultAction::Delay {
+            milliseconds: 5_000
+        }
+    );
+    assert_eq!(
+        compiled.faults["http.response_lost"].action,
+        simile_spec::FaultAction::Disconnect
+    );
+    assert_eq!(
+        compiled.scenarios["slow_order"].faults["createOrder"],
+        "very_slow"
+    );
+}
+
+#[test]
+fn rejects_unknown_or_incompatible_catalog_fault_configuration() {
+    let unknown = compile_error([module(
+        r#"
+faults {
+  use "http.not_real" {}
+}
+"#,
+    )]);
+    assert!(unknown.to_string().contains("does not exist"));
+    assert!(unknown.to_string().contains("http.slow"));
+
+    let incompatible = compile_error([module(
+        r#"
+faults {
+  use "http.response_lost" {
+    latency = "2s"
+  }
+}
+"#,
+    )]);
+    assert!(
+        incompatible
+            .to_string()
+            .contains("does not support the `latency` override")
+    );
+
+    let invalid_duration = parse_error(
+        r#"
+faults {
+  use "http.slow" {
+    latency = "2 fortnights"
+  }
+}
+"#,
+    );
+    assert!(invalid_duration.to_string().contains("duration from 1ms"));
+}
+
+#[test]
+fn composes_catalog_fault_sets_with_wildcards_and_exclusions() {
+    let all_except_lost = simile_hcl::compile(
+        [module(
+            r#"
+faults {
+  use "*" {}
+  use "^http.response_lost" {}
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        all_except_lost
+            .faults
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["http.slow"]
+    );
+
+    let namespace_union = simile_hcl::compile(
+        [
+            module(
+                r#"
+faults {
+  use "http.*" {}
+  use "http.slow" {}
+}
+"#,
+            ),
+            module(
+                r#"
+faults {
+  use "^http.response_lost" {}
+}
+"#,
+            ),
+        ],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(namespace_union.faults.len(), 1);
+    assert!(namespace_union.faults.contains_key("http.slow"));
+
+    let namespace_exclusion = simile_hcl::compile(
+        [module(
+            r#"
+faults {
+  use "*" {}
+  use "^http.*" {}
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(namespace_exclusion.faults.is_empty());
+}
+
+#[test]
+fn rejects_ambiguous_or_mistyped_catalog_selectors() {
+    let configured_set = compile_error([module(
+        r#"
+faults {
+  use "http.*" {
+    latency = "2s"
+  }
+}
+"#,
+    )]);
+    assert!(
+        configured_set
+            .to_string()
+            .contains("selects multiple faults")
+    );
+
+    let unmatched = compile_error([module(
+        r#"
+faults {
+  use "network.*" {}
+}
+"#,
+    )]);
+    assert!(unmatched.to_string().contains("does not match any"));
+
+    for invalid in ["http.s*", "^", "http.*.slow", "http*.*"] {
+        let source = format!(
+            r#"
+faults {{
+  use "{invalid}" {{}}
+}}
+"#
+        );
+        let error = parse_error(&source);
+        assert!(
+            error.to_string().contains("invalid fault selector"),
+            "selector {invalid:?} produced {error}"
+        );
+    }
+
+    let configured_exclusion = parse_error(
+        r#"
+faults {
+  use "^http.slow" {
+    latency = "2s"
+  }
+}
+"#,
+    );
+    assert!(
+        configured_exclusion
+            .to_string()
+            .contains("cannot contain overrides")
+    );
+}
+
+#[test]
 fn rejects_faults_that_are_unsafe_or_unresolvable() {
     let incompatible = compile_error([module(
         r#"

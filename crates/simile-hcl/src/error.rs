@@ -113,6 +113,31 @@ pub enum Error {
     #[error("fault `{name}` is declared more than once")]
     DuplicateFault { name: String },
 
+    #[error("catalog fault `{name}` does not exist; available faults: {available}")]
+    UnknownCatalogFault { name: String, available: String },
+
+    #[error(
+        "{file}: invalid fault selector `{selector}`; use an exact name, `namespace.*`, `*`, or prefix one with `^`"
+    )]
+    InvalidFaultSelector { file: String, selector: String },
+
+    #[error("{file}: fault exclusion `{selector}` cannot contain overrides or an alias")]
+    ConfiguredFaultExclusion { file: String, selector: String },
+
+    #[error("fault selector `{selector}` does not match any catalog fault")]
+    UnmatchedFaultSelector { selector: String },
+
+    #[error(
+        "fault selector `{selector}` selects multiple faults and cannot contain overrides or an alias"
+    )]
+    ConfiguredFaultSet { selector: String },
+
+    #[error("catalog fault `{fault}` does not support the `{attribute}` override")]
+    UnsupportedCatalogFaultOverride {
+        fault: String,
+        attribute: &'static str,
+    },
+
     #[error("fault profile `{name}` is declared more than once")]
     DuplicateFaultProfile { name: String },
 

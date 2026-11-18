@@ -91,6 +91,15 @@ pub struct FaultDeclaration {
     pub action: FaultAction,
 }
 
+/// One catalog fault selected by a `faults { use ... }` declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FaultUseDeclaration {
+    pub selector: String,
+    pub exclude: bool,
+    pub alias: Option<String>,
+    pub latency_milliseconds: Option<u64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FaultProfileDeclaration {
     pub name: String,
@@ -117,6 +126,7 @@ pub struct Module {
     pub error_set_applications: Vec<ErrorSetApplicationDeclaration>,
     pub protocol_errors: Vec<ProtocolErrorDeclaration>,
     pub scenarios: Vec<ScenarioDeclaration>,
+    pub fault_uses: Vec<FaultUseDeclaration>,
     pub faults: Vec<FaultDeclaration>,
     pub fault_profiles: Vec<FaultProfileDeclaration>,
     pub async_operations: Vec<AsyncDeclaration>,

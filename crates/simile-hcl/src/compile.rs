@@ -13,6 +13,7 @@ pub fn compile(
     api: &ApiContract,
 ) -> Result<BehaviorSpec> {
     let mut spec = BehaviorSpec::default();
+    let mut fault_uses = Vec::new();
     install_builtin_protocol_errors(&mut spec);
 
     for module in modules {
@@ -22,10 +23,13 @@ pub fn compile(
         collect_error_set_applications(&mut spec, module.error_set_applications);
         collect_protocol_errors(&mut spec, module.protocol_errors)?;
         collect_behaviors(&mut spec, module.behaviors)?;
+        fault_uses.extend(module.fault_uses);
         collect_faults(&mut spec, module.faults)?;
         collect_fault_profiles(&mut spec, module.fault_profiles)?;
         collect_scenarios(&mut spec, module.scenarios)?;
     }
+
+    collect_fault_uses(&mut spec, fault_uses)?;
 
     validate_resources(&spec)?;
     validate_behaviors(&spec, api)?;
@@ -245,9 +249,107 @@ fn collect_faults(
             phase: declaration.phase,
             action: declaration.action,
         };
-        if spec.faults.insert(name.clone(), fault).is_some() {
-            return Err(Error::DuplicateFault { name });
+        insert_fault(spec, fault)?;
+    }
+    Ok(())
+}
+
+fn collect_fault_uses(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::FaultUseDeclaration>,
+) -> Result<()> {
+    let declarations = declarations.into_iter().collect::<Vec<_>>();
+    let mut exclusions = BTreeSet::new();
+    for declaration in declarations
+        .iter()
+        .filter(|declaration| declaration.exclude)
+    {
+        let selected = select_catalog_faults(&declaration.selector)?;
+        exclusions.extend(selected.into_iter().map(|fault| fault.name));
+    }
+
+    let mut expanded = BTreeMap::new();
+    for declaration in declarations
+        .into_iter()
+        .filter(|declaration| !declaration.exclude)
+    {
+        let selected = select_catalog_faults(&declaration.selector)?;
+        let configured = declaration.alias.is_some() || declaration.latency_milliseconds.is_some();
+        if configured && selected.len() != 1 {
+            return Err(Error::ConfiguredFaultSet {
+                selector: declaration.selector,
+            });
         }
+        for mut fault in selected {
+            if exclusions.contains(&fault.name) {
+                continue;
+            }
+            let catalog_name = fault.name.clone();
+            if let Some(alias) = &declaration.alias {
+                fault.name.clone_from(alias);
+            }
+            apply_catalog_overrides(&mut fault, &catalog_name, declaration.latency_milliseconds)?;
+            match expanded.get(&fault.name) {
+                Some(existing) if existing == &fault => continue,
+                Some(_) => {
+                    return Err(Error::DuplicateFault {
+                        name: fault.name.clone(),
+                    });
+                }
+                None => {
+                    expanded.insert(fault.name.clone(), fault);
+                }
+            }
+        }
+    }
+    for fault in expanded.into_values() {
+        insert_fault(spec, fault)?;
+    }
+    Ok(())
+}
+
+fn select_catalog_faults(selector: &str) -> Result<Vec<Fault>> {
+    let selected = simile_spec::fault_catalog::select(selector);
+    if selected.is_empty() {
+        return Err(if selector.contains('*') {
+            Error::UnmatchedFaultSelector {
+                selector: selector.to_owned(),
+            }
+        } else {
+            Error::UnknownCatalogFault {
+                name: selector.to_owned(),
+                available: simile_spec::fault_catalog::names().join(", "),
+            }
+        });
+    }
+    Ok(selected)
+}
+
+fn apply_catalog_overrides(
+    fault: &mut Fault,
+    catalog_name: &str,
+    latency_milliseconds: Option<u64>,
+) -> Result<()> {
+    if let Some(milliseconds) = latency_milliseconds {
+        match &mut fault.action {
+            FaultAction::Delay {
+                milliseconds: configured,
+            } => *configured = milliseconds,
+            FaultAction::Disconnect => {
+                return Err(Error::UnsupportedCatalogFaultOverride {
+                    fault: catalog_name.to_owned(),
+                    attribute: "latency",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn insert_fault(spec: &mut BehaviorSpec, fault: Fault) -> Result<()> {
+    let name = fault.name.clone();
+    if spec.faults.insert(name.clone(), fault).is_some() {
+        return Err(Error::DuplicateFault { name });
     }
     Ok(())
 }

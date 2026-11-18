@@ -115,7 +115,8 @@ pub enum FaultAction {
     Disconnect,
 }
 
-/// A named, provider-authored environmental fault.
+/// A named environmental fault, either provider-authored or expanded from a
+/// built-in catalog entry during compilation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Fault {
     pub name: String,

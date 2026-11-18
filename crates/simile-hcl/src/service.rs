@@ -5,8 +5,9 @@ use crate::ast::{
     ListenDeclaration, Module, OpenApiDeclaration, ServiceDeclaration, ServiceDocument, Source,
 };
 use crate::parse::{
-    apply_error_set, async_operation, attribute, behavior, error_set, fault, fault_profile, labels,
-    protocol_error, reject_attributes, reject_blocks, resource, scenario, string_array,
+    apply_error_set, async_operation, attribute, behavior, error_set, fault, fault_profile,
+    fault_uses, labels, protocol_error, reject_attributes, reject_blocks, resource, scenario,
+    string_array,
 };
 use crate::{Error, Result};
 
@@ -27,6 +28,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         error_set_applications: Vec::new(),
         protocol_errors: Vec::new(),
         scenarios: Vec::new(),
+        fault_uses: Vec::new(),
         faults: Vec::new(),
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
@@ -67,6 +69,9 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "scenario" => inline_behavior
                     .scenarios
                     .push(scenario(block, source.name)?),
+                "faults" => inline_behavior
+                    .fault_uses
+                    .extend(fault_uses(block, source.name)?),
                 "fault" => inline_behavior.faults.push(fault(block, source.name)?),
                 "fault_profile" => inline_behavior
                     .fault_profiles
@@ -254,6 +259,10 @@ fault "slow_response" {
   delay { milliseconds = 25 }
 }
 
+faults {
+  use "http.response_lost" {}
+}
+
 fault_profile "rough_network" {
   probability = 0.01
   faults      = ["slow_response"]
@@ -277,6 +286,7 @@ scenario "slow_order" {
         assert_eq!(document.inline_behavior.resources.len(), 1);
         assert_eq!(document.inline_behavior.async_operations.len(), 1);
         assert_eq!(document.inline_behavior.behaviors.len(), 1);
+        assert_eq!(document.inline_behavior.fault_uses.len(), 1);
         assert_eq!(document.inline_behavior.faults.len(), 1);
         assert_eq!(document.inline_behavior.fault_profiles.len(), 1);
         assert_eq!(document.inline_behavior.scenarios[0].faults.len(), 1);

@@ -2,6 +2,7 @@
 
 mod behavior;
 mod contract;
+pub mod fault_catalog;
 
 pub use behavior::{
     AsyncOperation, Behavior, BehaviorOrigin, BehaviorSpec, CompiledOperation, CompiledService,

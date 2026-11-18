@@ -8,10 +8,10 @@ mod service;
 
 pub use ast::{
     AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
-    FaultDeclaration, FaultProfileDeclaration, ListenDeclaration, Module, OpenApiDeclaration,
-    OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration,
-    ScenarioFaultDeclaration, ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument,
-    Source,
+    FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
+    OpenApiDeclaration, OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration,
+    ScenarioDeclaration, ScenarioFaultDeclaration, ScenarioSelectionDeclaration,
+    ServiceDeclaration, ServiceDocument, Source,
 };
 pub use compile::compile;
 pub use error::{Error, Result};

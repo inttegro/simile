@@ -7,7 +7,7 @@ use simile_spec::{FaultAction, FaultPhase, ResourceKind, ResourceRef};
 
 use crate::ast::{
     AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
-    FaultDeclaration, FaultProfileDeclaration, Module, OutcomeDeclaration,
+    FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, Module, OutcomeDeclaration,
     ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, Source,
 };
@@ -26,6 +26,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
         error_set_applications: Vec::new(),
         protocol_errors: Vec::new(),
         scenarios: Vec::new(),
+        fault_uses: Vec::new(),
         faults: Vec::new(),
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
@@ -50,6 +51,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                     .protocol_errors
                     .push(protocol_error(block, &module.source)?),
                 "scenario" => module.scenarios.push(scenario(block, &module.source)?),
+                "faults" => module.fault_uses.extend(fault_uses(block, &module.source)?),
                 "fault" => module.faults.push(fault(block, &module.source)?),
                 "fault_profile" => module
                     .fault_profiles
@@ -68,6 +70,71 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
     }
 
     Ok(module)
+}
+
+pub(crate) fn fault_uses(block: &Block, source: &str) -> Result<Vec<FaultUseDeclaration>> {
+    labels(block, source, 0)?;
+    reject_attributes(block.body(), source, "faults", &[])?;
+    block
+        .body()
+        .blocks()
+        .map(|child| {
+            if child.identifier() != "use" {
+                return Err(Error::UnknownNestedBlock {
+                    file: source.to_owned(),
+                    block: "faults".to_owned(),
+                    nested: child.identifier().to_owned(),
+                });
+            }
+            labels(child, source, 1)?;
+            reject_blocks(child.body(), source, "use")?;
+            reject_attributes(child.body(), source, "use", &["as", "latency"])?;
+
+            let raw_selector = child.labels()[0].as_str();
+            let (exclude, selector) = raw_selector
+                .strip_prefix('^')
+                .map_or((false, raw_selector), |selector| (true, selector));
+            if !valid_fault_selector(selector) {
+                return Err(Error::InvalidFaultSelector {
+                    file: source.to_owned(),
+                    selector: raw_selector.to_owned(),
+                });
+            }
+            let alias = attribute(child.body(), "as")
+                .map(|attribute| non_empty_string(attribute, source, "use", "as"))
+                .transpose()?;
+            let latency_milliseconds = attribute(child.body(), "latency")
+                .map(|attribute| duration_milliseconds(attribute, source, "use", "latency"))
+                .transpose()?;
+
+            if exclude && (alias.is_some() || latency_milliseconds.is_some()) {
+                return Err(Error::ConfiguredFaultExclusion {
+                    file: source.to_owned(),
+                    selector: raw_selector.to_owned(),
+                });
+            }
+
+            Ok(FaultUseDeclaration {
+                selector: selector.to_owned(),
+                exclude,
+                alias,
+                latency_milliseconds,
+            })
+        })
+        .collect()
+}
+
+fn valid_fault_selector(selector: &str) -> bool {
+    if selector.is_empty() {
+        return false;
+    }
+    if selector == "*" {
+        return true;
+    }
+    if let Some(namespace) = selector.strip_suffix(".*") {
+        return !namespace.is_empty() && !namespace.contains('*');
+    }
+    !selector.contains('*')
 }
 
 pub(crate) fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
@@ -585,6 +652,67 @@ fn string_attribute(
             attribute: name.to_owned(),
             expected: "a string",
         }),
+    }
+}
+
+fn non_empty_string(
+    attribute: &Attribute,
+    source: &str,
+    block: &str,
+    name: &str,
+) -> Result<String> {
+    string_attribute(attribute, source, block, name).and_then(|value| {
+        if value.trim().is_empty() {
+            Err(Error::InvalidAttribute {
+                file: source.to_owned(),
+                block: block.to_owned(),
+                attribute: name.to_owned(),
+                expected: "a non-empty string",
+            })
+        } else {
+            Ok(value)
+        }
+    })
+}
+
+fn duration_milliseconds(
+    attribute: &Attribute,
+    source: &str,
+    block: &str,
+    name: &str,
+) -> Result<u64> {
+    const MAX_MILLISECONDS: u64 = 86_400_000;
+    let value = match attribute.expr() {
+        Expression::String(value) => value,
+        _ => {
+            return Err(invalid_duration(source, block, name));
+        }
+    };
+    let (number, multiplier) = if let Some(number) = value.strip_suffix("ms") {
+        (number, 1)
+    } else if let Some(number) = value.strip_suffix('s') {
+        (number, 1_000)
+    } else if let Some(number) = value.strip_suffix('m') {
+        (number, 60_000)
+    } else if let Some(number) = value.strip_suffix('h') {
+        (number, 3_600_000)
+    } else {
+        return Err(invalid_duration(source, block, name));
+    };
+    number
+        .parse::<u64>()
+        .ok()
+        .and_then(|number| number.checked_mul(multiplier))
+        .filter(|milliseconds| (1..=MAX_MILLISECONDS).contains(milliseconds))
+        .ok_or_else(|| invalid_duration(source, block, name))
+}
+
+fn invalid_duration(source: &str, block: &str, name: &str) -> Error {
+    Error::InvalidAttribute {
+        file: source.to_owned(),
+        block: block.to_owned(),
+        attribute: name.to_owned(),
+        expected: "a duration from 1ms through 24h, such as `250ms`, `2s`, `1m`, or `1h`",
     }
 }
 
