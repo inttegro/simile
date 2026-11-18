@@ -37,6 +37,7 @@
 						"pages": [
 							"openapi-extensions",
 							"request-response-relations",
+							"x-simile-constraints",
 							"constraint-mechanics",
 							"constraint-value-relationships",
 							"constraint-conditional-derived",

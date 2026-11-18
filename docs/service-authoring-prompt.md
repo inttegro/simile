@@ -123,7 +123,7 @@ request and response schemas are not enough to prove reachability. Declare only 
 - omit optional response data that the selected request flow cannot produce; and
 - never encode private decision trees merely to make synthesis more specific.
 
-See [Request-response relations](/request-response-relations) for the executable grammar.
+See [`x-simile-from-request`](/request-response-relations) for the executable grammar.
 
 Simile HCL requirements
 
@@ -271,5 +271,5 @@ The finished contract should be useful without HCL, faithful without exposing in
 
 Read [OpenAPI and HCL](/openapi-and-hcl) for the source-ownership model,
 [OpenAPI extensions](/openapi-extensions) for the supported constraint vocabulary,
-[Request-response relations](/request-response-relations) for cross-message reachability, and
+[`x-simile-from-request`](/request-response-relations) for cross-message reachability, and
 [Service configuration](/service-configuration) for the configuration grammar.

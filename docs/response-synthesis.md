@@ -78,7 +78,7 @@ authoritative request values, validates the complete response, and finally prove
 
 The runtime exposes the distinction as `ResponseSoundness::SchemaOnly` or
 `ResponseSoundness::RequestConstrained`. Read
-[Request-response relations](/request-response-relations) for the authoring language.
+[`x-simile-from-request`](/request-response-relations) for the authoring language.
 
 Form, multipart, and non-JSON response encoders are outside the current slice. Declared non-JSON
 content produces an explicit unsupported-encoder error rather than unverified bytes.

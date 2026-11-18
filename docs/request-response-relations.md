@@ -1,5 +1,5 @@
 ---
-title: Request-response relations
+title: x-simile-from-request
 description: Prove that a synthesized response is reachable from the request that produced it.
 ---
 
