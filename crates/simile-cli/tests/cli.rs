@@ -305,7 +305,7 @@ fn removes_only_an_exactly_confirmed_registered_service() {
         .stderr_eq("service removal not confirmed; --confirm must exactly match `orders`\n");
     assert!(home.join("services/orders/current").is_file());
 
-    let removed_directory = home.join("services/orders");
+    let removed_directory = home.join("services").join("orders");
     let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
         .env("SIMILE_HOME", &home)
         .args([
