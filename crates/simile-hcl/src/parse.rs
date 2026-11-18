@@ -139,7 +139,8 @@ fn valid_fault_selector(selector: &str) -> bool {
 
 pub(crate) fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
     labels(block, source, 2)?;
-    empty_body(block.body(), source, "resource")?;
+    reject_blocks(block.body(), source, "resource")?;
+    reject_attributes(block.body(), source, "resource", &["description"])?;
     let kind = block.labels()[0].as_str();
     let kind = ResourceKind::from_str(kind).map_err(|()| Error::UnknownResourceKind {
         file: source.to_owned(),
@@ -149,12 +150,19 @@ pub(crate) fn resource(block: &Block, source: &str) -> Result<ResourceDeclaratio
     Ok(ResourceDeclaration {
         kind,
         name: block.labels()[1].as_str().to_owned(),
+        description: optional_description(block.body(), source, "resource")?,
     })
 }
 
 pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaration> {
     labels(block, source, 1)?;
-    reject_attributes(block.body(), source, "behavior", &["error_sets"])?;
+    reject_attributes(
+        block.body(),
+        source,
+        "behavior",
+        &["description", "error_sets"],
+    )?;
+    let description = optional_description(block.body(), source, "behavior")?;
     let mut response_status = None;
     let error_sets = attribute(block.body(), "error_sets")
         .map(|value| string_array(value, source, "behavior", "error_sets"))
@@ -194,6 +202,7 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
 
     Ok(BehaviorDeclaration {
         operation_id: block.labels()[0].as_str().to_owned(),
+        description,
         response_status,
         error_sets,
         outcomes,
@@ -203,7 +212,7 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
 
 pub(crate) fn error_set(block: &Block, source: &str) -> Result<ErrorSetDeclaration> {
     labels(block, source, 1)?;
-    reject_attributes(block.body(), source, "error_set", &[])?;
+    reject_attributes(block.body(), source, "error_set", &["description"])?;
     let outcomes = block
         .body()
         .blocks()
@@ -220,6 +229,7 @@ pub(crate) fn error_set(block: &Block, source: &str) -> Result<ErrorSetDeclarati
         .collect::<Result<Vec<_>>>()?;
     Ok(ErrorSetDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "error_set")?,
         outcomes,
     })
 }
@@ -258,8 +268,9 @@ fn outcome(block: &Block, source: &str) -> Result<OutcomeDeclaration> {
         block.body(),
         source,
         "outcome",
-        &["status", "content_type", "body"],
+        &["description", "status", "content_type", "body"],
     )?;
+    let description = optional_description(block.body(), source, "outcome")?;
     let status = status_attribute(block.body(), source, "outcome", "status")?;
     let content_type = attribute(block.body(), "content_type")
         .map(|attribute| string_attribute(attribute, source, "outcome", "content_type"))
@@ -294,6 +305,7 @@ fn outcome(block: &Block, source: &str) -> Result<OutcomeDeclaration> {
         .collect::<Result<Vec<_>>>()?;
     Ok(OutcomeDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description,
         status,
         content_type,
         body,
@@ -308,8 +320,9 @@ pub(crate) fn protocol_error(block: &Block, source: &str) -> Result<ProtocolErro
         block.body(),
         source,
         "protocol_error",
-        &["statuses", "content_type", "body"],
+        &["description", "statuses", "content_type", "body"],
     )?;
+    let description = optional_description(block.body(), source, "protocol_error")?;
     let statuses = attribute(block.body(), "statuses")
         .ok_or_else(|| Error::MissingAttribute {
             file: source.to_owned(),
@@ -325,6 +338,7 @@ pub(crate) fn protocol_error(block: &Block, source: &str) -> Result<ProtocolErro
         .transpose()?;
     Ok(ProtocolErrorDeclaration {
         cause: block.labels()[0].as_str().to_owned(),
+        description,
         statuses,
         content_type,
         body,
@@ -333,7 +347,7 @@ pub(crate) fn protocol_error(block: &Block, source: &str) -> Result<ProtocolErro
 
 pub(crate) fn scenario(block: &Block, source: &str) -> Result<ScenarioDeclaration> {
     labels(block, source, 1)?;
-    reject_attributes(block.body(), source, "scenario", &[])?;
+    reject_attributes(block.body(), source, "scenario", &["description"])?;
     let mut selections = Vec::new();
     let mut faults = Vec::new();
     for child in block.body().blocks() {
@@ -365,6 +379,7 @@ pub(crate) fn scenario(block: &Block, source: &str) -> Result<ScenarioDeclaratio
     }
     Ok(ScenarioDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "scenario")?,
         selections,
         faults,
     })
@@ -372,7 +387,7 @@ pub(crate) fn scenario(block: &Block, source: &str) -> Result<ScenarioDeclaratio
 
 pub(crate) fn fault(block: &Block, source: &str) -> Result<FaultDeclaration> {
     labels(block, source, 1)?;
-    reject_attributes(block.body(), source, "fault", &["phase"])?;
+    reject_attributes(block.body(), source, "fault", &["description", "phase"])?;
     let phase = match required_string(block.body(), source, "fault", "phase")?.as_str() {
         "before_response" => FaultPhase::BeforeResponse,
         "after_commit" => FaultPhase::AfterCommit,
@@ -423,6 +438,7 @@ pub(crate) fn fault(block: &Block, source: &str) -> Result<FaultDeclaration> {
     };
     Ok(FaultDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "fault")?,
         phase,
         action,
     })
@@ -437,6 +453,7 @@ pub(crate) fn fault_profile(block: &Block, source: &str) -> Result<FaultProfileD
         "fault_profile",
         &[
             "probability",
+            "description",
             "faults",
             "operations",
             "max_consecutive",
@@ -477,6 +494,7 @@ pub(crate) fn fault_profile(block: &Block, source: &str) -> Result<FaultProfileD
     let seed = optional_u64(block.body(), source, "fault_profile", "seed")?;
     Ok(FaultProfileDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "fault_profile")?,
         probability_ppm,
         faults,
         operations,
@@ -738,7 +756,7 @@ fn literal_value(
 pub(crate) fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclaration> {
     labels(block, source, 1)?;
     reject_blocks(block.body(), source, "async")?;
-    reject_attributes(block.body(), source, "async", &["uses"])?;
+    reject_attributes(block.body(), source, "async", &["description", "uses"])?;
     let uses = attribute(block.body(), "uses")
         .map(|value| string_array(value, source, "async", "uses"))
         .transpose()?
@@ -749,8 +767,19 @@ pub(crate) fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclar
 
     Ok(AsyncDeclaration {
         name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "async")?,
         uses,
     })
+}
+
+pub(crate) fn optional_description(
+    body: &Body,
+    source: &str,
+    block: &str,
+) -> Result<Option<String>> {
+    attribute(body, "description")
+        .map(|attribute| non_empty_string(attribute, source, block, "description"))
+        .transpose()
 }
 
 pub(crate) fn string_array(

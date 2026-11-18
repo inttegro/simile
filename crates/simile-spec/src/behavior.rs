@@ -8,6 +8,79 @@ use simile_heuristics::Policy;
 
 use crate::{ApiContract, Operation, OperationKey};
 
+/// The kind of named authoring object described by public presentation metadata.
+///
+/// Descriptions never participate in request matching, outcome selection, or
+/// fault execution. Keeping the vocabulary explicit lets `simile describe`
+/// explain a compiled service without re-reading its source HCL.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DescriptionKind {
+    Service,
+    Behavior,
+    Outcome,
+    ErrorSet,
+    ProtocolError,
+    Scenario,
+    Resource,
+    AsyncOperation,
+    Fault,
+    FaultProfile,
+}
+
+/// One human-readable description retained in a compiled service artifact.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptionEntry {
+    pub kind: DescriptionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub name: String,
+    pub text: String,
+}
+
+/// Presentation metadata for named service concepts.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct DescriptionCatalog {
+    entries: Vec<DescriptionEntry>,
+}
+
+impl DescriptionCatalog {
+    pub fn insert(&mut self, entry: DescriptionEntry) {
+        if let Some(existing) = self.entries.iter_mut().find(|existing| {
+            existing.kind == entry.kind
+                && existing.parent == entry.parent
+                && existing.name == entry.name
+        }) {
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+            self.entries.sort_by(|left, right| {
+                (&left.kind, &left.parent, &left.name).cmp(&(
+                    &right.kind,
+                    &right.parent,
+                    &right.name,
+                ))
+            });
+        }
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[DescriptionEntry] {
+        &self.entries
+    }
+
+    #[must_use]
+    pub fn find(&self, kind: DescriptionKind, parent: Option<&str>, name: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.kind == kind && entry.parent.as_deref() == parent && entry.name == name
+            })
+            .map(|entry| entry.text.as_str())
+    }
+}
+
 /// How much authority the compiled artifact has for an operation outcome.
 ///
 /// This provenance is carried into `.similec` so `simile inspect` can distinguish
@@ -256,6 +329,7 @@ pub struct AsyncOperation {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BehaviorSpec {
+    pub descriptions: DescriptionCatalog,
     pub resources: BTreeMap<ResourceRef, Resource>,
     pub behaviors: BTreeMap<String, Behavior>,
     pub error_sets: BTreeMap<String, ErrorSet>,
@@ -287,6 +361,7 @@ pub struct CompiledOperation {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledService {
+    pub descriptions: DescriptionCatalog,
     pub contract: ApiContract,
     pub heuristic_policy: Policy,
     pub operations: BTreeMap<OperationKey, CompiledOperation>,

@@ -95,6 +95,7 @@ impl Compiler {
         validate_scenario_outcomes(&operations, &behaviors.scenarios)?;
 
         Ok(CompiledService {
+            descriptions: behaviors.descriptions,
             contract,
             heuristic_policy: request.heuristic_policy,
             operations,

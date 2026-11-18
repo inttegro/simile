@@ -6,6 +6,7 @@ use simile_artifact::Artifact;
 use simile_compiler::{Compiler, ParsedCompileRequest, Source};
 use simile_hcl::{OpenApiDeclaration, ServiceDocument};
 use simile_heuristics::Policy;
+use simile_spec::{DescriptionEntry, DescriptionKind};
 
 use super::run::{SpecSource, read_spec};
 use crate::registry::{Registry, SourceLocation};
@@ -97,11 +98,19 @@ pub(crate) fn prepare_loaded_service(
         ))?);
     }
 
-    let compiled = Compiler::new().compile_parsed(ParsedCompileRequest {
+    let mut compiled = Compiler::new().compile_parsed(ParsedCompileRequest {
         openapi: Source::new(&openapi_name, &openapi),
         behaviors,
         heuristic_policy: Policy::Standard,
     })?;
+    if let Some(description) = &document.service.description {
+        compiled.descriptions.insert(DescriptionEntry {
+            kind: DescriptionKind::Service,
+            parent: None,
+            name: document.service.name.clone(),
+            text: description.clone(),
+        });
+    }
     let encoded = simile_artifact::encode(&compiled)?;
     let artifact = simile_artifact::decode(&encoded)?;
     let host = document

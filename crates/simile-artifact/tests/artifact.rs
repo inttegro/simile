@@ -4,9 +4,10 @@ use serde_json::json;
 use simile_artifact::{Error, decode, encode};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorOrigin, CompiledOperation, CompiledService,
-    HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation, OperationKey,
-    Outcome, OutcomeProvenance, RequestBodyContract, Resource, ResourceKind, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    DescriptionCatalog, DescriptionEntry, DescriptionKind, HttpMethod, MediaTypeContract,
+    OpenApiFeature, OpenApiVersion, Operation, OperationKey, Outcome, OutcomeProvenance,
+    RequestBodyContract, Resource, ResourceKind, ResponseBodyContract, ResponseContract,
+    ResponseStatus, ServiceInfo,
 };
 
 #[test]
@@ -18,7 +19,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 11);
+    assert_eq!(summary.format_version, 12);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -44,6 +45,10 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
     assert_eq!(operation.key(), "POST /orders");
     assert_eq!(operation.operation_id(), Some("createOrder"));
     assert!(artifact.operation_by_id("CreateOrder").is_none());
+    assert_eq!(
+        artifact.description(DescriptionKind::Behavior, None, "createOrder"),
+        Some("Create an order for one customer.")
+    );
 
     let request = operation
         .request_body()
@@ -410,6 +415,16 @@ fn example_service() -> CompiledService {
         outcomes: Vec::new(),
     };
     CompiledService {
+        descriptions: {
+            let mut descriptions = DescriptionCatalog::default();
+            descriptions.insert(DescriptionEntry {
+                kind: DescriptionKind::Behavior,
+                parent: None,
+                name: "createOrder".to_owned(),
+                text: "Create an order for one customer.".to_owned(),
+            });
+            descriptions
+        },
         contract: ApiContract {
             openapi: OpenApiVersion {
                 exact: "3.2.1".to_owned(),

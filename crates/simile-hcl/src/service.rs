@@ -6,8 +6,8 @@ use crate::ast::{
 };
 use crate::parse::{
     apply_error_set, async_operation, attribute, behavior, error_set, fault, fault_profile,
-    fault_uses, labels, protocol_error, reject_attributes, reject_blocks, resource, scenario,
-    string_array,
+    fault_uses, labels, optional_description, protocol_error, reject_attributes, reject_blocks,
+    resource, scenario, string_array,
 };
 use crate::{Error, Result};
 
@@ -109,7 +109,12 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
             expected: "a non-empty service name",
         });
     }
-    reject_attributes(block.body(), source, "service", &["behaviors"])?;
+    reject_attributes(
+        block.body(),
+        source,
+        "service",
+        &["behaviors", "description"],
+    )?;
     let behaviors = attribute(block.body(), "behaviors")
         .map(|value| string_array(value, source, "service", "behaviors"))
         .transpose()?
@@ -128,6 +133,7 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
 
     Ok(ServiceDeclaration {
         name: name.to_owned(),
+        description: optional_description(block.body(), source, "service")?,
         listen,
         openapi,
         behaviors,

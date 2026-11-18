@@ -12,13 +12,13 @@ use simile_schema::{
     SchemaCatalog,
 };
 use simile_spec::{
-    BehaviorOrigin, CompiledService, FaultAction, FaultPhase, HttpMethod, OpenApiFeature,
-    OutcomeProvenance, ResourceKind, ResourceRef, ResponseStatus,
+    BehaviorOrigin, CompiledService, DescriptionKind, FaultAction, FaultPhase, HttpMethod,
+    OpenApiFeature, OutcomeProvenance, ResourceKind, ResourceRef, ResponseStatus,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 11;
+pub const FORMAT_VERSION: u16 = 12;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -93,6 +93,7 @@ pub struct ArtifactOperation<'a> {
     method: &'a str,
     path: &'a str,
     operation_id: Option<&'a str>,
+    summary: Option<&'a str>,
     request_body: Option<&'a RequestBodyPlan>,
     responses: &'a [ResponseRecord],
     outcomes: &'a [OutcomeRecord],
@@ -137,6 +138,14 @@ pub struct ArtifactProtocolError {
     provenance: OutcomeProvenance,
 }
 
+/// One opaque public scenario loaded from a compiled artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactScenario {
+    name: String,
+    selections: Vec<(String, String)>,
+    faults: Vec<(String, String)>,
+}
+
 /// One environmental fault loaded from a compiled artifact.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtifactFault {
@@ -173,6 +182,15 @@ pub struct ArtifactResource<'a> {
     name: &'a str,
 }
 
+/// One human-readable authoring description retained in the artifact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArtifactDescription<'a> {
+    kind: DescriptionKind,
+    parent: Option<&'a str>,
+    name: &'a str,
+    text: &'a str,
+}
+
 impl<'a> ArtifactOperation<'a> {
     #[must_use]
     pub const fn key(&self) -> &'a str {
@@ -192,6 +210,11 @@ impl<'a> ArtifactOperation<'a> {
     #[must_use]
     pub const fn operation_id(&self) -> Option<&'a str> {
         self.operation_id
+    }
+
+    #[must_use]
+    pub const fn summary(&self) -> Option<&'a str> {
+        self.summary
     }
 
     #[must_use]
@@ -341,6 +364,23 @@ impl ArtifactProtocolError {
     }
 }
 
+impl ArtifactScenario {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn selections(&self) -> &[(String, String)] {
+        &self.selections
+    }
+
+    #[must_use]
+    pub fn faults(&self) -> &[(String, String)] {
+        &self.faults
+    }
+}
+
 impl ArtifactFault {
     #[must_use]
     pub fn name(&self) -> &str {
@@ -432,7 +472,35 @@ impl<'a> ArtifactResource<'a> {
     }
 }
 
+impl<'a> ArtifactDescription<'a> {
+    #[must_use]
+    pub const fn kind(&self) -> DescriptionKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn parent(&self) -> Option<&'a str> {
+        self.parent
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    #[must_use]
+    pub const fn text(&self) -> &'a str {
+        self.text
+    }
+}
+
 impl Artifact {
+    /// Return the OpenAPI service description embedded in the contract, if any.
+    #[must_use]
+    pub fn service_description(&self) -> Option<&str> {
+        self.payload.2.2.map(|id| self.string(id))
+    }
+
     #[must_use]
     pub fn summary(&self) -> ArtifactSummary {
         let responses = self
@@ -576,6 +644,61 @@ impl Artifact {
             })
     }
 
+    pub fn protocol_errors(&self) -> impl Iterator<Item = ArtifactProtocolError> + '_ {
+        self.payload.2.6.iter().map(|error| ArtifactProtocolError {
+            cause: self.string(error.0).to_owned(),
+            statuses: error.1.clone(),
+            content_type: error.2.map(|id| self.string(id).to_owned()),
+            body: error.3.map(|id| self.value(id)),
+            provenance: decode_outcome_provenance(error.4),
+        })
+    }
+
+    pub fn scenarios(&self) -> impl Iterator<Item = ArtifactScenario> + '_ {
+        self.payload.2.7.iter().map(|scenario| ArtifactScenario {
+            name: self.string(scenario.0).to_owned(),
+            selections: scenario
+                .1
+                .iter()
+                .map(|(operation, outcome)| {
+                    (
+                        self.string(*operation).to_owned(),
+                        self.string(*outcome).to_owned(),
+                    )
+                })
+                .collect(),
+            faults: scenario
+                .2
+                .iter()
+                .map(|(operation, fault)| {
+                    (
+                        self.string(*operation).to_owned(),
+                        self.string(*fault).to_owned(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    pub fn resources(&self) -> impl Iterator<Item = ArtifactResource<'_>> {
+        self.payload.5.iter().map(|resource| ArtifactResource {
+            kind: decode_resource_kind(resource.0),
+            name: self.string(resource.1),
+        })
+    }
+
+    pub fn async_operations(&self) -> impl Iterator<Item = ArtifactAsyncOperation<'_>> {
+        self.payload
+            .6
+            .iter()
+            .map(|operation| ArtifactAsyncOperation {
+                name: self.string(operation.0),
+                uses: &operation.1,
+                strings: &self.payload.1,
+                resources: &self.payload.5,
+            })
+    }
+
     /// Resolve an opaque scenario into the named outcome for one operation.
     #[must_use]
     pub fn scenario_outcome(&self, scenario: &str, operation: &str) -> Option<&str> {
@@ -659,6 +782,33 @@ impl Artifact {
             .map(|record| self.decode_fault_profile(record))
     }
 
+    /// Iterate over public descriptions in stable semantic order.
+    pub fn descriptions(&self) -> impl Iterator<Item = ArtifactDescription<'_>> {
+        self.payload.2.10.iter().map(|record| ArtifactDescription {
+            kind: decode_description_kind(record.0),
+            parent: record.1.map(|id| self.string(id)),
+            name: self.string(record.2),
+            text: self.string(record.3),
+        })
+    }
+
+    /// Find the description for one named semantic object.
+    #[must_use]
+    pub fn description(
+        &self,
+        kind: DescriptionKind,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Option<&str> {
+        self.descriptions()
+            .find(|description| {
+                description.kind() == kind
+                    && description.parent() == parent
+                    && description.name() == name
+            })
+            .map(|description| description.text())
+    }
+
     #[must_use]
     pub fn has_fault_profile(&self, name: &str) -> bool {
         self.payload
@@ -695,6 +845,7 @@ impl Artifact {
             method: decode_method(operation.1, operation.2.map(|id| self.string(id))),
             path: self.string(operation.3),
             operation_id: operation.4.map(|id| self.string(id)),
+            summary: operation.5.map(|id| self.string(id)),
             request_body: operation.6.as_ref(),
             responses: &operation.7,
             outcomes: &operation.10,
@@ -876,7 +1027,11 @@ struct ServiceRecord(
     Vec<ScenarioRecord>,
     Vec<FaultRecord>,
     Vec<FaultProfileRecord>,
+    Vec<DescriptionRecord>,
 );
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct DescriptionRecord(u8, Option<StringId>, StringId, StringId);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct OperationRecord(
@@ -1162,6 +1317,19 @@ impl Payload {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
+        let descriptions = service
+            .descriptions
+            .entries()
+            .iter()
+            .map(|description| {
+                Ok(DescriptionRecord(
+                    encode_description_kind(description.kind),
+                    strings.optional(description.parent.as_deref())?,
+                    strings.id(&description.name)?,
+                    strings.id(&description.text)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let service_record = ServiceRecord(
             strings.id(&service.contract.info.title)?,
             strings.id(&service.contract.info.version)?,
@@ -1173,6 +1341,7 @@ impl Payload {
             scenarios,
             faults,
             fault_profiles,
+            descriptions,
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -1407,6 +1576,14 @@ impl Payload {
                 return Err(Error::Invalid("fault profile maximum consecutive faults"));
             }
         }
+        for description in &self.2.10 {
+            if description.0 > 9 {
+                return Err(Error::Invalid("description kind"));
+            }
+            validate_optional_index(description.1, strings, "description parent")?;
+            validate_index(description.2, strings, "description name")?;
+            validate_index(description.3, strings, "description text")?;
+        }
 
         for operation in &self.3 {
             validate_index(operation.0, strings, "operation key")?;
@@ -1594,6 +1771,13 @@ fn select_response_record(responses: &[ResponseRecord], status: u16) -> Option<&
 }
 
 fn audit_public_export(service: &CompiledService) -> Result<()> {
+    for description in service.descriptions.entries() {
+        if let Some(parent) = &description.parent {
+            audit_public_name(parent)?;
+        }
+        audit_public_name(&description.name)?;
+        audit_public_name(&description.text)?;
+    }
     for operation in service.operations.values() {
         for outcome in &operation.outcomes {
             audit_public_name(&outcome.name)?;
@@ -1728,6 +1912,13 @@ impl StringTable {
             values.insert(profile.name.clone());
             values.extend(profile.faults.iter().cloned());
             values.extend(profile.operations.iter().cloned());
+        }
+        for description in service.descriptions.entries() {
+            if let Some(parent) = &description.parent {
+                values.insert(parent.clone());
+            }
+            values.insert(description.name.clone());
+            values.insert(description.text.clone());
         }
         for resource in service.resources.values() {
             values.insert(resource.name.clone());
@@ -1932,6 +2123,37 @@ fn decode_outcome_provenance(provenance: u8) -> OutcomeProvenance {
     }
 }
 
+const fn encode_description_kind(kind: DescriptionKind) -> u8 {
+    match kind {
+        DescriptionKind::Service => 0,
+        DescriptionKind::Behavior => 1,
+        DescriptionKind::Outcome => 2,
+        DescriptionKind::ErrorSet => 3,
+        DescriptionKind::ProtocolError => 4,
+        DescriptionKind::Scenario => 5,
+        DescriptionKind::Resource => 6,
+        DescriptionKind::AsyncOperation => 7,
+        DescriptionKind::Fault => 8,
+        DescriptionKind::FaultProfile => 9,
+    }
+}
+
+fn decode_description_kind(kind: u8) -> DescriptionKind {
+    match kind {
+        0 => DescriptionKind::Service,
+        1 => DescriptionKind::Behavior,
+        2 => DescriptionKind::Outcome,
+        3 => DescriptionKind::ErrorSet,
+        4 => DescriptionKind::ProtocolError,
+        5 => DescriptionKind::Scenario,
+        6 => DescriptionKind::Resource,
+        7 => DescriptionKind::AsyncOperation,
+        8 => DescriptionKind::Fault,
+        9 => DescriptionKind::FaultProfile,
+        _ => unreachable!("artifact validation rejects unknown description kinds"),
+    }
+}
+
 const fn encode_fault_phase(phase: FaultPhase) -> u8 {
     match phase {
         FaultPhase::BeforeResponse => 0,
@@ -2031,6 +2253,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
             ),
             vec![OperationRecord(
                 99,
@@ -2078,6 +2301,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 vec![FaultRecord(4, 0, 1, 0)],
+                Vec::new(),
                 Vec::new(),
             ),
             Vec::new(),

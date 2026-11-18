@@ -220,6 +220,67 @@ scenario "slow_order" {
         compiled.scenarios["slow_order"].faults["createOrder"],
         "very_slow"
     );
+    assert_eq!(
+        compiled
+            .descriptions
+            .find(simile_spec::DescriptionKind::Fault, None, "http.slow"),
+        Some("Delay the completed response before delivery.")
+    );
+    assert_eq!(
+        compiled
+            .descriptions
+            .find(simile_spec::DescriptionKind::Fault, None, "very_slow"),
+        Some("Delay the completed response before delivery.")
+    );
+}
+
+#[test]
+fn retains_public_descriptions_without_changing_behavior() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+resource "queue" "orders" {
+  description = "Carries accepted orders."
+}
+
+async "dispatch_order" {
+  description = "Queue the order for fulfillment."
+  uses = ["queue.orders"]
+}
+
+behavior "createOrder" {
+  description = "Create one order."
+  outcome "accepted" {
+    description = "The order was accepted."
+    status = 201
+  }
+}
+
+scenario "accepted_order" {
+  description = "Force the accepted result."
+  select "createOrder" { outcome = "accepted" }
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        compiled
+            .descriptions
+            .find(simile_spec::DescriptionKind::Behavior, None, "createOrder"),
+        Some("Create one order.")
+    );
+    assert_eq!(
+        compiled.descriptions.find(
+            simile_spec::DescriptionKind::Outcome,
+            Some("behavior:createOrder"),
+            "accepted"
+        ),
+        Some("The order was accepted.")
+    );
+    assert_eq!(compiled.behaviors["createOrder"].outcomes[0].status, 201);
 }
 
 #[test]

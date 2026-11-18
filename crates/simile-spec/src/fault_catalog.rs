@@ -24,6 +24,18 @@ pub const fn names() -> &'static [&'static str] {
     NAMES
 }
 
+/// Return the public human-readable explanation bundled with a catalog fault.
+#[must_use]
+pub fn description(name: &str) -> Option<&'static str> {
+    match name {
+        HTTP_SLOW => Some("Delay the completed response before delivery."),
+        HTTP_RESPONSE_LOST => Some(
+            "Commit the operation, then close delivery before the caller receives the response.",
+        ),
+        _ => None,
+    }
+}
+
 /// Resolve one catalog entry into its complete canonical fault definition.
 ///
 /// The returned value is owned so an authoring adapter can apply a supported

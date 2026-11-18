@@ -18,6 +18,7 @@ impl<'a> Source<'a> {
 pub struct ResourceDeclaration {
     pub kind: ResourceKind,
     pub name: String,
+    pub description: Option<String>,
 }
 
 impl ResourceDeclaration {
@@ -30,6 +31,7 @@ impl ResourceDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BehaviorDeclaration {
     pub operation_id: String,
+    pub description: Option<String>,
     pub response_status: Option<u16>,
     pub error_sets: Vec<String>,
     pub outcomes: Vec<OutcomeDeclaration>,
@@ -39,6 +41,7 @@ pub struct BehaviorDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub status: u16,
     pub content_type: Option<String>,
     pub body: Option<Value>,
@@ -48,6 +51,7 @@ pub struct OutcomeDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorSetDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub outcomes: Vec<OutcomeDeclaration>,
 }
 
@@ -60,6 +64,7 @@ pub struct ErrorSetApplicationDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolErrorDeclaration {
     pub cause: String,
+    pub description: Option<String>,
     pub statuses: Vec<u16>,
     pub content_type: Option<String>,
     pub body: Option<Value>,
@@ -68,6 +73,7 @@ pub struct ProtocolErrorDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScenarioDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub selections: Vec<ScenarioSelectionDeclaration>,
     pub faults: Vec<ScenarioFaultDeclaration>,
 }
@@ -87,6 +93,7 @@ pub struct ScenarioFaultDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FaultDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub phase: FaultPhase,
     pub action: FaultAction,
 }
@@ -103,6 +110,7 @@ pub struct FaultUseDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FaultProfileDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub probability_ppm: u32,
     pub faults: Vec<String>,
     pub operations: Vec<String>,
@@ -114,6 +122,7 @@ pub struct FaultProfileDeclaration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AsyncDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub uses: Vec<ResourceRef>,
 }
 
@@ -141,6 +150,7 @@ pub struct ServiceDocument {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceDeclaration {
     pub name: String,
+    pub description: Option<String>,
     pub listen: ListenDeclaration,
     pub openapi: OpenApiDeclaration,
     pub behaviors: Vec<String>,

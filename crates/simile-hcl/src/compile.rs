@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use simile_spec::{
-    ApiContract, AsyncOperation, Behavior, BehaviorSpec, ErrorSet, ErrorSetApplication, Fault,
-    FaultAction, FaultPhase, FaultProfile, Outcome, OutcomeProvenance, ProtocolError, Resource,
-    Scenario,
+    ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind,
+    ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase, FaultProfile, Outcome,
+    OutcomeProvenance, ProtocolError, Resource, Scenario,
 };
 
 use crate::{Error, Module, Result};
@@ -82,6 +82,13 @@ fn collect_resources(
 ) -> Result<()> {
     for declaration in declarations {
         let reference = declaration.reference();
+        insert_description(
+            spec,
+            DescriptionKind::Resource,
+            None,
+            reference.as_str(),
+            declaration.description.clone(),
+        );
         let resource = Resource {
             kind: declaration.kind,
             name: declaration.name,
@@ -101,6 +108,13 @@ fn collect_async_operations(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::AsyncOperation,
+            None,
+            &name,
+            declaration.description,
+        );
         let operation = AsyncOperation {
             name: name.clone(),
             uses: declaration.uses,
@@ -122,6 +136,23 @@ fn collect_behaviors(
 ) -> Result<()> {
     for declaration in declarations {
         let operation_id = declaration.operation_id;
+        insert_description(
+            spec,
+            DescriptionKind::Behavior,
+            None,
+            &operation_id,
+            declaration.description,
+        );
+        let parent = format!("behavior:{operation_id}");
+        for outcome in &declaration.outcomes {
+            insert_description(
+                spec,
+                DescriptionKind::Outcome,
+                Some(&parent),
+                &outcome.name,
+                outcome.description.clone(),
+            );
+        }
         let behavior = Behavior {
             operation_id: operation_id.clone(),
             response_status: declaration.response_status,
@@ -150,6 +181,23 @@ fn collect_error_sets(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::ErrorSet,
+            None,
+            &name,
+            declaration.description,
+        );
+        let parent = format!("error_set:{name}");
+        for outcome in &declaration.outcomes {
+            insert_description(
+                spec,
+                DescriptionKind::Outcome,
+                Some(&parent),
+                &outcome.name,
+                outcome.description.clone(),
+            );
+        }
         let set = ErrorSet {
             name: name.clone(),
             outcomes: declaration
@@ -182,6 +230,13 @@ fn collect_protocol_errors(
 ) -> Result<()> {
     for declaration in declarations {
         let cause = declaration.cause;
+        insert_description(
+            spec,
+            DescriptionKind::ProtocolError,
+            None,
+            &cause,
+            declaration.description,
+        );
         spec.protocol_errors.insert(
             cause.clone(),
             ProtocolError {
@@ -202,6 +257,13 @@ fn collect_scenarios(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::Scenario,
+            None,
+            &name,
+            declaration.description,
+        );
         let mut selections = BTreeMap::new();
         for selection in declaration.selections {
             if selections
@@ -244,6 +306,13 @@ fn collect_faults(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::Fault,
+            None,
+            &name,
+            declaration.description,
+        );
         let fault = Fault {
             name: name.clone(),
             phase: declaration.phase,
@@ -289,6 +358,13 @@ fn collect_fault_uses(
                 fault.name.clone_from(alias);
             }
             apply_catalog_overrides(&mut fault, &catalog_name, declaration.latency_milliseconds)?;
+            insert_description(
+                spec,
+                DescriptionKind::Fault,
+                None,
+                &fault.name,
+                simile_spec::fault_catalog::description(&catalog_name).map(str::to_owned),
+            );
             match expanded.get(&fault.name) {
                 Some(existing) if existing == &fault => continue,
                 Some(_) => {
@@ -360,6 +436,13 @@ fn collect_fault_profiles(
 ) -> Result<()> {
     for declaration in declarations {
         let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::FaultProfile,
+            None,
+            &name,
+            declaration.description,
+        );
         let profile = FaultProfile {
             name: name.clone(),
             probability_ppm: declaration.probability_ppm,
@@ -374,6 +457,23 @@ fn collect_fault_profiles(
         }
     }
     Ok(())
+}
+
+fn insert_description(
+    spec: &mut BehaviorSpec,
+    kind: DescriptionKind,
+    parent: Option<&str>,
+    name: &str,
+    text: Option<String>,
+) {
+    if let Some(text) = text {
+        spec.descriptions.insert(DescriptionEntry {
+            kind,
+            parent: parent.map(str::to_owned),
+            name: name.to_owned(),
+            text,
+        });
+    }
 }
 
 fn validate_faults(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
