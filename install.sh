@@ -18,7 +18,7 @@ elif [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
   # v1.2.3 without allowing path traversal or arbitrary release URLs.
   release_path="download/v${version#v}"
 else
-  fail "SIMILE_VERSION must be 'latest' or a semantic version such as 0.1.1"
+  fail "SIMILE_VERSION must be 'latest' or a semantic version such as 0.2.0"
 fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"

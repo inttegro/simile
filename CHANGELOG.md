@@ -4,6 +4,17 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-18
+
+- Prove request-aware response synthesis with provider-authored request-to-response bindings,
+  OpenAPI patterns, lifecycle reachability, and response soundness checks.
+- Compile reusable environmental fault catalogs, namespace selectors and exclusions, deterministic
+  profiles, and bounded delay or disconnect transport plans.
+- Add exact-confirmation service removal and expand the service registry lifecycle.
+- Advance the compiled artifact format to version 11. Existing artifacts must be recompiled.
+- Add the Simile discovery site, installation downloads, architecture references, OpenAPI extension
+  guides, service-authoring guidance, and a fault glossary.
+
 ## 0.1.1 - 2026-11-17
 
 - Add a stable shell-install bootstrap for macOS and Linux.

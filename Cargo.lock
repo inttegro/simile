@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "simile-artifact"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ciborium",
  "serde",
@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "simile-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "simile-compiler"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "simile-hcl",
  "simile-heuristics",
@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "simile-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "simile-hcl"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hcl-rs",
  "serde_json",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "simile-heuristics"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "simile-openapi"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "semver",
  "serde_json",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "simile-runtime"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "rand",
  "serde_json",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "simile-schema"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "rand",
  "rand_regex",
@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "simile-server"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "simile-spec"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
