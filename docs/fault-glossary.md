@@ -1,17 +1,29 @@
 ---
 title: Fault glossary
-description: Catalog names, selectors, phases, actions, and execution terms used by Simile faults.
+description: Complete fault names, availability, scopes, selectors, phases, and execution terms.
 ---
 
-Use this page when authoring a service configuration or reading fault output. It names the faults
-Simile can execute today and distinguishes them from domain errors, validation failures, and
-asynchronous effects.
+Use this page when authoring a service configuration, planning a resilience test, or reading fault
+output. It records the complete designed catalog, identifies which entries Simile can execute
+today, and distinguishes faults from domain errors, validation failures, and asynchronous effects.
 
-## Built-in catalog
+## Catalog status
 
 Catalog entries are complete, provider-neutral fault definitions. Importing one copies its phase,
 action, and default parameters into the compiled service artifact. Simile does not resolve the
 catalog again at run time.
+
+The HTTP and TLS catalog currently has **25 defined entries**: **2 available** and **23 planned**.
+Only entries marked **Available** are legal in `faults { use ... }`. Planned names document the
+stable direction and intended semantics; the compiler rejects them until the relevant adapter can
+perform the fault truthfully.
+
+<Warning>
+Do not use a planned entry as if it were executable. Simile deliberately fails an unmatched exact
+name or namespace instead of compiling a fault that does nothing.
+</Warning>
+
+## Available now
 
 | Name | Phase | Action and default | Observable behavior | Allowed override |
 | --- | --- | --- | --- | --- |
@@ -22,11 +34,84 @@ Both entries are safe for deterministic scenario injection and bounded stochasti
 `http.response_lost`, an idempotent retry returns the committed outcome; Simile does not replay the
 delivery failure.
 
-<Note>
-The current executable catalog contains the `http` namespace only. A selector such as `http2.*`
-or `network.*` fails compilation until that namespace has real adapter behavior. Simile never
-accepts a catalog name that would become a no-op.
-</Note>
+## Complete HTTP and TLS catalog
+
+### Timing and flow
+
+| # | Name | Availability | Intended scope | Observable behavior |
+| --- | --- | --- | --- | --- |
+| 1 | `http.slow` | **Available** | operation | Delay the completed response before delivery. |
+| 2 | `http.slow_request_read` | Planned | request stream | Consume the request body slowly enough to exercise caller and server time budgets. |
+| 3 | `http.slow_response_headers` | Planned | response headers | Delay only the response headers. |
+| 4 | `http.slow_response_body` | Planned | response stream | Send the response body gradually after headers arrive. |
+| 5 | `http.request_read_timeout` | Planned | request stream | Time out while consuming the request body. |
+| 6 | `http.response_write_timeout` | Planned | response stream | Time out while writing the response. |
+| 7 | `http.stalled_response` | Planned | response stream | Begin processing or delivery but never complete the response. |
+
+### Connection lifecycle
+
+| # | Name | Availability | Intended scope | Observable behavior |
+| --- | --- | --- | --- | --- |
+| 8 | `http.connection_closed_before_response` | Planned | connection | Close the connection cleanly without returning a response. |
+| 9 | `http.connection_reset_before_response` | Planned | connection | Reset the connection before response delivery begins. |
+| 10 | `http.connection_reset_during_response` | Planned | response stream | Reset the connection after partial response delivery. |
+| 11 | `http.response_lost` | **Available** | after commit | Commit successfully, then close before the caller receives the response. |
+| 12 | `http.keep_alive_closed` | Planned | connection | Unexpectedly close a connection the caller expected to reuse. |
+| 13 | `http.connection_refused` | Planned | listener | Refuse the connection before an HTTP operation exists. |
+
+### Response integrity
+
+| # | Name | Availability | Intended scope | Observable behavior |
+| --- | --- | --- | --- | --- |
+| 14 | `http.truncated_response` | Planned | response stream | Send only part of the declared response body. |
+| 15 | `http.malformed_body` | Planned | response body | Return bytes invalid for the declared representation. |
+| 16 | `http.malformed_headers` | Planned | response headers | Emit invalid response headers. |
+| 17 | `http.incorrect_content_length` | Planned | response headers | Declare a length different from the transmitted body. |
+| 18 | `http.corrupt_compression` | Planned | response stream | Return invalid compressed content. |
+| 19 | `http.wrong_content_type` | Planned | response headers | Return bytes under an incompatible media type. |
+| 20 | `http.invalid_chunk_encoding` | Planned | HTTP/1.1 stream | Emit invalid chunk framing. |
+
+### HTTP/2
+
+| # | Name | Availability | Intended scope | Observable behavior |
+| --- | --- | --- | --- | --- |
+| 21 | `http2.rst_stream` | Planned | HTTP/2 stream | Reset the active stream. |
+| 22 | `http2.goaway` | Planned | HTTP/2 session | Terminate the connection with `GOAWAY`. |
+| 23 | `http2.refused_stream` | Planned | HTTP/2 stream | Refuse a stream in a way that permits a caller retry. |
+
+### TLS
+
+| # | Name | Availability | Intended scope | Observable behavior |
+| --- | --- | --- | --- | --- |
+| 24 | `tls.handshake_timeout` | Planned | TLS handshake | Stall until the caller's handshake deadline expires. |
+| 25 | `tls.handshake_failure` | Planned | TLS handshake | Terminate the handshake unsuccessfully. |
+
+The scope column matters. Operation-scoped faults can be attached after route selection.
+Connection-, listener-, HTTP/2-, and TLS-scoped faults require controls outside the current
+operation runner. They will become importable only with a scope model and adapter implementation
+that preserve their actual retry and commit semantics.
+
+## Planned subsystem namespaces
+
+Wire faults are only one half of the catalog. Simile's resource abstractions also need faults for
+observable dependency and async-work behavior. These namespaces remain design vocabulary rather
+than executable selectors until deterministic resource adapters exist.
+
+| Namespace | Planned behavior families |
+| --- | --- |
+| `network.*` | latency, partition, packet loss, bandwidth limits, and DNS failure |
+| `db.*` | unavailability, timeout, deadlock, write conflict, stale read, and partial commit |
+| `cache.*` | miss, unavailability, timeout, stale value, and eviction |
+| `queue.*` | publish failure, delayed delivery, duplicate delivery, redelivery, dropped messages, and reordering |
+| `mail.*` | rejection, bounce, delayed delivery, rate limiting, and provider unavailability |
+| `object_store.*` | unavailability, timeout, missing object, corrupt read, and interrupted write |
+| `event_bus.*` | failed publication, delayed event, duplicate event, and reordering |
+| `scheduler.*` | delayed, missed, and duplicate execution |
+| `process.*` | crash, restart, overload, and graceful shutdown during work |
+| `clock.*` | skew, freeze, forward jump, and backward jump |
+
+These remain environmental or subsystem faults. Service-specific failures such as a declined
+payment, depleted balance, or forbidden state remain deterministic outcomes.
 
 ## Selector glossary
 
