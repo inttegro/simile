@@ -33,6 +33,15 @@ service described by the long-term charter.
 - response delay before delivery and disconnect after commit
 - resolved planning of HCL-declared async work
 
+### Stack resource layer
+
+- typed deterministic engines for database, cache, queue, mail, object store, event bus,
+  scheduler, and outbound HTTP capabilities
+- one versioned command/result protocol with resource-kind validation and idempotent replay
+- one logical-time model for cache TTLs, queue visibility, scheduled work, and timestamps
+- serializable snapshots, reset, stable resource errors, and a payload-free causal journal
+- separately runnable `simile-*` component processes with uniform lifecycle endpoints
+
 ### HTTP server
 
 - literal and `{parameter}` path matching, preferring literal routes
@@ -52,14 +61,17 @@ is not emulated. Form URL-encoded, multipart, and other non-JSON body codecs are
 
 ### Stateful behavior
 
-There is no durable resource store or provider-authored state-action language yet. A POST does not
-implicitly create a resource for a later GET. Replay exists only in memory for one runtime process.
+The Stack engines can retain and snapshot resource state, but the operation runtime does not yet
+compile or dispatch provider-authored state actions. A POST served by `simile start` therefore does
+not implicitly create a resource for a later GET. Operation replay remains process-local.
 
 ### Effect execution
 
-HCL async operations are returned as resolved plans, but the HTTP server does not dispatch queues,
-mail, webhooks, schedules, databases, or event buses. There is no effect history, retry clock, or
-manual async advancement interface yet.
+HCL async operations and their abstract dependencies are retained for discovery, but are not
+attached to operation results. The HTTP server does not launch or dispatch Stack components. The
+components already provide local state, a causal journal, logical time, and manual advancement; the
+missing layer is the provider-authored effect and action IR plus the adapter that sends commands
+after operation commit.
 
 ### Production equivalence
 
@@ -81,8 +93,9 @@ You can confidently test:
 - how an integration handles declared latency or a lost response after commit; and
 - which follow-up operations the definition declares as planned.
 
-Do not yet assert that cross-operation resource state changed or that a declared async effect was
-delivered. Those would convert a documented future boundary into a false test guarantee.
+Do not yet assert through `simile start` that cross-operation resource state changed or that a
+declared async effect was delivered. Stack can model both in isolation, but automatic operation
+integration is still a documented boundary.
 
 Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
 [Fault injection](/fault-injection) for the environmental failure model, or

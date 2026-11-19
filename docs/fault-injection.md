@@ -9,7 +9,7 @@ result the service produces. That distinction keeps Simile useful for integratio
 - a declined payment, invalid parameter, or forbidden state is a deterministic outcome selected by
   a public request condition or an opaque scenario;
 - high latency and a lost connection are environmental faults applied to an operation attempt; and
-- asynchronous work remains a declared effect, not a fault.
+- asynchronous work is declared separately and is not a fault.
 
 Simile models those concepts separately all the way from HCL to the HTTP adapter. A stochastic
 profile can therefore disrupt delivery, but it cannot invent a bad payment method when the caller

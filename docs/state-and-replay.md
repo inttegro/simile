@@ -10,7 +10,7 @@ does not yet implement a durable resource database or infer CRUD semantics from 
 ## Mutation replay
 
 The HTTP adapter turns `Idempotency-Key` into a replay identity scoped to the operation. The first
-completed outcome—including its response and async plan—is cached in the running `Runtime`.
+completed outcome, including its response, is cached in the running `Runtime`.
 
 A later call with the same operation and key:
 

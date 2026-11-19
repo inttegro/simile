@@ -146,7 +146,6 @@ async "dispatch_order" {
 
 behavior "createOrder" {
   response { status = 201 }
-  trigger "dispatch_order" {}
 }
 
 faults {
@@ -157,7 +156,9 @@ faults {
 
 Resources are the portable dependencies of the emulated service. They name abstract capabilities
 such as `db`, `cache`, `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, or `http`, never a
-production vendor. Async declarations connect observable follow-up work to those capabilities.
+production vendor. Async declarations name background work and the capabilities it may use. They
+are retained for discovery but are not currently attached to operations or executed; that boundary
+belongs to the forthcoming effect model.
 
 Imported and inline declarations enter the same semantic compiler. Duplicate declarations,
 unknown OpenAPI operation IDs, undeclared resources, and contradictory response selections fail

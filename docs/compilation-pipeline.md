@@ -43,7 +43,7 @@ The semantic compiler rejects:
 - duplicate declarations;
 - behavior that names an unknown `operationId`;
 - a response status absent from that operation;
-- unknown async operations or resources;
+- unknown resources used by async declarations;
 - provider-specific resource kinds; and
 - scenarios that select unknown outcomes.
 

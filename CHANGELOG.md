@@ -4,6 +4,11 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Remove the unused `behavior.trigger` HCL form and operation-to-async artifact links. Async
+  declarations remain available for service discovery until the effect model owns attachment and
+  dispatch.
+- Advance the compiled artifact format to version 13. Existing artifacts must be recompiled.
+
 ## 0.2.0 - 2026-11-18
 
 - Prove request-aware response synthesis with provider-authored request-to-response bindings,

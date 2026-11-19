@@ -42,7 +42,7 @@ HCL can:
 - select outcomes from public request values;
 - group outcomes into opaque test scenarios;
 - map Simile's protocol-error categories to declared service responses; and
-- attach declared asynchronous work and abstract dependencies to an operation.
+- declare background work and its abstract dependencies for discovery and future effect execution.
 
 HCL cannot add a route, replace a request schema, invent a response status, or contradict OpenAPI.
 It targets an operation by its exact `operationId`, which is why an operation needs an ID only when
@@ -63,13 +63,13 @@ async "dispatch_order" {
 
 behavior "createOrder" {
   response { status = 201 }
-  trigger "dispatch_order" {}
 }
 ```
 
-The compiler verifies that `createOrder` exists, `201` is declared, `dispatch_order` exists, and
-both resource references resolve. The runtime then returns an async plan after a successful
-operation. It does **not** yet execute the queue or mail resources.
+The compiler verifies that `createOrder` exists, `201` is declared, and both resource references
+resolve. It retains `dispatch_order` as a standalone declaration for `simile describe`. The runtime
+does not attach or execute it. A forthcoming effect model will express when an operation schedules
+background work without overloading `behavior`.
 
 ## Exact outcomes without private rules
 
@@ -114,7 +114,7 @@ first-class.
 
 The complete block grammar, value types, defaults, and name-resolution rules are defined in the
 [Simile HCL language specification](/hcl-language-specification). Use the
-[HCL glossary](/hcl-glossary) when a term such as outcome, scenario, fault, or effect plan needs a
+[HCL glossary](/hcl-glossary) when a term such as outcome, scenario, fault, or effect needs a
 precise definition.
 
 When ordinary OpenAPI Schema cannot express a public relationship between fields, Simile provides

@@ -137,7 +137,7 @@ Use HCL only for public observable behavior that OpenAPI cannot express adequate
 - public request predicates;
 - opaque test scenarios;
 - protocol-error mappings;
-- declared asynchronous work and abstract dependencies; and
+- standalone asynchronous-work declarations and abstract dependencies for discovery; and
 - environmental delivery faults and bounded stochastic fault profiles.
 
 Prefer OpenAPI named examples before introducing HCL outcomes.

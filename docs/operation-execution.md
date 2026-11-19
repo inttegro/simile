@@ -1,6 +1,6 @@
 ---
 title: Operation execution
-description: Follow a validated operation through response selection, replay, and effect planning.
+description: Follow a validated operation through response selection, replay, and delivery faults.
 ---
 
 Simile executes a compiled service through a protocol-neutral runtime. The runtime does
@@ -36,8 +36,7 @@ It performs one ordered run:
 1. resolve the operation from the loaded artifact;
 2. decode and validate the request body;
 3. synthesize the immediate response, using the validated request as context; and
-4. collect the asynchronous operations attached by HCL, including their abstract resources; and
-5. cache the completed outcome when the adapter supplied a replay identity.
+4. cache the completed outcome when the adapter supplied a replay identity.
 
 ```mermaid
 sequenceDiagram
@@ -52,12 +51,12 @@ sequenceDiagram
   O-->>R: named outcome or default selection
   R->>S: synthesize and validate response
   S-->>R: response
-  R-->>A: response + planned async work
+  R-->>A: completed response
 ```
 
-The result owns the validated request body, synthesized response, and asynchronous operation plan.
-No plan is returned when validation or response synthesis fails. This gives future state and effect
-execution a single success boundary instead of spreading partial work across transport handlers.
+The result owns the validated request body and synthesized response. Future state and effect
+execution can consume that completed result as a single success boundary instead of spreading
+partial work across transport handlers.
 
 ## One-shot CLI execution
 
@@ -77,8 +76,7 @@ value from the compiled schema. This also applies to optional request bodies; on
 operation with no request-body declaration runs without one by default. `--content-type` selects a
 media type for synthesis and cannot be combined with `--request`. By default, stdout is only the
 pretty-printed JSON response payload; a bodyless response is `null`. Passing `--verbose` prints the
-selected operation, normalized request, provided headers, response metadata, and asynchronous
-plan. Each invocation is a fresh process and therefore produces fresh schema-valid values; it is
+selected operation, normalized request, provided headers, and response metadata. Each invocation is a fresh process and therefore produces fresh schema-valid values; it is
 not an HTTP server or a persistent replay store.
 
 `--outcome NAME` selects one named result directly. `--scenario NAME` activates an opaque scenario
@@ -88,7 +86,7 @@ require magic provider headers.
 ## Replay identity
 
 A `Runtime` owns an in-memory replay index for its lifetime. A repeated idempotency key returns the
-first completed outcome, including its generated response and asynchronous plan. Reusing that key
+first completed outcome, including its generated response. Reusing that key
 with a different validated request is an error. A repeated `Resource` identity is accepted only for
 a GET operation and returns the first outcome for that operation and resource. Different identities,
 or calls without an identity, generate fresh outcomes.
@@ -111,14 +109,10 @@ HTTP adapter enacts the transport plan; the runtime never sleeps or manipulates 
 
 ## Asynchronous work
 
-The runtime plans declared work; it does not claim that the work has executed. Each planned entry
-contains the HCL async-operation name and its abstract resource references, such as `db.orders` or
-`mail.receipts`. A subsequent runtime layer can dispatch those entries to deterministic local
-resource implementations and record their progress without reparsing HCL or performing string
-lookups through the compiled service graph.
-
-OpenAPI-only operations produce an empty asynchronous plan. Simile does not infer storage or
-effects from route names.
+HCL may declare named async work and its abstract resource references, such as `db.orders` or
+`mail.receipts`. Those declarations are retained for discovery but are not attached to operations,
+so every current operation result contains no asynchronous work. Simile does not infer storage or
+effects from route names. The forthcoming effect model will own explicit attachment and dispatch.
 
 ## HTTP adapter
 
@@ -133,8 +127,8 @@ effects from route names.
 It currently matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, extracts
 `Content-Type` and `Idempotency-Key`, and preserves GET replay by full URI. Path, query, and header
 schema validation, authentication behavior, form and multipart codecs, durable state, and execution
-of asynchronous plans remain later runtime slices. They are not silently treated as implemented by
-the current body-oriented runtime.
+of provider-authored effects remain later runtime slices. They are not silently treated as
+implemented by the current body-oriented runtime.
 
 For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
 current persistence model, read [State, identity, and replay](/state-and-replay). For routing,

@@ -105,9 +105,8 @@ printed as `null`:
 simile run ./openapi.yaml --operation-id createOrder | jq .id
 ```
 
-With `--verbose`, Simile also reports the normalized request, operation, response metadata,
-selected outcome and provenance, and planned async work. Diagnostics remain on stderr so stdout is
-safe to pipe.
+With `--verbose`, Simile also reports the normalized request, operation, response metadata, and
+selected outcome and provenance. Diagnostics remain on stderr so stdout is safe to pipe.
 
 Next, read [Request validation](/request-validation) and
 [Response synthesis](/response-synthesis) for the two halves of execution.

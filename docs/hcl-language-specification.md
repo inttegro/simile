@@ -117,7 +117,7 @@ Named semantic blocks accept an optional `description` attribute: `service`, `re
 retained in the compiled artifact and displayed by `simile describe service`; they never influence
 matching, selection, synthesis, or execution.
 
-Structural blocks do not accept `description`: `listen`, `openapi`, `response`, `when`, `trigger`,
+Structural blocks do not accept `description`: `listen`, `openapi`, `response`, `when`,
 `apply_error_set`, `faults`, `use`, `select`, `inject`, `delay`, and `disconnect`. Their meaning
 belongs to the named object that contains or references them. Descriptions are public integration
 documentation and must not contain secrets, internal thresholds, private rules, or production
@@ -244,8 +244,10 @@ async "NAME" {
 | `description` | no | non-empty string | — | Public explanation of the planned work. |
 | `uses` | no | array of strings | `[]` | Resource references required by the planned work. |
 
-Every reference must resolve to a declared resource. An `async` declaration describes a plan; the
-current HTTP server reports the plan but does not yet execute the resources.
+Every reference must resolve to a declared resource. An `async` declaration currently stands on
+its own: Simile compiles it into the service artifact and exposes it through `simile describe`, but
+does not attach it to an HTTP operation or execute it. Operation attachment belongs to the
+forthcoming effect model, not to `behavior`.
 
 ### `behavior`
 
@@ -256,7 +258,6 @@ behavior "OPERATION_ID" {
 
   response { status = STATUS }
   outcome "NAME" { ... }
-  trigger "ASYNC_NAME" {}
 }
 ```
 
@@ -269,10 +270,9 @@ complete service.
 | `error_sets` | no | one array | Reusable outcome families attached to this operation. |
 | `response` | no | zero or one | Default response-status preference. |
 | `outcome` | no | zero or more | Provider-authored named result. |
-| `trigger` | no | zero or more | Async plan attached to a completed operation. |
 
-All referenced error sets and async operations must exist. All selected statuses must already be
-declared by the OpenAPI operation.
+All referenced error sets must exist. All selected statuses must already be declared by the
+OpenAPI operation.
 
 ### `response`
 
@@ -284,14 +284,6 @@ response {
 
 `status` is required and must be an HTTP status integer from `100` through `599`. The operation's
 OpenAPI responses must declare it.
-
-### `trigger`
-
-```hcl
-trigger "dispatch_order" {}
-```
-
-The block has one label and an empty body. The label must resolve to an `async` declaration.
 
 ### `outcome`
 
@@ -550,7 +542,7 @@ file. Compilation rejects:
 - unknown OpenAPI operation IDs or tags;
 - response statuses absent from the targeted OpenAPI operation;
 - provider-authored response bodies that fail the selected response schema;
-- unknown resources, async operations, error sets, outcomes, or faults;
+- unknown resources, error sets, outcomes, or faults;
 - duplicate provider-authored outcome names for one operation; and
 - incompatible fault phases, actions, selectors, or stochastic-profile members.
 

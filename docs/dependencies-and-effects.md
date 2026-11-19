@@ -3,9 +3,9 @@ title: Dependencies and effects
 description: Model observable follow-up work without leaking production infrastructure.
 ---
 
-Many operations do work after the immediate HTTP response. Simile represents that work explicitly
-instead of pretending the response is the entire operation. The provider declares an abstract
-resource, names an async operation that uses it, and attaches that operation to an HTTP behavior.
+Many operations do work after the immediate HTTP response. Simile can already name that work and
+its abstract dependencies without exposing production infrastructure. It does not yet attach the
+work to an HTTP operation; that responsibility belongs to the forthcoming effect model.
 
 ```hcl
 resource "db" "orders" {}
@@ -19,18 +19,13 @@ async "publish_order" {
     "mail.receipts",
   ]
 }
-
-behavior "createOrder" {
-  response { status = 201 }
-  trigger "publish_order" {}
-}
 ```
 
 ## Why resources are abstract
 
-The portable definition says that order creation needs database-like state, an event bus, and mail.
-It does not say PostgreSQL, Kafka, or SES. Production vendor choices are neither necessary for
-local emulation nor safe to treat as part of a public behavioral contract.
+The portable definition says that `publish_order` may use database-like state, an event bus, and
+mail. It does not say PostgreSQL, Kafka, or SES. Production vendor choices are neither necessary
+for local emulation nor safe to treat as part of a public behavioral contract.
 
 Supported resource kinds are:
 
@@ -45,37 +40,43 @@ Supported resource kinds are:
 
 The compiler rejects any other kind and rejects references to undeclared resources.
 
-## What the runtime does today
+## What the operation runtime does today
 
-After request validation and response synthesis succeed, the runtime returns a plan containing the
-triggered async operation and its resolved resource references:
+The compiler validates every `uses` reference, retains resources and async declarations in the
+artifact, and exposes them through `simile describe service`. The operation runtime does not return
+an async plan. A declaration is service vocabulary, not an operation attachment and not evidence
+that background work ran.
 
-```json
-{
-  "name": "publish_order",
-  "resources": ["db.orders", "event_bus.commerce", "mail.receipts"]
-}
-```
+The former `trigger` block under `behavior` has been removed. A behavior selects an HTTP result; it
+is not the right owner for state changes or follow-up work.
 
-This is a declaration of intended work, not evidence that the work ran. `simile run --verbose`
-shows the plan, and the protocol-neutral runtime exposes it to adapters. The HTTP server does not
-yet dispatch resource implementations, persist their state, advance delayed work, or expose an
-effect history.
+## What Simile Stack adds
 
-## Why planning comes before execution
+[Simile Stack](/simile-stack) now implements each supported abstract resource as a deterministic,
+serializable engine and local component process. Stack provides one typed command protocol, a
+shared logical-time model, reset and snapshots, idempotent command replay, and a payload-free causal
+journal.
 
-Planning creates one success boundary. If request validation or response synthesis fails, no effect
-plan is returned. A future executor can accept only completed operation outcomes and can record,
-retry, or advance effects without reparsing HCL.
+The operation runtime does not yet dispatch those commands. `uses = ["queue.orders"]` proves that
+an async operation may use the queue; it does not say which message to publish. Simile will not
+invent that payload. A provider-authored action model must compile the intended state mutations and
+effects into Stack commands before `simile start` can execute them.
 
-It also preserves architectural separation:
+## Where effects will fit
+
+An effect will be a self-contained provider-authored attachment: it will select operations, define
+state or background actions, and run only after the operation result is committed. That keeps HTTP
+result selection in `behavior` and consequence execution in `effect`.
+
+This preserves architectural separation:
 
 ```mermaid
 flowchart LR
   HTTP[HTTP adapter] --> Runtime[Operation runtime]
   Runtime --> Response[Immediate response]
-  Runtime --> Plan[Resolved effect plan]
-  Plan -. future .-> Resources[Deterministic local resources]
+  Runtime -. future committed outcome .-> Effects[Provider-authored effects]
+  Effects --> Actions[Compiled action IR]
+  Actions --> Resources[Simile Stack]
 ```
 
 ## What not to encode
@@ -85,5 +86,6 @@ internal decision tree. A resource declaration should identify the externally re
 needed for local behavior. Private production decisions belong behind named public outcomes or
 opaque scenarios.
 
-Read [Current boundaries](/current-boundaries) before writing tests that assume an effect has
-executed. Read [OpenAPI and HCL](/openapi-and-hcl) for the source ownership rules.
+Read [Current boundaries](/current-boundaries) before writing tests that assume an effect exists or
+has executed, [Simile Stack](/simile-stack) for the resource architecture, and
+[OpenAPI and HCL](/openapi-and-hcl) for the source ownership rules.

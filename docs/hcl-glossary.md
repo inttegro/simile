@@ -16,17 +16,16 @@ production vendor or topology.
 
 ### Async operation
 
-A named plan declared with [`async`](/hcl-language-specification#async). It lists abstract resources
-and can be attached to an HTTP behavior with `trigger`. The current server returns the plan but does
-not execute it.
+A named declaration created with [`async`](/hcl-language-specification#async). It lists the abstract
+resources that background work may use. Simile currently compiles and describes the declaration but
+does not attach it to an HTTP operation or execute it.
 
 ## B
 
 ### Behavior
 
-An HCL overlay for one exact OpenAPI `operationId`. A behavior may prefer a response status, attach
-named outcomes or reusable error sets, and trigger async plans. It cannot add or redefine an HTTP
-operation.
+An HCL overlay for one exact OpenAPI `operationId`. A behavior may prefer a response status and
+attach named outcomes or reusable error sets. It cannot add or redefine an HTTP operation.
 
 ### Behavior module
 
@@ -55,7 +54,7 @@ invariants, validates exact outcome bodies, and produces a deterministic service
 ### Compiled service
 
 The normalized in-memory result of compilation: OpenAPI operations plus resolved behavior,
-outcomes, scenarios, faults, abstract resources, and async plans.
+outcomes, scenarios, faults, abstract resources, and async declarations.
 
 ### Configuration
 
@@ -89,10 +88,11 @@ scenario—not by stochastic fault injection.
 
 ## E
 
-### Effect plan
+### Effect
 
-The resolved async operation and abstract resources returned after a successful operation. A plan
-states intended follow-up work; it is not evidence that a queue, mailer, scheduler, or database ran.
+A future provider-authored attachment that will connect a completed operation to state mutation or
+background work. Effects are deliberately separate from `behavior`, which owns HTTP result
+selection. Effect syntax and execution are not part of the current language version.
 
 ### Environmental fault
 
@@ -214,13 +214,6 @@ fields. Soundness clauses live in OpenAPI `x-simile-constraints`; HCL selects ob
 
 An environmental fault selected by a `fault_profile` according to a bounded probability policy.
 Stochastic selection never chooses domain outcomes or parameter errors.
-
-## T
-
-### Trigger
-
-A link from an HTTP `behavior` to a named async operation. Once the operation completes, the runtime
-includes the resolved async work in its effect plan.
 
 ## V
 

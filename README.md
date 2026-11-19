@@ -67,14 +67,17 @@ lifecycle snapshots. Constraints declared on array item schemas apply independen
 For contracts without those extensions, a separately compiled provider-neutral heuristic plan can
 repair a small, curated set of obvious generation inconsistencies. Heuristics improve generated
 examples only; they never become request-validation rules or proof obligations.
-A protocol-neutral runtime coordinates request validation, response synthesis, and the declared
-asynchronous work for one operation. A separate HTTP adapter can now compile a runnable service
+A protocol-neutral runtime coordinates request validation, response synthesis, replay, and
+delivery faults for one operation. A separate HTTP adapter can now compile a runnable service
 configuration, listen on a local port, match its OpenAPI routes, validate JSON request bodies, and
 return generated responses. OpenAPI examples, reusable provider-authored outcome sets, public
 request predicates, opaque scenarios, and service-wide protocol-error mappings now compile into a
-named outcome catalog with fidelity provenance. Durable resource state and asynchronous resource
-execution remain subsequent runtime layers; declared async work is planned but is not yet
-performed.
+named outcome catalog with fidelity provenance. Simile Stack now provides deterministic local
+engines and component processes for database, cache, queue, mail, object store, event bus,
+scheduler, and outbound HTTP capabilities. They share a versioned command protocol, logical clock,
+snapshots, reset, idempotent replay, and causal journal. The operation server does not yet compile
+provider-authored effects, attach async declarations to operations, or dispatch actions into those
+components.
 
 The available foundation commands are:
 
@@ -127,16 +130,15 @@ Header names are matched case-insensitively. The `Content-Type` header selects t
 type for a provided body; `--content-type` remains available only when Simile is synthesizing the
 request. A supplied request object can omit `body`; required-body operations reject that request,
 while optional-body and bodyless operations execute without a body.
-The command prints the validated request, synthesized response, and any declared asynchronous
-work when `--verbose` is passed. Without `--verbose`, stdout contains only the response payload as
+The command prints the validated request and synthesized response when `--verbose` is passed.
+Without `--verbose`, stdout contains only the response payload as
 pretty-printed JSON, making `simile run` directly composable with tools such as `jq`. A bodyless
-response is printed as `null`. The command does not execute asynchronous work or start an HTTP
-server.
+response is printed as `null`. The command does not start an HTTP server.
 
 OpenAPI JSON/YAML and HCL are source formats. They are not the runtime storage format. A
 `.similec` file contains a compact indexed model encoded as deterministic CBOR, wrapped in a
 versioned envelope with a payload length and SHA-256 integrity digest. The string table,
-operation records, value arena, async-operation references, and resource references are all
+operation records, value arena, async-operation records, and resource records are all
 ordered before encoding, so identical compiler input produces identical artifact bytes. See the
 [compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
 The supported request-validation boundary is documented in
@@ -149,6 +151,8 @@ The deliberately weaker generation-only inference boundary is documented in
 [generation heuristics](docs/generation-heuristics.md).
 Named responses, protocol errors, scenarios, provenance, and the public export boundary are
 documented in [outcome fidelity](docs/outcome-fidelity.md).
+The local resource architecture and its explicit integration boundary are documented in
+[Simile Stack](docs/simile-stack.md).
 
 ## Running a service
 
@@ -196,7 +200,7 @@ process-local replay for `Idempotency-Key` and repeated GET identities. See
 [service configuration](docs/service-configuration.md) for the complete current boundary.
 
 `simile describe service NAME` renders the public meaning retained in the registered artifact:
-service metadata, scenarios, environmental faults, profiles, resources, and async plans. Add
+service metadata, scenarios, environmental faults, profiles, resources, and async declarations. Add
 `--verbose` for operations and outcomes, or `--config URL_OR_FILE` to compile and describe a
 transient configuration without changing the registry. Named semantic HCL blocks accept an
 optional public `description`; catalog faults provide one automatically. See
@@ -205,8 +209,8 @@ optional public `description`; catalog faults provide one automatically. See
 OpenAPI is sufficient on its own. For operations without an HCL overlay, Simile derives its
 default behavior from the OpenAPI operation. Fresh generated values vary within the schema; a
 long-lived runtime replays an outcome only when its adapter supplies the same idempotency key or
-GET resource identity. HCL is used only when a provider needs
-to select a declared response or describe observable effects that OpenAPI cannot express:
+GET resource identity. HCL is used only when a provider needs to select a declared response or
+describe public runtime concepts that OpenAPI cannot express:
 
 ```hcl
 resource "db" "orders" {}
@@ -218,9 +222,13 @@ async "publish_order" {
 
 behavior "createOrder" {
   response { status = 201 }
-  trigger "publish_order" {}
 }
 ```
+
+`async` declarations are currently standalone, discoverable descriptions of background work. They
+are compiled into the artifact and shown by `simile describe`, but they are not attached to an
+operation or executed. The forthcoming effect model will provide that attachment explicitly; the
+former `behavior.trigger` syntax has been removed.
 
 Providers can publish exact failure families once, attach them to operations, and expose opaque
 scenario controls without shipping private decision logic. `simile inspect` lists every compiled
@@ -254,9 +262,9 @@ Simile follows a pipeline of narrow ownership boundaries:
 - `simile-hcl` parses and validates optional behavior modules against that contract.
 - `simile-compiler` coordinates both sources and produces a compiled service.
 - `simile-runtime` loads an operation from an artifact, validates normalized values independently
-  of their wire encoding, synthesizes responses, replays identified invocations, plans declared
-  asynchronous work, and reports protocol or schema failures without depending on source formats
-  or a server framework.
+  of their wire encoding, synthesizes responses, replays identified invocations, applies delivery
+  fault plans, and reports protocol or schema failures without depending on source formats or a
+  server framework.
 - `simile-server` owns HTTP listener lifecycle, route-template matching, wire limits, replay
   identity extraction, and translation between HTTP responses and the protocol-neutral runtime.
 - `simile-spec` contains only the version-neutral model shared by compilation units.

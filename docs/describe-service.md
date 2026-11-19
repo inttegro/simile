@@ -67,7 +67,7 @@ The following named blocks accept `description`:
 - `resource` and `async`
 - custom `fault` and `fault_profile`
 
-Structural blocks such as `listen`, `openapi`, `response`, `when`, `trigger`, `select`, `inject`,
+Structural blocks such as `listen`, `openapi`, `response`, `when`, `select`, `inject`,
 `delay`, and `disconnect` do not accept descriptions. Their meaning comes from their parent object.
 
 ## Describe versus inspect

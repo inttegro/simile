@@ -75,6 +75,23 @@
 				"group": "Internals",
 				"pages": [
 					{
+						"group": "Simile Stack",
+						"pages": [
+							"simile-stack",
+							"stack-cache",
+							"stack-db",
+							"stack-event-bus",
+							"stack-http",
+							"stack-journal",
+							"stack-mail",
+							"stack-object-store",
+							"stack-protocol",
+							"stack-queue",
+							"stack-scheduler",
+							"stack-time"
+						]
+					},
+					{
 						"group": "Architecture",
 						"pages": [
 							"architecture",

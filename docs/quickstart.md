@@ -118,7 +118,7 @@ simile run ./orders.yaml --operation-id createOrder
 
 Because no request was provided, Simile synthesizes one, validates it, executes the operation, and
 prints only the pretty JSON response. Pass `--verbose` to see the normalized request, response
-metadata, outcome provenance, and planned effects.
+metadata, and outcome provenance.
 
 You can also provide a full request document:
 

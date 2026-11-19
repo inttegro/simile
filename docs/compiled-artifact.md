@@ -29,7 +29,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 12
+## Envelope version 13
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -37,7 +37,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 12 |
+| 10 | 2 | unsigned big-endian flags; zero in version 13 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -48,7 +48,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 12 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 13 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -60,9 +60,9 @@ The payload is an ordered CBOR array rather than a serialized Rust struct map. V
 8. one shared request/response schema catalog.
 
 Strings, value nodes, resources, and asynchronous operations are referenced with unsigned numeric
-identifiers. Behavior records therefore point directly to asynchronous-operation records, and
-those records point directly to abstract resources. The runtime does not repeatedly compare or
-allocate names to follow those edges.
+identifiers. Async-operation records point directly to their abstract resources. They are retained
+for discovery and are not linked from behavior or operation records; the future effect model will
+own operation attachment.
 
 Service metadata also carries the provider-neutral protocol-error table, opaque scenario
 selections, environmental faults, bounded stochastic fault profiles, and a sorted public
@@ -96,7 +96,7 @@ audit is a guardrail; the provider remains responsible for reviewing all publish
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 12 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 13 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their OpenAPI extension syntax.
 
@@ -105,7 +105,7 @@ bindings, derivations, guarded lifecycle rules, and omission rules reference the
 response schema graph by validated identifiers. This is the proof material that distinguishes a
 merely schema-valid response from one proven reachable from the submitted request.
 
-Version 12 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 13 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

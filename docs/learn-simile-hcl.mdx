@@ -190,15 +190,12 @@ async "dispatch_order" {
   description = "Queue fulfillment and send the customer receipt."
   uses = ["queue.orders", "mail.receipts"]
 }
-
-behavior "createOrder" {
-  trigger "dispatch_order" {}
-}
 ```
 
 Use `queue`, not SQS; `db`, not PostgreSQL; `cache`, not Redis. The emulator needs the capability,
-not a leak of the production implementation. Today the runtime reports these plans; resource
-adapters are a documented future boundary.
+not a leak of the production implementation. Today Simile compiles and describes these standalone
+declarations. Attaching them to operations and dispatching resource actions belong to the
+forthcoming effect layer.
 
 **Question 7.** Which resource declaration is portable?
 
@@ -293,7 +290,7 @@ service "inttegro" {
 }
 ```
 
-Compilation resolves every operation ID, outcome, resource, trigger, scenario, and fault before a
+Compilation resolves every operation ID, outcome, resource, async declaration, scenario, and fault before a
 listener binds. Human-readable descriptions are stored in the compiled artifact for
 `simile describe`; they never influence behavior.
 
@@ -316,12 +313,14 @@ $ simile --output json describe service inttegro
 
 ## 9. Capstone
 
-You need a test that creates an order, forces a public `requires_payment` result, reports a queued
-receipt job, and can independently test a response lost after commit. Which design is sound?
+You need a test that creates an order, forces a public `requires_payment` result, documents a queued
+receipt job for future effect execution, and independently tests a response lost after commit.
+Which design is sound today?
 
 - A. Put every rule and vendor name into one large `scenario`
-- B. Define the HTTP shapes in OpenAPI; define the named outcome and async plan in HCL; use one
-  scenario to select the outcome and another to inject the environmental fault
+- B. Define the HTTP shapes in OpenAPI; define the named outcome and standalone async declaration
+  in HCL; use one scenario to select the outcome and another to inject the environmental fault,
+  without claiming that the async work ran
 - C. Return a random valid response and let the client infer what happened
 
 <Accordion title="Show answer">
