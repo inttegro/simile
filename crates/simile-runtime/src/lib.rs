@@ -15,7 +15,7 @@ use thiserror::Error;
 
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
-    PlannedAsyncOperation, ReplayIdentity,
+    ReplayIdentity,
 };
 pub use fault::{FaultActivation, FaultSource, TransportPlan};
 pub use operation::Runtime;

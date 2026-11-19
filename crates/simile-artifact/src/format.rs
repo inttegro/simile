@@ -18,7 +18,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 12;
+pub const FORMAT_VERSION: u16 = 13;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -29,7 +29,6 @@ const HEADER_LENGTH: usize = MAGIC.len() + 2 + 2 + 8 + DIGEST_LENGTH;
 type StringId = u32;
 type ValueId = u32;
 type ResourceId = u32;
-type AsyncId = u32;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,10 +97,7 @@ pub struct ArtifactOperation<'a> {
     responses: &'a [ResponseRecord],
     outcomes: &'a [OutcomeRecord],
     behavior_response_status: Option<u16>,
-    triggers: &'a [AsyncId],
     strings: &'a [String],
-    resources: &'a [ResourceRecord],
-    async_operations: &'a [AsyncRecord],
     values: &'a [ValueRecord],
     schemas: &'a SchemaCatalog,
 }
@@ -262,22 +258,6 @@ impl<'a> ArtifactOperation<'a> {
         // The value arena is stored on the artifact rather than the operation;
         // this field is injected by `operation_at` through the schema-adjacent slot.
         self.values
-    }
-
-    /// Return the asynchronous operations attached to this operation's behavior.
-    pub fn triggers(&self) -> impl Iterator<Item = ArtifactAsyncOperation<'a>> + 'a {
-        let operations = self.async_operations;
-        let resources = self.resources;
-        let strings = self.strings;
-        self.triggers.iter().map(move |id| {
-            let operation = &operations[*id as usize];
-            ArtifactAsyncOperation {
-                name: &strings[operation.0 as usize],
-                uses: &operation.1,
-                strings,
-                resources,
-            }
-        })
     }
 }
 
@@ -849,14 +829,8 @@ impl Artifact {
             request_body: operation.6.as_ref(),
             responses: &operation.7,
             outcomes: &operation.10,
-            behavior_response_status: operation.9.as_ref().and_then(|behavior| behavior.0),
-            triggers: operation
-                .9
-                .as_ref()
-                .map_or(&[], |behavior| behavior.1.as_slice()),
+            behavior_response_status: operation.9,
             strings: &self.payload.1,
-            resources: &self.payload.5,
-            async_operations: &self.payload.6,
             values: &self.payload.4,
             schemas: &self.payload.7,
         }
@@ -1044,15 +1018,12 @@ struct OperationRecord(
     Option<RequestBodyPlan>,
     Vec<ResponseRecord>,
     u8,
-    Option<BehaviorRecord>,
+    Option<u16>,
     Vec<OutcomeRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ResponseRecord(u8, u16, ValueId, Option<ResponseBodyPlan>);
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct BehaviorRecord(Option<u16>, Vec<AsyncId>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct OutcomeRecord(
@@ -1213,7 +1184,6 @@ impl Payload {
         audit_public_export(service)?;
         let strings = StringTable::compile(service)?;
         let resource_ids = index_resources(service)?;
-        let async_ids = index_async_operations(service)?;
         let mut values = ValueArena::default();
         let mut schema_compiler = BodySchemaCompiler::with_heuristics(
             &service.contract.schemas,
@@ -1375,26 +1345,10 @@ impl Payload {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let behavior = compiled
+            let behavior_response_status = compiled
                 .behavior
                 .as_ref()
-                .map(|behavior| {
-                    let triggers = behavior
-                        .triggers
-                        .iter()
-                        .map(|name| {
-                            async_ids
-                                .get(name)
-                                .copied()
-                                .ok_or_else(|| Error::UnknownReference {
-                                    kind: "async operation",
-                                    name: name.clone(),
-                                })
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    Ok::<_, Error>(BehaviorRecord(behavior.response_status, triggers))
-                })
-                .transpose()?;
+                .and_then(|behavior| behavior.response_status);
             let outcomes = compiled
                 .outcomes
                 .iter()
@@ -1433,7 +1387,7 @@ impl Payload {
                 request_body,
                 responses,
                 encode_origin(compiled.origin),
-                behavior,
+                behavior_response_status,
                 outcomes,
             ));
         }
@@ -1487,7 +1441,6 @@ impl Payload {
         let strings = self.1.len();
         let values = self.4.len();
         let resources = self.5.len();
-        let async_operations = self.6.len();
         let operation_keys = self
             .3
             .iter()
@@ -1624,11 +1577,6 @@ impl Payload {
                     .is_some_and(|body| !BoundResponseBody::new(body, &self.7).is_well_formed())
                 {
                     return Err(Error::Invalid("response schema"));
-                }
-            }
-            if let Some(behavior) = &operation.9 {
-                for trigger in &behavior.1 {
-                    validate_index(*trigger, async_operations, "async operation")?;
                 }
             }
             for outcome in &operation.10 {
@@ -1867,10 +1815,6 @@ impl StringTable {
             for response in &operation.responses {
                 collect_value_strings(&response.definition, &mut values);
             }
-            if let Some(behavior) = &compiled.behavior {
-                values.insert(behavior.operation_id.clone());
-                values.extend(behavior.triggers.iter().cloned());
-            }
             for outcome in &compiled.outcomes {
                 values.insert(outcome.name.clone());
                 if let Some(content_type) = &outcome.content_type {
@@ -2022,18 +1966,6 @@ fn index_resources(service: &CompiledService) -> Result<BTreeMap<ResourceRef, Re
         .map(|(index, reference)| {
             let id = u32::try_from(index).map_err(|_| Error::Limit("resources"))?;
             Ok((reference.clone(), id))
-        })
-        .collect()
-}
-
-fn index_async_operations(service: &CompiledService) -> Result<BTreeMap<String, AsyncId>> {
-    service
-        .async_operations
-        .keys()
-        .enumerate()
-        .map(|(index, name)| {
-            let id = u32::try_from(index).map_err(|_| Error::Limit("async operations"))?;
-            Ok((name.clone(), id))
         })
         .collect()
 }

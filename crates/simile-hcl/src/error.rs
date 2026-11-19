@@ -208,12 +208,6 @@ pub enum Error {
         operation_id: String,
     },
 
-    #[error("behavior for `{operation_id}` triggers unknown async operation `{target}`")]
-    UnknownAsyncTarget {
-        operation_id: String,
-        target: String,
-    },
-
     #[error("async operation `{operation}` uses undeclared resource `{resource}`")]
     UnknownResource { operation: String, resource: String },
 }

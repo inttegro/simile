@@ -19,7 +19,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 12);
+    assert_eq!(summary.format_version, 13);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -410,7 +410,6 @@ fn example_service() -> CompiledService {
             response_status: Some(201),
             error_sets: Vec::new(),
             outcomes: Vec::new(),
-            triggers: vec![asynchronous.name.clone()],
         }),
         outcomes: Vec::new(),
     };

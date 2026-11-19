@@ -488,7 +488,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "runtime 1 async operations · 1 resources\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 12 · [..] bytes\n",
+                "artifact {} · format 13 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -500,7 +500,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 12,\n",
+            "  \"formatVersion\": 13,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -581,8 +581,7 @@ fn runs_an_operation_by_id_with_a_synthesized_request() {
             "      \"product\": \"[..]\",\n",
             "      \"quantity\": [..]\n",
             "    }\n",
-            "  },\n",
-            "  \"asyncOperations\": []\n",
+            "  }\n",
             "}\n"
         ))
         .stderr_eq("");
@@ -629,8 +628,7 @@ fn runs_an_operation_with_a_complete_request_object() {
             "      \"product\": \"custom_jingle\",\n",
             "      \"quantity\": 4\n",
             "    }\n",
-            "  },\n",
-            "  \"asyncOperations\": []\n",
+            "  }\n",
             "}\n"
         ));
 }
@@ -794,8 +792,7 @@ fn synthesizes_an_optional_form_request() {
             "Ran POST /optional (optionalForm)\n",
             "request synthesized · application/x-www-form-urlencoded\n",
             "{\"note\":\"[..]\"}\n",
-            "response 204\n",
-            "async none\n"
+            "response 204\n"
         ));
 }
 

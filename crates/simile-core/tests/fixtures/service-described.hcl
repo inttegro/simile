@@ -24,7 +24,6 @@ behavior "createOrder" {
   description = "Create and accept an order."
 
   response { status = 201 }
-  trigger "dispatch_order" {}
 }
 
 faults {

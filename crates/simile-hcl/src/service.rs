@@ -257,7 +257,6 @@ async "dispatch_order" {
 
 behavior "createOrder" {
   response { status = 201 }
-  trigger "dispatch_order" {}
 }
 
 fault "slow_response" {

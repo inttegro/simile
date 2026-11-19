@@ -162,7 +162,6 @@ fn collect_behaviors(
                 .into_iter()
                 .map(provider_outcome)
                 .collect(),
-            triggers: declaration.triggers,
         };
         if spec
             .behaviors
@@ -604,14 +603,6 @@ fn validate_behaviors(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
             validate_outcomes(operation, &behavior.operation_id, &error_set.outcomes)?;
         }
         validate_outcomes(operation, &behavior.operation_id, &behavior.outcomes)?;
-        for target in &behavior.triggers {
-            if !spec.async_operations.contains_key(target) {
-                return Err(Error::UnknownAsyncTarget {
-                    operation_id: behavior.operation_id.clone(),
-                    target: target.clone(),
-                });
-            }
-        }
     }
     Ok(())
 }

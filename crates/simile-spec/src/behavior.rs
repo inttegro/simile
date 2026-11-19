@@ -317,7 +317,6 @@ pub struct Behavior {
     pub error_sets: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<Outcome>,
-    pub triggers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

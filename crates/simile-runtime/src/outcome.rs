@@ -1,8 +1,8 @@
 use simile_artifact::{Artifact, ArtifactOutcome};
 
 use crate::{
-    Error, ExecutionOptions, OperationOutcome, PlannedAsyncOperation, ResponseSynthesisRequest,
-    Result, ValidatedBody, synthesize_response,
+    Error, ExecutionOptions, OperationOutcome, ResponseSynthesisRequest, Result, ValidatedBody,
+    synthesize_response,
 };
 
 pub(crate) fn produce(
@@ -11,11 +11,6 @@ pub(crate) fn produce(
     request_body: Option<ValidatedBody>,
     options: ExecutionOptions<'_>,
 ) -> Result<OperationOutcome> {
-    let operation = artifact
-        .operation(operation_key)
-        .ok_or_else(|| Error::UnknownOperation {
-            operation: operation_key.to_owned(),
-        })?;
     let selected = select(artifact, operation_key, request_body.as_ref(), options)?;
     let response_status = selected
         .as_ref()
@@ -35,26 +30,12 @@ pub(crate) fn produce(
             body: selected.as_ref().and_then(ArtifactOutcome::body),
         },
     )?;
-    let async_operations = operation
-        .triggers()
-        .map(|trigger| {
-            PlannedAsyncOperation::new(
-                trigger.name().to_owned(),
-                trigger
-                    .resources()
-                    .map(|resource| resource.reference())
-                    .collect(),
-            )
-        })
-        .collect();
-
     Ok(OperationOutcome::new(
         operation_key.to_owned(),
         request_body,
         response,
         selected.as_ref().map(|outcome| outcome.name().to_owned()),
         selected.as_ref().map(ArtifactOutcome::provenance),
-        async_operations,
     ))
 }
 

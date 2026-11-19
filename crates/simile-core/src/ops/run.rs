@@ -118,13 +118,6 @@ pub struct ExecutedResponse {
     pub body: Option<Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlannedAsyncOperation {
-    pub name: String,
-    pub resources: Vec<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunReport {
@@ -139,7 +132,6 @@ pub struct RunReport {
     pub outcome_provenance: Option<OutcomeProvenance>,
     pub request: ExecutedRequest,
     pub response: ExecutedResponse,
-    pub async_operations: Vec<PlannedAsyncOperation>,
 }
 
 /// Compile a service source in memory and execute one selected operation.
@@ -201,19 +193,6 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         content_type: response.media_type().map(str::to_owned),
         body: response.value().cloned(),
     };
-    let async_operations = outcome
-        .async_operations()
-        .iter()
-        .map(|operation| PlannedAsyncOperation {
-            name: operation.name().to_owned(),
-            resources: operation
-                .resources()
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-        })
-        .collect();
-
     Ok(RunReport {
         service,
         service_version,
@@ -223,7 +202,6 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         outcome_provenance: outcome.provenance(),
         request: executed_request,
         response: executed_response,
-        async_operations,
     })
 }
 

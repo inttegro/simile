@@ -20,8 +20,8 @@ pub use inspect::{InspectRequest, inspect};
 pub use register::{RegisterRequest, RegistrationReport, register};
 pub use remove::{RemoveReport, RemoveRequest, remove};
 pub use run::{
-    ExecutedRequest, ExecutedResponse, OperationSelector, PlannedAsyncOperation, RequestInput,
-    RequestSource, RunReport, RunRequest, SpecSource, run,
+    ExecutedRequest, ExecutedResponse, OperationSelector, RequestInput, RequestSource, RunReport,
+    RunRequest, SpecSource, run,
 };
 pub use start::{PreparedService, ServiceReport, StartRequest, prepare_service};
 pub use update::{UpdateRequest, update};

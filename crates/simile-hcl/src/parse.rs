@@ -169,7 +169,6 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
         .transpose()?
         .unwrap_or_default();
     let mut outcomes = Vec::new();
-    let mut triggers = Vec::new();
 
     for child in block.body().blocks() {
         match child.identifier() {
@@ -183,11 +182,6 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
                     });
                 }
                 response_status = Some(response(child, source)?);
-            }
-            "trigger" => {
-                labels(child, source, 1)?;
-                empty_body(child.body(), source, "trigger")?;
-                triggers.push(child.labels()[0].as_str().to_owned());
             }
             "outcome" => outcomes.push(outcome(child, source)?),
             unknown => {
@@ -206,7 +200,6 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
         response_status,
         error_sets,
         outcomes,
-        triggers,
     })
 }
 

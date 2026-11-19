@@ -1,5 +1,5 @@
 use serde_json::Value;
-use simile_spec::{OutcomeProvenance, ResourceRef};
+use simile_spec::OutcomeProvenance;
 
 use crate::{FaultActivation, SynthesizedResponse, TransportPlan, ValidatedBody};
 
@@ -39,7 +39,7 @@ pub struct ExecutionOptions<'a> {
     pub replay: Option<ReplayIdentity<'a>>,
 }
 
-/// The validated request, immediate response, and declared follow-up work for an operation.
+/// The validated request and immediate response for an operation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OperationOutcome {
     operation: String,
@@ -47,7 +47,6 @@ pub struct OperationOutcome {
     response: SynthesizedResponse,
     selected_outcome: Option<String>,
     provenance: Option<OutcomeProvenance>,
-    async_operations: Vec<PlannedAsyncOperation>,
 }
 
 impl OperationOutcome {
@@ -57,7 +56,6 @@ impl OperationOutcome {
         response: SynthesizedResponse,
         selected_outcome: Option<String>,
         provenance: Option<OutcomeProvenance>,
-        async_operations: Vec<PlannedAsyncOperation>,
     ) -> Self {
         Self {
             operation,
@@ -65,7 +63,6 @@ impl OperationOutcome {
             response,
             selected_outcome,
             provenance,
-            async_operations,
         }
     }
 
@@ -95,25 +92,8 @@ impl OperationOutcome {
     }
 
     #[must_use]
-    pub fn async_operations(&self) -> &[PlannedAsyncOperation] {
-        &self.async_operations
-    }
-
-    #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        String,
-        Option<ValidatedBody>,
-        SynthesizedResponse,
-        Vec<PlannedAsyncOperation>,
-    ) {
-        (
-            self.operation,
-            self.request_body,
-            self.response,
-            self.async_operations,
-        )
+    pub fn into_parts(self) -> (String, Option<ValidatedBody>, SynthesizedResponse) {
+        (self.operation, self.request_body, self.response)
     }
 }
 
@@ -190,35 +170,7 @@ impl OperationExecution {
     }
 
     #[must_use]
-    pub fn async_operations(&self) -> &[PlannedAsyncOperation] {
-        self.outcome.async_operations()
-    }
-
-    #[must_use]
     pub fn into_outcome(self) -> OperationOutcome {
         self.outcome
-    }
-}
-
-/// One asynchronous operation declared by the selected behavior.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlannedAsyncOperation {
-    name: String,
-    resources: Vec<ResourceRef>,
-}
-
-impl PlannedAsyncOperation {
-    pub(crate) fn new(name: String, resources: Vec<ResourceRef>) -> Self {
-        Self { name, resources }
-    }
-
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[must_use]
-    pub fn resources(&self) -> &[ResourceRef] {
-        &self.resources
     }
 }

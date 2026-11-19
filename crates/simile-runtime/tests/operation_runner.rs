@@ -7,7 +7,7 @@ use simile_runtime::{
 };
 
 #[test]
-fn runs_an_operation_through_validation_response_and_effect_planning() {
+fn runs_an_operation_through_validation_and_response_synthesis() {
     let artifact = artifact();
     let result = Runtime::new(&artifact)
         .execute(OperationCall {
@@ -39,22 +39,6 @@ fn runs_an_operation_through_validation_response_and_effect_planning() {
             .and_then(|body| body.get("quantity")),
         Some(&json!(2))
     );
-    assert_eq!(
-        result
-            .async_operations()
-            .iter()
-            .map(|operation| operation.name())
-            .collect::<Vec<_>>(),
-        vec!["record_order", "send_receipt"]
-    );
-    assert_eq!(
-        result.async_operations()[0].resources()[0].as_str(),
-        "db.orders"
-    );
-    assert_eq!(
-        result.async_operations()[1].resources()[0].as_str(),
-        "mail.receipts"
-    );
 }
 
 #[test]
@@ -70,7 +54,7 @@ fn rejects_an_invalid_request_before_producing_an_outcome() {
 }
 
 #[test]
-fn runs_openapi_only_bodyless_operations_without_async_work() {
+fn runs_openapi_only_bodyless_operations() {
     let artifact = artifact();
     let result = Runtime::new(&artifact)
         .execute(OperationCall {
@@ -83,7 +67,6 @@ fn runs_openapi_only_bodyless_operations_without_async_work() {
     assert!(result.request_body().is_none());
     assert_eq!(result.response().status(), 204);
     assert!(result.response().bytes().is_empty());
-    assert!(result.async_operations().is_empty());
 }
 
 #[test]
@@ -602,8 +585,6 @@ behavior "createOrder" {
       equals = 99
     }
   }
-  trigger "record_order" {}
-  trigger "send_receipt" {}
 }
 "#;
     let service = Compiler::new()

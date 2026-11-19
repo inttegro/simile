@@ -35,7 +35,6 @@ pub struct BehaviorDeclaration {
     pub response_status: Option<u16>,
     pub error_sets: Vec<String>,
     pub outcomes: Vec<OutcomeDeclaration>,
-    pub triggers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

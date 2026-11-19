@@ -37,7 +37,6 @@ async "dispatch_order" {
 
 behavior "createOrder" {
   response { status = 201 }
-  trigger "dispatch_order" {}
 }
 "#,
             )],
@@ -55,8 +54,8 @@ behavior "createOrder" {
         operation
             .behavior
             .as_ref()
-            .map(|value| value.triggers.len()),
-        Some(1)
+            .and_then(|value| value.response_status),
+        Some(201)
     );
     assert_eq!(compiled.resources.len(), 1);
     assert_eq!(compiled.async_operations.len(), 1);

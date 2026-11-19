@@ -91,17 +91,6 @@ fn render_human(report: &ops::RunReport, terminal: &Terminal) -> Result<()> {
     if let Some(body) = &report.response.body {
         terminal.line(format_args!("{body}"))?;
     }
-    if report.async_operations.is_empty() {
-        terminal.line(format_args!("{MUTED}async{MUTED:#} none"))?;
-    } else {
-        for operation in &report.async_operations {
-            terminal.line(format_args!(
-                "{MUTED}async{MUTED:#} {} · {}",
-                operation.name,
-                operation.resources.join(", ")
-            ))?;
-        }
-    }
     Ok(())
 }
 

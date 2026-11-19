@@ -18,8 +18,6 @@ behavior "createOrder" {
   response {
     status = 201
   }
-
-  trigger "publish_order" {}
 }
 "#,
     ))
@@ -80,17 +78,7 @@ behavior "createOrder" {
 }
 
 #[test]
-fn rejects_unknown_async_and_resource_references() {
-    let behavior = module(
-        r#"
-behavior "createOrder" {
-  trigger "missing" {}
-}
-"#,
-    );
-    let error = compile_error([behavior]);
-    assert!(error.to_string().contains("unknown async operation"));
-
+fn rejects_unknown_resource_references() {
     let operation = module(
         r#"
 async "publish_order" {
@@ -103,25 +91,38 @@ async "publish_order" {
 }
 
 #[test]
-fn resolves_cross_module_references_without_file_ordering() {
-    let behavior = module(
+fn rejects_removed_behavior_trigger_syntax() {
+    let error = parse_error(
         r#"
 behavior "createOrder" {
   trigger "publish_order" {}
 }
 "#,
     );
-    let resources = module(
+
+    assert!(
+        error
+            .to_string()
+            .contains("`behavior` does not accept nested block `trigger`")
+    );
+}
+
+#[test]
+fn resolves_cross_module_references_without_file_ordering() {
+    let operation = module(
         r#"
 async "publish_order" {
   uses = ["queue.orders"]
 }
-
+"#,
+    );
+    let resources = module(
+        r#"
 resource "queue" "orders" {}
 "#,
     );
 
-    let compiled = simile_hcl::compile([behavior, resources], &contract())
+    let compiled = simile_hcl::compile([operation, resources], &contract())
         .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(compiled.async_operations.len(), 1);
