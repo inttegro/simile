@@ -13,10 +13,11 @@ use simile_spec::ResourceKind;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use crate::store::default_component_state_path;
 use crate::{
     AdvanceReport, CommandEnvelope, CommandReceipt, ComponentManifest, ErrorCode, EventQuery,
-    JournalEntry, LogicalTime, PROTOCOL_VERSION, ResourceAddress, ResourceError, Stack,
-    StackSnapshot,
+    JournalEntry, LogicalTime, PROTOCOL_VERSION, RedbStateStore, ResourceAddress, ResourceError,
+    Stack, StackSnapshot, StateStore, StateStoreError,
 };
 
 type ProcessResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -36,6 +37,7 @@ struct Arguments {
 struct ProcessState {
     kind: ResourceKind,
     stack: Arc<Mutex<Stack>>,
+    store: Arc<dyn StateStore>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +46,7 @@ struct Readiness {
     protocol_version: u16,
     kind: ResourceKind,
     address: SocketAddr,
+    persistent: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,6 +84,41 @@ impl From<ResourceError> for ApiError {
     }
 }
 
+impl From<StateStoreError> for ApiError {
+    fn from(error: StateStoreError) -> Self {
+        Self(ResourceError::new(
+            ErrorCode::Unavailable,
+            error.to_string(),
+        ))
+    }
+}
+
+impl ProcessState {
+    /// Applies one coherent state transition and checkpoints it before the
+    /// caller can observe success or a domain failure. A storage failure rolls
+    /// the in-memory state back to the exact pre-transition snapshot.
+    fn transition<T>(
+        &self,
+        operation: impl FnOnce(&mut Stack) -> crate::Result<T>,
+    ) -> std::result::Result<T, ApiError> {
+        let mut stack = lock(self)?;
+        let before = stack.snapshot()?;
+        let result = operation(&mut stack);
+        let after = match stack.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                *stack = Stack::from_snapshot(before);
+                return Err(ApiError(error));
+            }
+        };
+        if let Err(error) = self.store.save(&after) {
+            *stack = Stack::from_snapshot(before);
+            return Err(ApiError::from(error));
+        }
+        result.map_err(ApiError::from)
+    }
+}
+
 pub async fn run_component(kind: ResourceKind) -> ProcessResult<()> {
     let arguments = Arguments::parse();
     let _ = tracing_subscriber::fmt()
@@ -93,12 +131,33 @@ pub async fn run_component(kind: ResourceKind) -> ProcessResult<()> {
         .into_iter()
         .map(|name| ResourceAddress::new(kind, name))
         .collect::<crate::Result<Vec<_>>>()?;
-    let stack = Stack::builder(LogicalTime::from_unix_millis(arguments.start_time_ms))
+    let initial_stack = Stack::builder(LogicalTime::from_unix_millis(arguments.start_time_ms))
         .resources(resources)?
         .build()?;
+    let state_path = default_component_state_path(kind, initial_stack.resources())?;
+    let store: Arc<dyn StateStore> = Arc::new(RedbStateStore::open(&state_path)?);
+    let stack = match store.load()? {
+        Some(snapshot) => {
+            let restored = Stack::from_snapshot(snapshot);
+            if restored.resources() != initial_stack.resources() {
+                return Err(ResourceError::new(
+                    ErrorCode::InvalidValue,
+                    "persisted resources do not match the resources requested for this process",
+                )
+                .into());
+            }
+            restored
+        }
+        None => {
+            store.save(&initial_stack.snapshot()?)?;
+            initial_stack
+        }
+    };
+    let persistent = store.is_durable();
     let state = ProcessState {
         kind,
         stack: Arc::new(Mutex::new(stack)),
+        store,
     };
     let application = Router::new()
         .route("/v1/manifest", get(manifest))
@@ -117,13 +176,14 @@ pub async fn run_component(kind: ResourceKind) -> ProcessResult<()> {
         protocol_version: PROTOCOL_VERSION,
         kind,
         address,
+        persistent,
     };
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     serde_json::to_writer(&mut stdout, &readiness)?;
     stdout.write_all(b"\n")?;
     stdout.flush()?;
-    info!(%kind, %address, "stack component ready");
+    info!(%kind, %address, persistent, state_file = %state_path.display(), "stack component ready");
 
     axum::serve(listener, application).await?;
     Ok(())
@@ -154,7 +214,7 @@ async fn execute(
             "the command was sent to the wrong component process",
         )));
     }
-    let receipt = lock(&state)?.execute_envelope(envelope)?;
+    let receipt = state.transition(|stack| stack.execute_envelope(envelope))?;
     Ok(Json(receipt))
 }
 
@@ -175,11 +235,16 @@ async fn advance(
     State(state): State<ProcessState>,
     Json(request): Json<AdvanceRequest>,
 ) -> std::result::Result<Json<AdvanceReport>, ApiError> {
-    Ok(Json(lock(&state)?.advance(request.milliseconds)?))
+    Ok(Json(
+        state.transition(|stack| stack.advance(request.milliseconds))?,
+    ))
 }
 
 async fn reset(State(state): State<ProcessState>) -> std::result::Result<StatusCode, ApiError> {
-    lock(&state)?.reset();
+    state.transition(|stack| {
+        stack.reset();
+        Ok(())
+    })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -204,7 +269,17 @@ async fn restore(
             "the snapshot contains resources for another component kind",
         )));
     }
-    *lock(&state)? = restored;
+    let current_resources = lock(&state)?.resources().clone();
+    if restored.resources() != &current_resources {
+        return Err(ApiError(ResourceError::new(
+            ErrorCode::InvalidValue,
+            "the snapshot resources do not match this component process",
+        )));
+    }
+    state.transition(move |stack| {
+        *stack = restored;
+        Ok(())
+    })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -234,5 +309,68 @@ const fn capabilities(kind: ResourceKind) -> &'static [&'static str] {
         ResourceKind::EventBus => &["publish", "read", "commit", "checkpoint"],
         ResourceKind::Scheduler => &["schedule", "cancel", "get", "list", "run_due"],
         ResourceKind::Http => &["register", "call", "requests", "clear"],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+    use simile_spec::ResourceKind;
+
+    use super::ProcessState;
+    use crate::{
+        DbCommand, LogicalTime, ResourceAddress, Stack, StackCommand, StackSnapshot, StateStore,
+        StateStoreError,
+    };
+
+    struct FailingStateStore;
+
+    impl StateStore for FailingStateStore {
+        fn load(&self) -> Result<Option<StackSnapshot>, StateStoreError> {
+            Ok(None)
+        }
+
+        fn save(&self, _snapshot: &StackSnapshot) -> Result<(), StateStoreError> {
+            Err(StateStoreError::Database("injected failure".to_owned()))
+        }
+    }
+
+    #[test]
+    fn failed_checkpoint_rolls_back_the_complete_transition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let resource = ResourceAddress::new(ResourceKind::Db, "products")?;
+        let stack = Stack::builder(LogicalTime::UNIX_EPOCH)
+            .resources([resource.clone()])?
+            .build()?;
+        let before = stack.snapshot()?;
+        let state = ProcessState {
+            kind: ResourceKind::Db,
+            stack: Arc::new(Mutex::new(stack)),
+            store: Arc::new(FailingStateStore),
+        };
+
+        let result = state.transition(|stack| {
+            stack.execute(
+                resource,
+                Default::default(),
+                StackCommand::Db(DbCommand::Put {
+                    collection: "products".to_owned(),
+                    key: "pr_123".to_owned(),
+                    value: json!({"name": "Beat pack"}),
+                    condition: Default::default(),
+                }),
+            )
+        });
+
+        assert!(result.is_err());
+        let after = state
+            .stack
+            .lock()
+            .map_err(|_| "poisoned stack")?
+            .snapshot()?;
+        assert_eq!(after, before);
+        Ok(())
     }
 }

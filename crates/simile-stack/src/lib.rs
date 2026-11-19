@@ -18,6 +18,7 @@ mod protocol;
 mod queue;
 mod scheduler;
 mod stack;
+mod store;
 mod time;
 
 pub use cache::{CacheCommand, CacheEntry, CacheResult};
@@ -39,4 +40,5 @@ pub use protocol::{
 pub use queue::{QueueCommand, QueueMessage, QueueResult};
 pub use scheduler::{ScheduledTask, SchedulerCommand, SchedulerResult, TaskState};
 pub use stack::{AdvanceReport, Stack, StackBuilder, StackSnapshot};
+pub use store::{MemoryStateStore, RedbStateStore, StateStore, StateStoreError};
 pub use time::{Clock, ClockError, ClockMode, ClockSnapshot, LogicalTime};
