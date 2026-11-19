@@ -1,4 +1,4 @@
-use simile_compiler::{CompileRequest, Compiler, Source};
+use simile_compiler::{CompileRequest, Compiler, ContractSource, Source, SourceCompileRequest};
 use simile_spec::BehaviorOrigin;
 
 #[test]
@@ -19,6 +19,64 @@ fn openapi_is_a_complete_default_behavior_source() {
         .unwrap_or_else(|| panic!("compiled operation missing"));
     assert_eq!(operation.origin, BehaviorOrigin::OpenApi);
     assert!(operation.behavior.is_none());
+}
+
+#[test]
+fn smithy_and_typescript_use_the_canonical_compiler_pipeline() {
+    let smithy = Compiler::new()
+        .compile_source(SourceCompileRequest {
+            contract: ContractSource::Smithy(Source::new(
+                "orders.smithy",
+                r#"$version: "2.0"
+namespace example.orders
+
+structure CreateOrderInput {}
+structure CreateOrderOutput {}
+
+@http(method: "POST", uri: "/orders", code: 201)
+operation createOrder {
+  input: CreateOrderInput
+  output: CreateOrderOutput
+}
+
+service Orders {
+  version: "1.0.0"
+  operations: [createOrder]
+}
+"#,
+            )),
+            behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("Smithy must compile: {error}"));
+    let typescript = Compiler::new()
+        .compile_source(SourceCompileRequest {
+            contract: ContractSource::TypeScript(vec![Source::new(
+                "orders.d.ts",
+                r#"
+export type ServiceName = "Orders";
+export type CollectionVersion = "1.0.0";
+export interface OrdersOperations {
+  readonly createOrder: {
+    readonly method: "POST";
+    readonly path: "/orders";
+    readonly responses: { readonly "201": { readonly content: {
+      readonly "application/json": { readonly id: string };
+    } } };
+  };
+}
+"#,
+            )]),
+            behaviors: Vec::new(),
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("TypeScript must compile: {error}"));
+
+    for compiled in [smithy, typescript] {
+        assert_eq!(compiled.contract.info.title, "Orders");
+        assert!(compiled.contract.operation_by_id("createOrder").is_some());
+        assert_eq!(compiled.operations.len(), 1);
+    }
 }
 
 #[test]

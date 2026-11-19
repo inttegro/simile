@@ -1,0 +1,24 @@
+[package]
+name = "simile-service"
+description = "Protocol-neutral supervisor for Simile operation and Stack execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+simile-artifact.workspace = true
+simile-runtime.workspace = true
+simile-stack.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+simile-compiler.workspace = true
+simile-heuristics.workspace = true
+
+[lints]
+workspace = true

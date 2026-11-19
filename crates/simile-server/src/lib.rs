@@ -1,16 +1,17 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, Bytes, HttpBody, to_bytes};
 use axum::extract::{ConnectInfo, State};
-use axum::http::header::{ALLOW, CONTENT_TYPE, USER_AGENT};
+use axum::http::header::{ALLOW, CONTENT_TYPE, COOKIE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -18,8 +19,10 @@ use futures_util::stream;
 use serde_json::json;
 use simile_artifact::Artifact;
 use simile_runtime::{
-    ExecutionOptions, OperationCall, OperationExecution, ReplayIdentity, Runtime, TransportPlan,
+    ExecutionOptions, IncomingParameters, OperationCall, OperationExecution, ReplayIdentity,
+    Runtime, TransportPlan, validate_parameters,
 };
+use simile_service::Service;
 use thiserror::Error;
 use tokio::net::TcpListener;
 
@@ -50,6 +53,9 @@ pub enum Error {
 
     #[error("could not initialize fault profile `{profile}`: {message}")]
     FaultProfileState { profile: String, message: String },
+
+    #[error("could not initialize service state: {0}")]
+    Service(#[from] simile_service::Error),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -66,9 +72,8 @@ pub struct Server {
     fault_seed: Option<u64>,
 }
 
-#[derive(Debug)]
 struct ServerState {
-    runtime: Runtime,
+    service: Arc<Service>,
     routes: RouteTable,
     body_limit: usize,
     scenario: Option<String>,
@@ -95,11 +100,14 @@ struct PathTemplate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PathSegment {
     Literal(String),
-    Parameter,
+    Parameter(String),
 }
 
 enum Match<'a> {
-    Operation(&'a str),
+    Operation {
+        operation: &'a str,
+        path: BTreeMap<String, Vec<String>>,
+    },
     MethodNotAllowed(BTreeSet<&'a str>),
     NotFound,
 }
@@ -143,6 +151,28 @@ impl Server {
         artifact: Artifact,
         options: ServerOptions,
     ) -> Result<Self> {
+        let service = Service::memory(artifact)?;
+        Self::bind_service_with_options(address, service, options).await
+    }
+
+    /// Bind a service and persist its complete Stack at `state_path`.
+    pub async fn bind_durable_with_options(
+        address: SocketAddr,
+        artifact: Artifact,
+        state_path: impl AsRef<Path>,
+        options: ServerOptions,
+    ) -> Result<Self> {
+        let service = Service::durable(artifact, state_path)?;
+        Self::bind_service_with_options(address, service, options).await
+    }
+
+    /// Bind a service whose state is owned by the supplied supervisor.
+    pub async fn bind_service_with_options(
+        address: SocketAddr,
+        service: Service,
+        options: ServerOptions,
+    ) -> Result<Self> {
+        let artifact = service.artifact();
         if let Some(name) = options.scenario.as_deref() {
             if !artifact.has_scenario(name) {
                 return Err(Error::UnknownScenario(name.to_owned()));
@@ -157,13 +187,13 @@ impl Server {
             .await
             .map_err(|source| Error::Bind { address, source })?;
         let address = listener.local_addr().map_err(Error::LocalAddress)?;
-        let routes = RouteTable::new(&artifact);
-        let runtime = Runtime::from_artifact(artifact);
+        let routes = RouteTable::new(artifact);
         let fault_seed = options
             .fault_profile
             .as_deref()
             .map(|profile| {
-                runtime
+                service
+                    .runtime()
                     .fault_profile_seed(profile)
                     .map_err(|error| Error::FaultProfileState {
                         profile: profile.to_owned(),
@@ -172,7 +202,7 @@ impl Server {
             })
             .transpose()?;
         let state = Arc::new(ServerState {
-            runtime,
+            service: Arc::new(service),
             routes,
             body_limit: DEFAULT_BODY_LIMIT,
             scenario: options.scenario,
@@ -292,11 +322,14 @@ impl RouteTable {
     fn find(&self, method: &Method, path: &str) -> Match<'_> {
         let mut allowed = BTreeSet::new();
         for route in &self.routes {
-            if !route.path.matches(path) {
+            let Some(parameters) = route.path.match_and_capture(path) else {
                 continue;
-            }
+            };
             if route.method == method.as_str() {
-                return Match::Operation(&route.operation);
+                return Match::Operation {
+                    operation: &route.operation,
+                    path: parameters,
+                };
             }
             allowed.insert(route.method.as_str());
         }
@@ -313,7 +346,12 @@ impl PathTemplate {
         let segments = split_path(path)
             .map(|segment| {
                 if segment.starts_with('{') && segment.ends_with('}') {
-                    PathSegment::Parameter
+                    PathSegment::Parameter(
+                        segment
+                            .trim_start_matches('{')
+                            .trim_end_matches('}')
+                            .to_owned(),
+                    )
                 } else {
                     PathSegment::Literal(segment.to_owned())
                 }
@@ -322,17 +360,27 @@ impl PathTemplate {
         Self { segments }
     }
 
-    fn matches(&self, path: &str) -> bool {
+    fn match_and_capture(&self, path: &str) -> Option<BTreeMap<String, Vec<String>>> {
         let actual = split_path(path).collect::<Vec<_>>();
-        self.segments.len() == actual.len()
-            && self
-                .segments
-                .iter()
-                .zip(actual)
-                .all(|(expected, actual)| match expected {
-                    PathSegment::Literal(expected) => expected == actual,
-                    PathSegment::Parameter => !actual.is_empty(),
-                })
+        if self.segments.len() != actual.len() {
+            return None;
+        }
+        let mut captured = BTreeMap::new();
+        for (expected, actual) in self.segments.iter().zip(actual) {
+            match expected {
+                PathSegment::Literal(expected) if expected == actual => {}
+                PathSegment::Literal(_) => return None,
+                PathSegment::Parameter(name) if !actual.is_empty() => {
+                    let decoded = percent_encoding::percent_decode_str(actual)
+                        .decode_utf8()
+                        .ok()?
+                        .into_owned();
+                    captured.insert(name.clone(), vec![decoded]);
+                }
+                PathSegment::Parameter(_) => return None,
+            }
+        }
+        Some(captured)
     }
 
     fn literal_count(&self) -> usize {
@@ -388,13 +436,22 @@ fn text_header(headers: &HeaderMap, name: &str) -> Option<String> {
 async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
-    let operation = match state.routes.find(&method, uri.path()) {
-        Match::Operation(operation) => operation.to_owned(),
+    let (operation, path_parameters) = match state.routes.find(&method, uri.path()) {
+        Match::Operation { operation, path } => (operation.to_owned(), path),
         Match::MethodNotAllowed(methods) => return method_not_allowed(methods),
         Match::NotFound => {
             return error_response(StatusCode::NOT_FOUND, "not_found", "route not found");
         }
     };
+    let parameters = incoming_parameters(&request, path_parameters);
+    if let Err(error) = validate_parameters(state.service.artifact(), &operation, &parameters) {
+        return operation_error(
+            state.service.runtime(),
+            &operation,
+            error,
+            method == Method::HEAD,
+        );
+    }
     let content_type = match header(request.headers(), CONTENT_TYPE.as_str()) {
         Ok(value) => value,
         Err(response) => return response,
@@ -420,7 +477,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         .or_else(|| {
             (method == Method::GET).then_some(ReplayIdentity::Resource(&resource_identity))
         });
-    let outcome = state.runtime.execute_with_options(
+    let outcome = state.service.execute_with_options(
         OperationCall {
             operation: &operation,
             content_type: content_type.as_deref(),
@@ -434,9 +491,91 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         },
     );
     match outcome {
-        Ok(execution) => operation_execution_response(execution, method == Method::HEAD).await,
-        Err(error) => operation_error(&state.runtime, &operation, error, method == Method::HEAD),
+        Ok(execution) => {
+            dispatch_asynchronous(Arc::clone(&state.service), &execution);
+            operation_execution_response(execution, method == Method::HEAD).await
+        }
+        Err(simile_service::Error::Runtime(error)) => operation_error(
+            state.service.runtime(),
+            &operation,
+            error,
+            method == Method::HEAD,
+        ),
+        Err(error) => {
+            tracing::error!(target: "simile::effect", %operation, %error, "could not apply operation effects");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "effect_failed",
+                "the operation completed but its declared effects could not be committed",
+            )
+        }
     }
+}
+
+fn incoming_parameters(
+    request: &Request<Body>,
+    path: BTreeMap<String, Vec<String>>,
+) -> IncomingParameters {
+    let mut query = BTreeMap::<String, Vec<String>>::new();
+    if let Some(raw) = request.uri().query() {
+        for (name, value) in form_urlencoded::parse(raw.as_bytes()) {
+            query
+                .entry(name.into_owned())
+                .or_default()
+                .push(value.into_owned());
+        }
+    }
+    let mut headers = BTreeMap::<String, Vec<String>>::new();
+    for name in request.headers().keys() {
+        let values = request
+            .headers()
+            .get_all(name)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !values.is_empty() {
+            headers.insert(name.as_str().to_ascii_lowercase(), values);
+        }
+    }
+    let mut cookies = BTreeMap::<String, Vec<String>>::new();
+    for value in request.headers().get_all(COOKIE).iter() {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        for pair in value.split(';') {
+            let Some((name, value)) = pair.trim().split_once('=') else {
+                continue;
+            };
+            cookies
+                .entry(name.trim().to_owned())
+                .or_default()
+                .push(value.trim().to_owned());
+        }
+    }
+    IncomingParameters {
+        path,
+        query,
+        headers,
+        cookies,
+    }
+}
+
+fn dispatch_asynchronous(service: Arc<Service>, execution: &OperationExecution) {
+    if execution.effects().asynchronous().is_empty() {
+        return;
+    }
+    let execution = execution.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = service.dispatch_asynchronous(&execution) {
+            tracing::error!(
+                target: "simile::effect",
+                operation = execution.operation(),
+                %error,
+                "asynchronous effects failed"
+            );
+        }
+    });
 }
 
 async fn operation_execution_response(execution: OperationExecution, head: bool) -> Response {
@@ -557,6 +696,7 @@ fn service_error_cause(error: &simile_runtime::Error) -> Option<&'static str> {
     match error {
         RuntimeError::InvalidBody { .. } => Some("invalid_body"),
         RuntimeError::MalformedJson { .. }
+        | RuntimeError::InvalidParameters { .. }
         | RuntimeError::BodyRequired { .. }
         | RuntimeError::BodyNotDeclared { .. }
         | RuntimeError::EmptyReplayIdentity => Some("malformed_request"),
@@ -570,6 +710,19 @@ fn service_error_cause(error: &simile_runtime::Error) -> Option<&'static str> {
 
 fn runtime_error(error: simile_runtime::Error) -> Response {
     use simile_runtime::Error as RuntimeError;
+
+    if let RuntimeError::InvalidParameters { issues } = &error {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "error": {
+                    "code": "invalid_parameters",
+                    "message": "request parameters do not satisfy the operation contract",
+                    "issues": issues,
+                }
+            }),
+        );
+    }
 
     if let RuntimeError::InvalidBody { issues } = &error {
         let message = validation_error_message(issues.len());
@@ -587,6 +740,7 @@ fn runtime_error(error: simile_runtime::Error) -> Response {
 
     let (status, code) = match &error {
         RuntimeError::MalformedJson { .. } => (StatusCode::BAD_REQUEST, "malformed_json"),
+        RuntimeError::InvalidParameters { .. } => (StatusCode::BAD_REQUEST, "invalid_parameters"),
         RuntimeError::MissingContentType { .. }
         | RuntimeError::UnsupportedMediaType { .. }
         | RuntimeError::UnsupportedEncoding { .. } => {
@@ -700,8 +854,20 @@ paths:
                   code: { const: invalid_order }
                   message: { const: order request rejected }
   /orders/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, pattern: '^ord_' }
     get:
       operationId: getOrder
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: X-Trace
+          in: header
+          schema: { type: string, minLength: 3 }
       responses:
         '200':
           description: found
@@ -866,11 +1032,12 @@ scenario "lost" {
 
         assert!(matches!(
             routes.find(&Method::GET, "/orders/recent"),
-            Match::Operation("GET /orders/recent")
+            Match::Operation { operation: "GET /orders/recent", path } if path.is_empty()
         ));
         assert!(matches!(
             routes.find(&Method::GET, "/orders/ord_123"),
-            Match::Operation("GET /orders/{id}")
+            Match::Operation { operation: "GET /orders/{id}", path }
+                if path.get("id") == Some(&vec!["ord_123".to_owned()])
         ));
         assert!(matches!(
             routes.find(&Method::POST, "/orders/ord_123"),
@@ -1016,6 +1183,29 @@ scenario "lost" {
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("content-type: application/json"));
         assert!(response.contains(r#""id":"#));
+    }
+
+    #[tokio::test]
+    async fn validates_path_query_and_header_parameters_before_execution() {
+        let invalid = serve_raw(
+            b"GET /orders/not-an-order?limit=0 HTTP/1.1\r\nHost: localhost\r\nX-Trace: ok\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        let (_, body) = invalid
+            .split_once("\r\n\r\n")
+            .unwrap_or_else(|| panic!("response should contain a body"));
+        let payload: serde_json::Value =
+            serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(invalid.starts_with("HTTP/1.1 400 Bad Request\r\n"));
+        assert_eq!(payload["error"]["code"], "invalid_parameters");
+        assert_eq!(payload["error"]["issues"].as_array().map(Vec::len), Some(3));
+
+        let valid = serve_raw(
+            b"GET /orders/ord_123?limit=2 HTTP/1.1\r\nHost: localhost\r\nX-Trace: trace-1\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(valid.starts_with("HTTP/1.1 200 OK\r\n"));
     }
 
     #[tokio::test]

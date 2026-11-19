@@ -11,6 +11,8 @@ boundaries.
 - `crates/simile-core`: application context, domain types and operations.
 - `crates/simile-hcl`: HCL syntax parsing and semantic validation of behavior overlays.
 - `crates/simile-openapi`: JSON/YAML OpenAPI parsing and feature-line adapters.
+- `crates/simile-smithy`: Smithy 2.0 IDL parsing and canonical-contract lowering.
+- `crates/simile-typescript`: declarations-only semantic TypeScript parsing and lowering.
 - `crates/simile-schema`: compiled JSON Schema graphs, validation and seeded synthesis.
 - `crates/simile-runtime`: protocol-neutral execution primitives over loaded artifacts.
 - `crates/simile-server`: HTTP routing, wire limits, listener lifecycle and runtime adaptation.
@@ -28,6 +30,8 @@ boundaries.
 | Implement behaviour | `crates/simile-core/src/ops/` |
 | Change the canonical service model | `crates/simile-spec/` |
 | Change OpenAPI ingestion | `crates/simile-openapi/` |
+| Change Smithy ingestion | `crates/simile-smithy/` |
+| Change semantic TypeScript ingestion | `crates/simile-typescript/` |
 | Change body schema compilation, validation or synthesis | `crates/simile-schema/` |
 | Change loaded-artifact execution | `crates/simile-runtime/` |
 | Change HTTP routing or listener behavior | `crates/simile-server/` |
@@ -40,9 +44,9 @@ boundaries.
 Do not put domain behaviour in the Clap model or grow a command adapter into an operation. Do not
 add a crate until a real compilation, ownership or reuse boundary exists.
 
-OpenAPI is the complete HTTP contract. HCL is an optional behavior overlay and must not redefine
-routes, request shapes or response shapes. Keep source-specific syntax out of `simile-spec` and
-coordination policy out of the source adapters.
+OpenAPI, Smithy, or semantic TypeScript is the complete HTTP contract for one compilation. HCL is
+an optional behavior overlay and must not redefine routes, request shapes or response shapes. Keep
+source-specific syntax out of `simile-spec` and coordination policy out of the source adapters.
 
 ## Interface invariants
 

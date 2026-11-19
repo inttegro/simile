@@ -7,6 +7,13 @@ pub enum Error {
     #[error("could not compile a body schema: {0}")]
     Schema(#[from] simile_schema::CompileError),
 
+    #[error("could not compile a body schema for `{operation}`: {source}")]
+    OperationSchema {
+        operation: String,
+        #[source]
+        source: simile_schema::CompileError,
+    },
+
     #[error("could not encode the compiled artifact: {0}")]
     Encode(String),
 

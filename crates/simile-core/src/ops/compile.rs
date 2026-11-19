@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -5,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use simile_artifact::ArtifactSummary;
-use simile_compiler::{Compiler, Source};
+use simile_compiler::{Compiler, ContractSource, Source, SourceCompileRequest};
 use simile_heuristics::Policy;
 use simile_spec::{BehaviorOrigin, CompiledService};
 
@@ -13,10 +14,34 @@ use crate::{Error, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompileRequest {
-    pub openapi: PathBuf,
+    pub contract: PathBuf,
+    pub contract_format: ContractFormat,
     pub behaviors: Vec<PathBuf>,
     pub artifact: Option<PathBuf>,
     pub heuristic_policy: Policy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractFormat {
+    #[default]
+    Auto,
+    #[serde(rename = "openapi")]
+    OpenApi,
+    Smithy,
+    #[serde(rename = "typescript")]
+    TypeScript,
+}
+
+impl std::fmt::Display for ContractFormat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Auto => "auto",
+            Self::OpenApi => "OpenAPI",
+            Self::Smithy => "Smithy",
+            Self::TypeScript => "TypeScript",
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -33,6 +58,8 @@ pub struct WrittenArtifact {
 pub struct CompileReport {
     pub service: String,
     pub service_version: String,
+    pub contract_format: ContractFormat,
+    /// JSON Schema feature line used in the compiled artifact.
     pub openapi_version: String,
     pub operations: usize,
     pub openapi_defaults: usize,
@@ -46,16 +73,10 @@ pub struct CompileReport {
     pub artifact: Option<WrittenArtifact>,
 }
 
-/// Compile an OpenAPI contract and zero or more HCL behavior modules.
+/// Compile a public contract and zero or more HCL behavior modules.
 pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
-    let openapi = read(&request.openapi)?;
-    let openapi_name = request.openapi.to_string_lossy().into_owned();
-    let compiled = compile_service(
-        &openapi_name,
-        &openapi,
-        &request.behaviors,
-        request.heuristic_policy,
-    )?;
+    let loaded = load_contract(&request.contract, request.contract_format)?;
+    let compiled = compile_loaded(&loaded, &request.behaviors, request.heuristic_policy)?;
     let hcl_behaviors = compiled
         .operations
         .values()
@@ -70,6 +91,7 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
     Ok(CompileReport {
         service: compiled.contract.info.title.clone(),
         service_version: compiled.contract.info.version.clone(),
+        contract_format: loaded.format,
         openapi_version: compiled.contract.openapi.exact.clone(),
         operations: compiled.operations.len(),
         openapi_defaults: compiled.operations.len() - hcl_behaviors,
@@ -83,15 +105,38 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
     })
 }
 
-pub(crate) fn compile_service(
-    openapi_name: &str,
-    openapi: &str,
+pub(crate) fn compile_contract_path(
+    path: &Path,
+    format: ContractFormat,
+    behavior_paths: &[PathBuf],
+    heuristic_policy: Policy,
+) -> Result<CompiledService> {
+    let loaded = load_contract(path, format)?;
+    compile_loaded(&loaded, behavior_paths, heuristic_policy)
+}
+
+pub(crate) fn compile_contract_source(
+    name: &str,
+    contents: &str,
+    format: ContractFormat,
+    behavior_paths: &[PathBuf],
+    heuristic_policy: Policy,
+) -> Result<CompiledService> {
+    let loaded = LoadedContract {
+        format,
+        sources: vec![(name.to_owned(), contents.to_owned())],
+    };
+    compile_loaded(&loaded, behavior_paths, heuristic_policy)
+}
+
+fn compile_loaded(
+    contract: &LoadedContract,
     behavior_paths: &[PathBuf],
     heuristic_policy: Policy,
 ) -> Result<CompiledService> {
     let behavior_contents = behavior_paths
         .iter()
-        .map(read)
+        .map(|path| read(path))
         .collect::<Result<Vec<_>>>()?;
     let behavior_names = behavior_paths
         .iter()
@@ -103,12 +148,147 @@ pub(crate) fn compile_service(
         .map(|(name, contents)| Source::new(name, contents))
         .collect();
     Compiler::new()
-        .compile(simile_compiler::CompileRequest {
-            openapi: Source::new(openapi_name, openapi),
+        .compile_source(SourceCompileRequest {
+            contract: compiler_source(contract),
             behaviors,
             heuristic_policy,
         })
         .map_err(Into::into)
+}
+
+#[derive(Debug)]
+pub(crate) struct LoadedContract {
+    pub(crate) format: ContractFormat,
+    pub(crate) sources: Vec<(String, String)>,
+}
+
+pub(crate) fn load_contract(path: &Path, requested: ContractFormat) -> Result<LoadedContract> {
+    let format = infer_contract_format(path, requested)?;
+    let source_paths = if format == ContractFormat::TypeScript {
+        let mut paths = Vec::new();
+        if path.is_dir() {
+            collect_declarations(path, &mut paths)?;
+        } else {
+            collect_declaration_graph(path, &mut BTreeSet::new(), &mut paths)?;
+        }
+        paths.sort();
+        paths
+    } else {
+        vec![path.to_owned()]
+    };
+    if source_paths.is_empty() {
+        return Err(Error::EmptyTypeScriptContract {
+            path: path.to_owned(),
+        });
+    }
+    let sources = source_paths
+        .iter()
+        .map(|path| Ok((path.to_string_lossy().into_owned(), read(path)?)))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(LoadedContract { format, sources })
+}
+
+fn collect_declaration_graph(
+    path: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    target: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let path = path.to_owned();
+    if !visited.insert(path.clone()) {
+        return Ok(());
+    }
+    let contents = read(&path)?;
+    let name = path.to_string_lossy();
+    let specifiers =
+        simile_typescript::module_specifiers(simile_typescript::Source::new(&name, &contents))
+            .map_err(simile_compiler::Error::TypeScript)?;
+    for specifier in specifiers {
+        if !specifier.starts_with('.') {
+            continue;
+        }
+        let imported = resolve_declaration_import(&path, &specifier).ok_or_else(|| {
+            Error::UnresolvedTypeScriptModule {
+                importer: path.clone(),
+                specifier: specifier.clone(),
+            }
+        })?;
+        collect_declaration_graph(&imported, visited, target)?;
+    }
+    target.push(path);
+    Ok(())
+}
+
+fn resolve_declaration_import(importer: &Path, specifier: &str) -> Option<PathBuf> {
+    let parent = importer.parent().unwrap_or_else(|| Path::new("."));
+    let base = parent.join(specifier);
+    let candidates = [
+        base.clone(),
+        base.with_extension("d.ts"),
+        base.join("index.d.ts"),
+    ];
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+pub(crate) fn compiler_source(contract: &LoadedContract) -> ContractSource<'_> {
+    match contract.format {
+        ContractFormat::OpenApi | ContractFormat::Auto => {
+            let (name, contents) = &contract.sources[0];
+            ContractSource::OpenApi(Source::new(name, contents))
+        }
+        ContractFormat::Smithy => {
+            let (name, contents) = &contract.sources[0];
+            ContractSource::Smithy(Source::new(name, contents))
+        }
+        ContractFormat::TypeScript => ContractSource::TypeScript(
+            contract
+                .sources
+                .iter()
+                .map(|(name, contents)| Source::new(name, contents))
+                .collect(),
+        ),
+    }
+}
+
+fn infer_contract_format(path: &Path, requested: ContractFormat) -> Result<ContractFormat> {
+    if requested != ContractFormat::Auto {
+        return Ok(requested);
+    }
+    if path.is_dir() || path.to_string_lossy().ends_with(".d.ts") {
+        return Ok(ContractFormat::TypeScript);
+    }
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("smithy") => Ok(ContractFormat::Smithy),
+        Some("json" | "yaml" | "yml") => Ok(ContractFormat::OpenApi),
+        _ => Err(Error::UnknownContractFormat {
+            path: path.to_owned(),
+        }),
+    }
+}
+
+fn collect_declarations(directory: &Path, target: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = fs::read_dir(directory).map_err(|source| Error::ReadSource {
+        path: directory.to_owned(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| Error::ReadSource {
+            path: directory.to_owned(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_declarations(&path, target)?;
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if name.ends_with(".d.ts") && !name.ends_with(".test.d.ts") {
+            target.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn write_compiled_artifact(
@@ -162,9 +342,9 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     })
 }
 
-fn read(path: &PathBuf) -> Result<String> {
+fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|source| Error::ReadSource {
-        path: path.clone(),
+        path: path.to_owned(),
         source,
     })
 }
@@ -179,7 +359,8 @@ mod tests {
     fn reports_compiled_units() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let report = compile(&CompileRequest {
-            openapi: fixtures.join("orders.yaml"),
+            contract: fixtures.join("orders.yaml"),
+            contract_format: ContractFormat::Auto,
             behaviors: vec![fixtures.join("orders.hcl")],
             artifact: None,
             heuristic_policy: Policy::Standard,
@@ -206,7 +387,8 @@ mod tests {
         drop(fs::remove_file(&artifact));
 
         let report = compile(&CompileRequest {
-            openapi: fixtures.join("orders.yaml"),
+            contract: fixtures.join("orders.yaml"),
+            contract_format: ContractFormat::Auto,
             behaviors: vec![fixtures.join("orders.hcl")],
             artifact: Some(artifact.clone()),
             heuristic_policy: Policy::Standard,
@@ -221,5 +403,49 @@ mod tests {
             Some(artifact.as_path())
         );
         fs::remove_file(&artifact).unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn loads_only_the_typescript_entrypoints_import_graph() {
+        let directory = std::env::temp_dir().join(format!(
+            "simile-core-typescript-imports-{}",
+            std::process::id()
+        ));
+        drop(fs::remove_dir_all(&directory));
+        fs::create_dir_all(&directory).unwrap_or_else(|error| panic!("{error}"));
+        let entry = directory.join("commerce.d.ts");
+        fs::write(&entry, "export * from \"./orders\";\n")
+            .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            directory.join("orders.d.ts"),
+            r#"
+export type ServiceName = "Orders";
+export interface OrdersOperations {
+  readonly listOrders: {
+    readonly method: "GET";
+    readonly path: "/orders";
+    readonly responses: { readonly "200": { readonly content: {
+      readonly "application/json": { readonly count: number };
+    } } };
+  };
+}
+"#,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            directory.join("unrelated.d.ts"),
+            "export interface BrokenOperations {}\n",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        let loaded =
+            load_contract(&entry, ContractFormat::Auto).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(loaded.format, ContractFormat::TypeScript);
+        assert_eq!(loaded.sources.len(), 2);
+        let compiled = compile_loaded(&loaded, &[], Policy::Standard)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(compiled.contract.operation_by_id("listOrders").is_some());
+
+        fs::remove_dir_all(&directory).unwrap_or_else(|error| panic!("{error}"));
     }
 }

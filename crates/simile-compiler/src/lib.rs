@@ -9,6 +9,8 @@ use simile_spec::{
 };
 use thiserror::Error;
 
+mod stateful;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Source<'a> {
     pub name: &'a str,
@@ -36,6 +38,28 @@ pub struct ParsedCompileRequest<'a> {
     pub heuristic_policy: Policy,
 }
 
+/// A public contract source accepted by the source-neutral compiler pipeline.
+#[derive(Clone, Debug)]
+pub enum ContractSource<'a> {
+    OpenApi(Source<'a>),
+    Smithy(Source<'a>),
+    TypeScript(Vec<Source<'a>>),
+}
+
+#[derive(Debug)]
+pub struct SourceCompileRequest<'a> {
+    pub contract: ContractSource<'a>,
+    pub behaviors: Vec<Source<'a>>,
+    pub heuristic_policy: Policy,
+}
+
+#[derive(Debug)]
+pub struct ParsedSourceCompileRequest<'a> {
+    pub contract: ContractSource<'a>,
+    pub behaviors: Vec<simile_hcl::Module>,
+    pub heuristic_policy: Policy,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Compiler;
 
@@ -46,25 +70,41 @@ impl Compiler {
     }
 
     pub fn compile(&self, request: CompileRequest<'_>) -> Result<CompiledService> {
+        self.compile_source(SourceCompileRequest {
+            contract: ContractSource::OpenApi(request.openapi),
+            behaviors: request.behaviors,
+            heuristic_policy: request.heuristic_policy,
+        })
+    }
+
+    pub fn compile_source(&self, request: SourceCompileRequest<'_>) -> Result<CompiledService> {
         let modules = request
             .behaviors
             .into_iter()
             .map(|source| simile_hcl::parse(simile_hcl::Source::new(source.name, source.contents)))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        self.compile_parsed(ParsedCompileRequest {
-            openapi: request.openapi,
+        self.compile_source_parsed(ParsedSourceCompileRequest {
+            contract: request.contract,
             behaviors: modules,
             heuristic_policy: request.heuristic_policy,
         })
     }
 
     pub fn compile_parsed(&self, request: ParsedCompileRequest<'_>) -> Result<CompiledService> {
-        let contract =
-            simile_openapi::parse(request.openapi.contents).map_err(|source| Error::OpenApi {
-                name: request.openapi.name.to_owned(),
-                source,
-            })?;
-        let behaviors = simile_hcl::compile(request.behaviors, &contract)?;
+        self.compile_source_parsed(ParsedSourceCompileRequest {
+            contract: ContractSource::OpenApi(request.openapi),
+            behaviors: request.behaviors,
+            heuristic_policy: request.heuristic_policy,
+        })
+    }
+
+    pub fn compile_source_parsed(
+        &self,
+        request: ParsedSourceCompileRequest<'_>,
+    ) -> Result<CompiledService> {
+        let contract = parse_contract(request.contract)?;
+        let mut behaviors = simile_hcl::compile(request.behaviors, &contract)?;
+        stateful::infer_default_effects(&contract, &mut behaviors);
 
         let operations = contract
             .operations
@@ -105,7 +145,32 @@ impl Compiler {
             fault_profiles: behaviors.fault_profiles,
             resources: behaviors.resources,
             async_operations: behaviors.async_operations,
+            effects: behaviors.effects,
         })
+    }
+}
+
+fn parse_contract(source: ContractSource<'_>) -> Result<simile_spec::ApiContract> {
+    match source {
+        ContractSource::OpenApi(source) => {
+            simile_openapi::parse(source.contents).map_err(|error| Error::OpenApi {
+                name: source.name.to_owned(),
+                source: error,
+            })
+        }
+        ContractSource::Smithy(source) => {
+            simile_smithy::parse(source.contents).map_err(|error| Error::Smithy {
+                name: source.name.to_owned(),
+                source: error,
+            })
+        }
+        ContractSource::TypeScript(sources) => {
+            let sources = sources
+                .iter()
+                .map(|source| simile_typescript::Source::new(source.name, source.contents))
+                .collect::<Vec<_>>();
+            simile_typescript::parse(&sources).map_err(Error::TypeScript)
+        }
     }
 }
 
@@ -308,6 +373,16 @@ pub enum Error {
         #[source]
         source: simile_openapi::Error,
     },
+
+    #[error("could not compile Smithy source `{name}`: {source}")]
+    Smithy {
+        name: String,
+        #[source]
+        source: simile_smithy::Error,
+    },
+
+    #[error("could not compile semantic TypeScript declarations: {0}")]
+    TypeScript(#[source] simile_typescript::Error),
 
     #[error(transparent)]
     Behavior(#[from] simile_hcl::Error),

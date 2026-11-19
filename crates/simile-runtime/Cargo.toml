@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 rand.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 simile-artifact.workspace = true
 simile-schema.workspace = true

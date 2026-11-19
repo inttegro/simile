@@ -108,24 +108,29 @@ impl Runtime {
     ) -> Result<OperationExecution> {
         let Some(identity) = options.replay else {
             let outcome = outcome::produce(&self.artifact, operation_key, request_body, options)?;
-            return self.finish_attempt(operation_key, outcome, options);
+            let effects = crate::effect::plan(&self.artifact, operation_key, &outcome)?;
+            return self.finish_attempt(operation_key, outcome, effects, options);
         };
 
         let replay = self
             .replays
             .resolve(operation_key, identity, request_body.clone(), || {
-                outcome::produce(&self.artifact, operation_key, request_body, options)
+                let outcome =
+                    outcome::produce(&self.artifact, operation_key, request_body, options)?;
+                let effects = crate::effect::plan(&self.artifact, operation_key, &outcome)?;
+                Ok((outcome, effects))
             })?;
         if replay.replayed {
             return Ok(OperationExecution::normal(replay.outcome));
         }
-        self.finish_attempt(operation_key, replay.outcome, options)
+        self.finish_attempt(operation_key, replay.outcome, replay.effects, options)
     }
 
     fn finish_attempt(
         &self,
         operation_key: &str,
         outcome: OperationOutcome,
+        effects: crate::EffectPlan,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
         let fault = self
@@ -138,7 +143,7 @@ impl Runtime {
                 options.scenario,
                 options.fault_profile,
             )?;
-        Ok(OperationExecution::with_fault(outcome, fault))
+        Ok(OperationExecution::with_fault(outcome, effects, fault))
     }
 
     /// Return the seed governing one stochastic profile in this runtime.
@@ -155,7 +160,12 @@ impl Runtime {
             })
     }
 
-    pub(crate) fn artifact(&self) -> &Artifact {
+    /// Return the immutable compiled contract used by this runtime.
+    ///
+    /// Transport and supervision layers use this for routing and capability
+    /// discovery. Operation execution remains owned by `Runtime`.
+    #[must_use]
+    pub fn artifact(&self) -> &Artifact {
         &self.artifact
     }
 }

@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod effect;
 mod execution;
 mod fault;
 mod operation;
 mod outcome;
+mod parameter;
 mod protocol;
 mod replay;
 mod response;
@@ -13,12 +15,14 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
+pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation};
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
     ReplayIdentity,
 };
 pub use fault::{FaultActivation, FaultSource, TransportPlan};
 pub use operation::Runtime;
+pub use parameter::{IncomingParameters, ParameterIssue, ValidatedParameters, validate_parameters};
 pub use response::{
     ResponseSoundness, ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
     synthesize_response_with_seed,
@@ -153,6 +157,18 @@ pub enum Error {
     #[error("runtime fault state is unavailable")]
     FaultStateUnavailable,
 
+    #[error("effect `{effect}` references missing async operation `{operation}`")]
+    EffectAsyncMissing { effect: String, operation: String },
+
+    #[error(
+        "effect argument `{argument}` cannot project {document} value at JSON pointer `{pointer}`"
+    )]
+    EffectProjectionMissing {
+        document: &'static str,
+        pointer: String,
+        argument: String,
+    },
+
     #[error("operation `{operation}` does not declare a request body")]
     BodyNotDeclared { operation: String },
 
@@ -254,6 +270,9 @@ pub enum Error {
 
     #[error("request body failed schema validation with {} issue(s)", .issues.len())]
     InvalidBody { issues: Vec<ValidationIssue> },
+
+    #[error("request parameters failed contract validation with {} issue(s)", .issues.len())]
+    InvalidParameters { issues: Vec<ParameterIssue> },
 
     #[error("synthesized response body failed schema validation with {} issue(s)", .issues.len())]
     InvalidResponseBody { issues: Vec<ValidationIssue> },

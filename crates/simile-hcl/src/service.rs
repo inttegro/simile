@@ -2,10 +2,11 @@ use hcl::expr::Expression;
 use hcl::{Attribute, Block, Body, Structure};
 
 use crate::ast::{
-    ListenDeclaration, Module, OpenApiDeclaration, ServiceDeclaration, ServiceDocument, Source,
+    ContractDeclaration, ListenDeclaration, Module, ServiceDeclaration, ServiceDocument, Source,
+    SourceDeclaration,
 };
 use crate::parse::{
-    apply_error_set, async_operation, attribute, behavior, error_set, fault, fault_profile,
+    apply_error_set, async_operation, attribute, behavior, effect, error_set, fault, fault_profile,
     fault_uses, labels, optional_description, protocol_error, reject_attributes, reject_blocks,
     resource, scenario, string_array,
 };
@@ -32,6 +33,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         faults: Vec::new(),
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
+        effects: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -79,6 +81,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "async" => inline_behavior
                     .async_operations
                     .push(async_operation(block, source.name)?),
+                "effect" => inline_behavior.effects.push(effect(block, source.name)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: source.name.to_owned(),
@@ -120,9 +123,13 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         .transpose()?
         .unwrap_or_default();
     let listen = one_nested(block.body(), source, "service", "listen", parse_listen)?;
-    let openapi = one_nested(block.body(), source, "service", "openapi", parse_openapi)?;
+    let contract = contract_nested(block.body(), source)?;
     for nested in block.body().blocks() {
-        if nested.identifier() != "listen" && nested.identifier() != "openapi" {
+        if nested.identifier() != "listen"
+            && nested.identifier() != "openapi"
+            && nested.identifier() != "smithy"
+            && nested.identifier() != "typescript"
+        {
             return Err(Error::UnknownNestedBlock {
                 file: source.to_owned(),
                 block: "service".to_owned(),
@@ -135,7 +142,7 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         name: name.to_owned(),
         description: optional_description(block.body(), source, "service")?,
         listen,
-        openapi,
+        contract,
         behaviors,
     })
 }
@@ -194,22 +201,62 @@ fn parse_listen(block: &Block, source: &str) -> Result<ListenDeclaration> {
     Ok(ListenDeclaration { host, port })
 }
 
-fn parse_openapi(block: &Block, source: &str) -> Result<OpenApiDeclaration> {
+fn contract_nested(body: &Body, source: &str) -> Result<ContractDeclaration> {
+    let mut contracts = body.blocks().filter_map(|block| {
+        let format = match block.identifier() {
+            "openapi" => ContractFormat::OpenApi,
+            "smithy" => ContractFormat::Smithy,
+            "typescript" => ContractFormat::TypeScript,
+            _ => return None,
+        };
+        Some((format, block))
+    });
+    let Some((format, block)) = contracts.next() else {
+        return Err(Error::MissingNestedBlock {
+            file: source.to_owned(),
+            block: "service".to_owned(),
+            nested: "openapi, smithy, or typescript",
+        });
+    };
+    if contracts.next().is_some() {
+        return Err(Error::DuplicateNestedBlock {
+            file: source.to_owned(),
+            block: "service".to_owned(),
+            nested: "contract source",
+        });
+    }
+    let source_declaration = parse_contract_source(block, source)?;
+    Ok(match format {
+        ContractFormat::OpenApi => ContractDeclaration::OpenApi(source_declaration),
+        ContractFormat::Smithy => ContractDeclaration::Smithy(source_declaration),
+        ContractFormat::TypeScript => ContractDeclaration::TypeScript(source_declaration),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum ContractFormat {
+    OpenApi,
+    Smithy,
+    TypeScript,
+}
+
+fn parse_contract_source(block: &Block, source: &str) -> Result<SourceDeclaration> {
+    let name = block.identifier();
     labels(block, source, 0)?;
-    reject_blocks(block.body(), source, "openapi")?;
-    reject_attributes(block.body(), source, "openapi", &["path", "url"])?;
+    reject_blocks(block.body(), source, name)?;
+    reject_attributes(block.body(), source, name, &["path", "url"])?;
     let path = attribute(block.body(), "path")
-        .map(|value| string(value, source, "openapi", "path"))
+        .map(|value| string(value, source, name, "path"))
         .transpose()?;
     let url = attribute(block.body(), "url")
-        .map(|value| string(value, source, "openapi", "url"))
+        .map(|value| string(value, source, name, "url"))
         .transpose()?;
     match (path, url) {
-        (Some(path), None) => Ok(OpenApiDeclaration::Path(path)),
-        (None, Some(url)) => Ok(OpenApiDeclaration::Url(url)),
+        (Some(path), None) => Ok(SourceDeclaration::Path(path)),
+        (None, Some(url)) => Ok(SourceDeclaration::Url(url)),
         _ => Err(Error::ExclusiveAttributes {
             file: source.to_owned(),
-            block: "openapi".to_owned(),
+            block: name.to_owned(),
             attributes: "`path` or `url`",
         }),
     }
@@ -284,8 +331,8 @@ scenario "slow_order" {
         assert_eq!(document.service.listen.host, "127.0.0.1");
         assert_eq!(document.service.listen.port, 4242);
         assert_eq!(
-            document.service.openapi,
-            OpenApiDeclaration::Path("./commerce.yml".to_owned())
+            document.service.contract,
+            ContractDeclaration::OpenApi(SourceDeclaration::Path("./commerce.yml".to_owned()))
         );
         assert_eq!(document.service.behaviors, ["./orders.hcl"]);
         assert_eq!(document.inline_behavior.resources.len(), 1);
@@ -323,5 +370,52 @@ service "demo" {
 "#,
         ));
         assert!(matches!(zero, Err(Error::InvalidAttribute { .. })));
+    }
+
+    #[test]
+    fn accepts_exactly_one_supported_contract_frontend() {
+        let smithy = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  smithy { path = "./service.smithy" }
+}
+"#,
+        ))
+        .unwrap_or_else(|error| panic!("Smithy service must parse: {error}"));
+        assert_eq!(
+            smithy.service.contract,
+            ContractDeclaration::Smithy(SourceDeclaration::Path("./service.smithy".to_owned()))
+        );
+
+        let typescript = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  typescript { path = "./typescript/commerce.d.ts" }
+}
+"#,
+        ))
+        .unwrap_or_else(|error| panic!("TypeScript service must parse: {error}"));
+        assert_eq!(
+            typescript.service.contract,
+            ContractDeclaration::TypeScript(SourceDeclaration::Path(
+                "./typescript/commerce.d.ts".to_owned()
+            ))
+        );
+
+        let multiple = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  openapi { path = "./openapi.yml" }
+  smithy { path = "./service.smithy" }
+}
+"#,
+        ));
+        assert!(matches!(multiple, Err(Error::DuplicateNestedBlock { .. })));
     }
 }

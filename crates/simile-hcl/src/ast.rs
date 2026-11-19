@@ -1,5 +1,8 @@
 use serde_json::Value;
-use simile_spec::{FaultAction, FaultPhase, OutcomeCondition, ResourceKind, ResourceRef};
+use simile_spec::{
+    EffectActionKind, EffectValue, FaultAction, FaultPhase, OutcomeCondition, ResourceKind,
+    ResourceRef,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Source<'a> {
@@ -123,6 +126,23 @@ pub struct AsyncDeclaration {
     pub name: String,
     pub description: Option<String>,
     pub uses: Vec<ResourceRef>,
+    pub actions: Vec<ActionDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionDeclaration {
+    pub resource: ResourceRef,
+    pub kind: EffectActionKind,
+    pub arguments: std::collections::BTreeMap<String, EffectValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub operations: Vec<String>,
+    pub actions: Vec<ActionDeclaration>,
+    pub async_operations: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +158,7 @@ pub struct Module {
     pub faults: Vec<FaultDeclaration>,
     pub fault_profiles: Vec<FaultProfileDeclaration>,
     pub async_operations: Vec<AsyncDeclaration>,
+    pub effects: Vec<EffectDeclaration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -151,7 +172,7 @@ pub struct ServiceDeclaration {
     pub name: String,
     pub description: Option<String>,
     pub listen: ListenDeclaration,
-    pub openapi: OpenApiDeclaration,
+    pub contract: ContractDeclaration,
     pub behaviors: Vec<String>,
 }
 
@@ -162,7 +183,14 @@ pub struct ListenDeclaration {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OpenApiDeclaration {
+pub enum SourceDeclaration {
     Path(String),
     Url(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContractDeclaration {
+    OpenApi(SourceDeclaration),
+    Smithy(SourceDeclaration),
+    TypeScript(SourceDeclaration),
 }

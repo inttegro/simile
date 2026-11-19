@@ -1,4 +1,4 @@
-use simile_spec::{HttpMethod, OpenApiFeature, ResponseStatus};
+use simile_spec::{HttpMethod, OpenApiFeature, ParameterLocation, ResponseStatus};
 
 #[test]
 fn normalizes_the_three_supported_feature_lines() {
@@ -149,6 +149,79 @@ components:
         body.content["application/json"].examples["created"],
         serde_json::json!({"id": "ord_123"})
     );
+}
+
+#[test]
+fn merges_path_and_operation_parameters_with_operation_precedence() {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Orders, version: 1.0.0 }
+paths:
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+      - in: header
+        name: X-Trace
+        schema: { type: string, minLength: 4 }
+    get:
+      operationId: getOrder
+      parameters:
+        - in: header
+          name: x-trace
+          required: true
+          schema: { type: string, minLength: 12 }
+        - in: query
+          name: expand
+          schema:
+            type: array
+            items: { type: string }
+      responses:
+        "200": { description: Found }
+components:
+  parameters:
+    OrderId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, pattern: '^ord_' }
+"#;
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let operation = contract
+        .operation_by_id("getOrder")
+        .unwrap_or_else(|| panic!("operation missing"));
+
+    assert_eq!(operation.parameters.len(), 3);
+    let id = operation
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "id")
+        .unwrap_or_else(|| panic!("id parameter"));
+    assert_eq!(id.location, ParameterLocation::Path);
+    assert!(id.required);
+    assert_eq!(id.style, "simple");
+
+    let trace = operation
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name.eq_ignore_ascii_case("x-trace"))
+        .unwrap_or_else(|| panic!("trace parameter"));
+    assert!(trace.required);
+    assert_eq!(
+        trace
+            .schema
+            .as_ref()
+            .and_then(|schema| schema["minLength"].as_u64()),
+        Some(12)
+    );
+
+    let expand = operation
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "expand")
+        .unwrap_or_else(|| panic!("expand parameter"));
+    assert_eq!(expand.location, ParameterLocation::Query);
+    assert_eq!(expand.style, "form");
+    assert!(expand.explode);
 }
 
 #[test]

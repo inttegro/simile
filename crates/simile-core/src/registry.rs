@@ -159,7 +159,6 @@ impl Registry {
 
             create_private_directory(&service_directory)?;
             create_private_directory(&service_directory.join("revisions"))?;
-            create_private_directory(&service_directory.join("state"))?;
             fs::rename(&staging, &revision_directory).map_err(|source| Error::RegistryIo {
                 action: "install service revision",
                 path: revision_directory.clone(),
@@ -377,7 +376,7 @@ fn validate_artifact(
     Ok(())
 }
 
-fn validate_service_name(name: &str) -> Result<()> {
+pub(crate) fn validate_service_name(name: &str) -> Result<()> {
     let mut characters = name.chars();
     let starts_safely = characters
         .next()

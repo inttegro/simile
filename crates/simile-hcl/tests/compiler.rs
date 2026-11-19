@@ -91,6 +91,89 @@ async "publish_order" {
 }
 
 #[test]
+fn compiles_typed_effects_and_public_value_projections() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+resource "db" "orders" {}
+resource "queue" "fulfillment" {}
+
+async "publish_order" {
+  action "queue.fulfillment" "publish" {
+    body = {
+      id       = response.id
+      customer = request.customer_id
+    }
+  }
+}
+
+effect "record_order" {
+  description = "Persist the accepted order and publish it for fulfillment."
+  operations  = ["createOrder"]
+  async       = ["publish_order"]
+
+  action "db.orders" "put" {
+    collection = "orders"
+    key        = response.id
+    value      = response
+  }
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let effect = &compiled.effects["record_order"];
+    assert_eq!(effect.operations, ["createOrder"]);
+    assert_eq!(effect.async_operations, ["publish_order"]);
+    assert_eq!(effect.actions.len(), 1);
+    assert_eq!(effect.actions[0].kind, simile_spec::EffectActionKind::DbPut);
+    assert_eq!(
+        effect.actions[0].arguments["key"],
+        simile_spec::EffectValue::Response {
+            pointer: "/id".to_owned()
+        }
+    );
+    assert_eq!(
+        compiled.async_operations["publish_order"].uses,
+        [ResourceRef::new(ResourceKind::Queue, "fulfillment")]
+    );
+    assert_eq!(
+        compiled
+            .descriptions
+            .find(simile_spec::DescriptionKind::Effect, None, "record_order"),
+        Some("Persist the accepted order and publish it for fulfillment.")
+    );
+}
+
+#[test]
+fn rejects_invalid_effect_actions_before_runtime() {
+    let unsupported = parse_error(
+        r#"
+effect "read_from_db" {
+  operations = ["createOrder"]
+  action "db.orders" "get" { key = response.id }
+}
+"#,
+    );
+    assert!(unsupported.to_string().contains("not an effect action"));
+
+    let missing = parse_error(
+        r#"
+effect "incomplete_write" {
+  operations = ["createOrder"]
+  action "db.orders" "put" {
+    collection = "orders"
+    key        = response.id
+  }
+}
+"#,
+    );
+    assert!(missing.to_string().contains("requires argument `value`"));
+}
+
+#[test]
 fn rejects_removed_behavior_trigger_syntax() {
     let error = parse_error(
         r#"

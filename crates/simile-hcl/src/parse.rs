@@ -1,15 +1,17 @@
 use std::str::FromStr;
 
 use hcl::eval::{Context, Evaluate};
-use hcl::expr::Expression;
+use hcl::expr::{Expression, ObjectKey, TraversalOperator};
 use hcl::{Attribute, Block, Body, Structure};
-use simile_spec::{FaultAction, FaultPhase, ResourceKind, ResourceRef};
+use simile_spec::{
+    EffectActionKind, EffectValue, FaultAction, FaultPhase, ResourceKind, ResourceRef,
+};
 
 use crate::ast::{
-    AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
-    FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, Module, OutcomeDeclaration,
-    ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
-    ScenarioSelectionDeclaration, Source,
+    ActionDeclaration, AsyncDeclaration, BehaviorDeclaration, EffectDeclaration,
+    ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration, FaultProfileDeclaration,
+    FaultUseDeclaration, Module, OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration,
+    ScenarioDeclaration, ScenarioFaultDeclaration, ScenarioSelectionDeclaration, Source,
 };
 use crate::{Error, Result};
 
@@ -30,6 +32,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
         faults: Vec::new(),
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
+        effects: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -59,6 +62,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                 "async" => module
                     .async_operations
                     .push(async_operation(block, &module.source)?),
+                "effect" => module.effects.push(effect(block, &module.source)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: module.source,
@@ -748,7 +752,6 @@ fn literal_value(
 
 pub(crate) fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclaration> {
     labels(block, source, 1)?;
-    reject_blocks(block.body(), source, "async")?;
     reject_attributes(block.body(), source, "async", &["description", "uses"])?;
     let uses = attribute(block.body(), "uses")
         .map(|value| string_array(value, source, "async", "uses"))
@@ -757,12 +760,219 @@ pub(crate) fn async_operation(block: &Block, source: &str) -> Result<AsyncDeclar
         .into_iter()
         .map(ResourceRef::parse)
         .collect();
+    let actions = action_blocks(block.body(), source, "async")?;
 
     Ok(AsyncDeclaration {
         name: block.labels()[0].as_str().to_owned(),
         description: optional_description(block.body(), source, "async")?,
         uses,
+        actions,
     })
+}
+
+pub(crate) fn effect(block: &Block, source: &str) -> Result<EffectDeclaration> {
+    labels(block, source, 1)?;
+    reject_attributes(
+        block.body(),
+        source,
+        "effect",
+        &["description", "operations", "async"],
+    )?;
+    let operations = attribute(block.body(), "operations")
+        .ok_or_else(|| Error::MissingAttribute {
+            file: source.to_owned(),
+            block: "effect".to_owned(),
+            attribute: "operations",
+        })
+        .and_then(|value| string_array(value, source, "effect", "operations"))?;
+    if operations.is_empty() {
+        return Err(Error::InvalidAttribute {
+            file: source.to_owned(),
+            block: "effect".to_owned(),
+            attribute: "operations".to_owned(),
+            expected: "a non-empty array of OpenAPI operationIds",
+        });
+    }
+    let async_operations = attribute(block.body(), "async")
+        .map(|value| string_array(value, source, "effect", "async"))
+        .transpose()?
+        .unwrap_or_default();
+    let actions = action_blocks(block.body(), source, "effect")?;
+    if actions.is_empty() && async_operations.is_empty() {
+        return Err(Error::EmptyEffect {
+            file: source.to_owned(),
+            effect: block.labels()[0].as_str().to_owned(),
+        });
+    }
+    Ok(EffectDeclaration {
+        name: block.labels()[0].as_str().to_owned(),
+        description: optional_description(block.body(), source, "effect")?,
+        operations,
+        actions,
+        async_operations,
+    })
+}
+
+fn action_blocks(body: &Body, source: &str, owner: &str) -> Result<Vec<ActionDeclaration>> {
+    body.blocks()
+        .map(|block| {
+            if block.identifier() != "action" {
+                return Err(Error::UnknownNestedBlock {
+                    file: source.to_owned(),
+                    block: owner.to_owned(),
+                    nested: block.identifier().to_owned(),
+                });
+            }
+            action(block, source)
+        })
+        .collect()
+}
+
+fn action(block: &Block, source: &str) -> Result<ActionDeclaration> {
+    labels(block, source, 2)?;
+    reject_blocks(block.body(), source, "action")?;
+    let resource = block.labels()[0].as_str();
+    let (kind, name) = resource
+        .split_once('.')
+        .ok_or_else(|| Error::InvalidActionResource {
+            file: source.to_owned(),
+            resource: resource.to_owned(),
+        })?;
+    let resource_kind =
+        ResourceKind::from_str(kind).map_err(|()| Error::InvalidActionResource {
+            file: source.to_owned(),
+            resource: resource.to_owned(),
+        })?;
+    if name.is_empty() || name.contains('.') {
+        return Err(Error::InvalidActionResource {
+            file: source.to_owned(),
+            resource: resource.to_owned(),
+        });
+    }
+    let command = block.labels()[1].as_str();
+    let kind =
+        EffectActionKind::from_resource_and_name(resource_kind, command).ok_or_else(|| {
+            Error::UnknownEffectAction {
+                file: source.to_owned(),
+                resource_kind,
+                action: command.to_owned(),
+            }
+        })?;
+    let mut arguments = std::collections::BTreeMap::new();
+    for attribute in block.body().attributes() {
+        if !kind.accepts_argument(attribute.key()) {
+            return Err(Error::UnknownEffectArgument {
+                file: source.to_owned(),
+                resource: resource.to_owned(),
+                action: command.to_owned(),
+                argument: attribute.key().to_owned(),
+            });
+        }
+        arguments.insert(
+            attribute.key().to_owned(),
+            effect_value(attribute.expr(), source, attribute.key())?,
+        );
+    }
+    for required in kind.required_arguments() {
+        if !arguments.contains_key(*required) {
+            return Err(Error::MissingEffectArgument {
+                file: source.to_owned(),
+                resource: resource.to_owned(),
+                action: command.to_owned(),
+                argument: required,
+            });
+        }
+    }
+    Ok(ActionDeclaration {
+        resource: ResourceRef::new(resource_kind, name),
+        kind,
+        arguments,
+    })
+}
+
+fn effect_value(expression: &Expression, source: &str, attribute: &str) -> Result<EffectValue> {
+    match expression {
+        Expression::Null | Expression::Bool(_) | Expression::Number(_) | Expression::String(_) => {
+            literal_effect_value(expression, source, attribute)
+        }
+        Expression::Array(items) => Ok(EffectValue::Array {
+            items: items
+                .iter()
+                .map(|item| effect_value(item, source, attribute))
+                .collect::<Result<Vec<_>>>()?,
+        }),
+        Expression::Object(fields) => {
+            let mut compiled = std::collections::BTreeMap::new();
+            for (key, value) in fields {
+                let key = match key {
+                    ObjectKey::Identifier(key) => key.as_str().to_owned(),
+                    ObjectKey::Expression(Expression::String(key)) => key.clone(),
+                    _ => return Err(invalid_effect_value(source, attribute)),
+                };
+                compiled.insert(key, effect_value(value, source, attribute)?);
+            }
+            Ok(EffectValue::Object { fields: compiled })
+        }
+        Expression::Variable(variable) => {
+            effect_projection(variable.as_str(), &[], source, attribute)
+        }
+        Expression::Traversal(traversal) => {
+            let Expression::Variable(variable) = &traversal.expr else {
+                return Err(invalid_effect_value(source, attribute));
+            };
+            effect_projection(variable.as_str(), &traversal.operators, source, attribute)
+        }
+        Expression::Parenthesis(inner) => effect_value(inner, source, attribute),
+        _ => Err(invalid_effect_value(source, attribute)),
+    }
+}
+
+fn literal_effect_value(
+    expression: &Expression,
+    source: &str,
+    attribute: &str,
+) -> Result<EffectValue> {
+    let value = expression
+        .clone()
+        .evaluate(&Context::new())
+        .ok()
+        .and_then(|value| hcl::from_value::<serde_json::Value>(value).ok())
+        .ok_or_else(|| invalid_effect_value(source, attribute))?;
+    Ok(EffectValue::Literal { value })
+}
+
+fn effect_projection(
+    root: &str,
+    operators: &[TraversalOperator],
+    source: &str,
+    attribute: &str,
+) -> Result<EffectValue> {
+    let mut pointer = String::new();
+    for operator in operators {
+        let segment = match operator {
+            TraversalOperator::GetAttr(name) => name.as_str().to_owned(),
+            TraversalOperator::Index(Expression::String(value)) => value.clone(),
+            TraversalOperator::Index(Expression::Number(value)) => value.to_string(),
+            TraversalOperator::LegacyIndex(value) => value.to_string(),
+            TraversalOperator::AttrSplat
+            | TraversalOperator::FullSplat
+            | TraversalOperator::Index(_) => return Err(invalid_effect_value(source, attribute)),
+        };
+        pointer.push('/');
+        pointer.push_str(&segment.replace('~', "~0").replace('/', "~1"));
+    }
+    match root {
+        "request" => Ok(EffectValue::Request { pointer }),
+        "response" => Ok(EffectValue::Response { pointer }),
+        _ => Err(invalid_effect_value(source, attribute)),
+    }
+}
+
+fn invalid_effect_value(source: &str, attribute: &str) -> Error {
+    Error::InvalidEffectValue {
+        file: source.to_owned(),
+        attribute: attribute.to_owned(),
+    }
 }
 
 pub(crate) fn optional_description(

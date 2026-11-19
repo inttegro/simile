@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
-use simile_spec::ResourceKind;
+use simile_spec::{EffectActionKind, ResourceKind};
 
 use crate::{
     BusCommand, BusResult, CacheCommand, CacheResult, DbCommand, DbResult, ErrorCode, HttpCommand,
@@ -129,6 +129,52 @@ impl StackCommand {
             Self::Http(command) => command.action(),
         }
     }
+
+    /// Decode a rendered provider-authored effect into the typed Stack protocol.
+    ///
+    /// HCL and artifacts retain command arguments as public data templates.
+    /// This adapter is the single seam that turns those values into component
+    /// commands, so the operation runtime never depends on Stack internals.
+    pub fn from_effect(
+        kind: EffectActionKind,
+        arguments: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> crate::Result<Self> {
+        let mut fields = arguments
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<serde_json::Map<_, _>>();
+        fields.insert(
+            "action".to_owned(),
+            serde_json::Value::String(kind.name().to_owned()),
+        );
+        let value = serde_json::Value::Object(fields);
+        let invalid = |error: serde_json::Error| {
+            ResourceError::new(
+                ErrorCode::InvalidCommand,
+                format!(
+                    "invalid {}.{} effect action: {error}",
+                    kind.resource_kind(),
+                    kind.name()
+                ),
+            )
+        };
+        Ok(match kind.resource_kind() {
+            ResourceKind::Db => Self::Db(serde_json::from_value(value).map_err(invalid)?),
+            ResourceKind::Cache => Self::Cache(serde_json::from_value(value).map_err(invalid)?),
+            ResourceKind::Queue => Self::Queue(serde_json::from_value(value).map_err(invalid)?),
+            ResourceKind::Mail => Self::Mail(serde_json::from_value(value).map_err(invalid)?),
+            ResourceKind::ObjectStore => {
+                Self::ObjectStore(serde_json::from_value(value).map_err(invalid)?)
+            }
+            ResourceKind::EventBus => {
+                Self::EventBus(serde_json::from_value(value).map_err(invalid)?)
+            }
+            ResourceKind::Scheduler => {
+                Self::Scheduler(serde_json::from_value(value).map_err(invalid)?)
+            }
+            ResourceKind::Http => Self::Http(serde_json::from_value(value).map_err(invalid)?),
+        })
+    }
 }
 
 /// The exhaustive result vocabulary returned by Stack protocol version 1.
@@ -180,7 +226,7 @@ mod tests {
     use std::str::FromStr;
 
     use serde_json::json;
-    use simile_spec::ResourceKind;
+    use simile_spec::{EffectActionKind, ResourceKind};
 
     use super::{ResourceAddress, StackCommand};
     use crate::QueueCommand;
@@ -211,5 +257,21 @@ mod tests {
         assert_eq!(value.pointer("/command/delayMs"), Some(&json!(250)));
         assert_eq!(value.pointer("/command/delay_ms"), None);
         Ok(())
+    }
+
+    #[test]
+    fn rendered_effects_cross_one_typed_protocol_boundary() {
+        let arguments = BTreeMap::from([
+            ("collection".to_owned(), json!("orders")),
+            ("key".to_owned(), json!("or_123")),
+            ("value".to_owned(), json!({"id": "or_123"})),
+        ]);
+        let command = StackCommand::from_effect(EffectActionKind::DbPut, &arguments)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(matches!(
+            command,
+            StackCommand::Db(crate::DbCommand::Put { collection, key, .. })
+                if collection == "orders" && key == "or_123"
+        ));
     }
 }

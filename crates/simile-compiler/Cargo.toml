@@ -1,6 +1,6 @@
 [package]
 name = "simile-compiler"
-description = "Compiler pipeline for OpenAPI contracts and Simile behavior overlays"
+description = "Compiler pipeline for public HTTP contracts and Simile behavior overlays"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+serde_json.workspace = true
 simile-hcl.workspace = true
 simile-heuristics.workspace = true
 simile-openapi.workspace = true
+simile-smithy.workspace = true
 simile-spec.workspace = true
+simile-typescript.workspace = true
 thiserror.workspace = true
 
 [lints]

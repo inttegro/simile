@@ -51,6 +51,42 @@ impl RedbStateStore {
         Self::open_inner(path.as_ref(), Some(identity))
     }
 
+    /// Remove one durable state database when no process owns it.
+    ///
+    /// The same sidecar lock used by [`Self::open`] makes service removal fail
+    /// safely instead of unlinking state from a running emulator.
+    pub fn remove(path: impl AsRef<Path>) -> StateStoreResult<bool> {
+        let path = path.as_ref();
+        // Why: removing a registered service that has never been started must not create a lock
+        // file (or fail because the state directory does not exist).
+        if !path.exists() {
+            return Ok(false);
+        }
+        let lock_path = lock_path(path);
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        lock.try_lock_exclusive()
+            .map_err(|source| StateStoreError::Locked {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let removed = if path.exists() {
+            fs::remove_file(path)?;
+            true
+        } else {
+            false
+        };
+        drop(lock);
+        if lock_path.exists() {
+            fs::remove_file(lock_path)?;
+        }
+        Ok(removed)
+    }
+
     fn open_inner(path: &Path, identity: Option<StateIdentity>) -> StateStoreResult<Self> {
         if let Some(parent) = path
             .parent()

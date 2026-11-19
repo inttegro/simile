@@ -54,6 +54,32 @@ fn rejects_an_invalid_request_before_producing_an_outcome() {
 }
 
 #[test]
+fn plans_committed_effects_from_validated_request_and_response_values() {
+    let artifact = artifact();
+    let result = Runtime::new(&artifact)
+        .execute(order_call(br#"{"product":"beat_pack","quantity":2}"#))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(result.effects().synchronous().len(), 1);
+    let action = &result.effects().synchronous()[0];
+    assert_eq!(action.resource().as_str(), "db.orders");
+    assert_eq!(action.kind(), simile_spec::EffectActionKind::DbPut);
+    assert_eq!(action.arguments()["collection"], json!("orders"));
+    assert_eq!(
+        action.arguments()["key"],
+        result.response().value().unwrap_or_else(|| panic!("body"))["id"]
+    );
+    assert_eq!(
+        action.arguments()["value"],
+        result
+            .response()
+            .value()
+            .cloned()
+            .unwrap_or_else(|| panic!("body"))
+    );
+}
+
+#[test]
 fn runs_openapi_only_bodyless_operations() {
     let artifact = artifact();
     let result = Runtime::new(&artifact)
@@ -86,6 +112,7 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
                 response_status: Some(202),
                 response_content_type: None,
                 replay: None,
+                response_seed: None,
             },
         )
         .unwrap_or_else(|error| panic!("{error}"));
@@ -205,7 +232,11 @@ fn idempotency_keys_replay_the_first_outcome() {
         )
         .unwrap_or_else(|error| panic!("{error}"));
 
-    assert_eq!(first, second);
+    assert_eq!(first.outcome(), second.outcome());
+    assert_eq!(first.fault(), second.fault());
+    assert_eq!(first.transport(), second.transport());
+    assert!(!first.effects().is_empty());
+    assert!(second.effects().is_empty());
     assert_ne!(first.response().value(), third.response().value());
 }
 
@@ -518,6 +549,15 @@ resource "mail" "receipts" {}
 
 async "record_order" {
   uses = ["db.orders"]
+}
+
+effect "persist_order" {
+  operations = ["createOrder"]
+  action "db.orders" "put" {
+    collection = "orders"
+    key        = response.id
+    value      = response
+  }
 }
 
 async "send_receipt" {

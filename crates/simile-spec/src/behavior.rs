@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simile_heuristics::Policy;
 
-use crate::{ApiContract, Operation, OperationKey};
+use crate::{ApiContract, Effect, Operation, OperationKey};
 
 /// The kind of named authoring object described by public presentation metadata.
 ///
@@ -26,6 +26,7 @@ pub enum DescriptionKind {
     AsyncOperation,
     Fault,
     FaultProfile,
+    Effect,
 }
 
 /// One human-readable description retained in a compiled service artifact.
@@ -323,6 +324,7 @@ pub struct Behavior {
 pub struct AsyncOperation {
     pub name: String,
     pub uses: Vec<ResourceRef>,
+    pub actions: Vec<crate::EffectAction>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -338,6 +340,7 @@ pub struct BehaviorSpec {
     pub faults: BTreeMap<String, Fault>,
     pub fault_profiles: BTreeMap<String, FaultProfile>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
+    pub effects: BTreeMap<String, Effect>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -370,4 +373,5 @@ pub struct CompiledService {
     pub fault_profiles: BTreeMap<String, FaultProfile>,
     pub resources: BTreeMap<ResourceRef, Resource>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
+    pub effects: BTreeMap<String, Effect>,
 }

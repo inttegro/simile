@@ -6,7 +6,8 @@ use simile_spec::{OpenApiFeature, RequestBodyContract, ResponseBodyContract};
 
 use crate::{
     AdditionalProperties, CompileError, JsonType, MediaTypePlan, NumberBound, RequestBodyPlan,
-    ResponseBodyPlan, Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef, soundness,
+    ResponseBodyPlan, Result, SchemaCatalog, SchemaId, SchemaNode, SchemaRef, ValueSchemaPlan,
+    soundness,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -58,6 +59,14 @@ impl<'a> BodySchemaCompiler<'a> {
 
     pub fn compile_response(&mut self, body: &ResponseBodyContract) -> Result<ResponseBodyPlan> {
         self.compile_response_for(body, None)
+    }
+
+    /// Compile one request parameter into the same schema graph as bodies.
+    pub fn compile_parameter(&mut self, schema: &Value, field: &str) -> Result<ValueSchemaPlan> {
+        self.compile_schema(schema, field, SchemaDirection::Request)
+            .map(|schema| ValueSchemaPlan {
+                schema: SchemaRef(schema),
+            })
     }
 
     /// Compile a response body together with any public request-to-response relation.

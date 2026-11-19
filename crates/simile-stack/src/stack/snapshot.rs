@@ -86,6 +86,38 @@ pub(crate) struct StackClocks {
 }
 
 impl StackSnapshot {
+    /// Return a JSON view of one resource's engine state.
+    ///
+    /// State values are intentionally available only through this explicit
+    /// inspection method. Normal journal inspection stays payload-free, while
+    /// operator tooling can opt in when it needs to diagnose stored state.
+    #[must_use]
+    pub fn resource_state(&self, address: &ResourceAddress) -> Option<serde_json::Value> {
+        if !self.resources.contains(address) {
+            return None;
+        }
+        match address.kind {
+            ResourceKind::Db => serde_json::to_value(self.db.resources.get(&address.name)).ok(),
+            ResourceKind::Cache => {
+                serde_json::to_value(self.cache.resources.get(&address.name)).ok()
+            }
+            ResourceKind::Queue => {
+                serde_json::to_value(self.queue.resources.get(&address.name)).ok()
+            }
+            ResourceKind::Mail => serde_json::to_value(self.mail.resources.get(&address.name)).ok(),
+            ResourceKind::ObjectStore => {
+                serde_json::to_value(self.object_store.resources.get(&address.name)).ok()
+            }
+            ResourceKind::EventBus => {
+                serde_json::to_value(self.event_bus.resources.get(&address.name)).ok()
+            }
+            ResourceKind::Scheduler => {
+                serde_json::to_value(self.scheduler.resources.get(&address.name)).ok()
+            }
+            ResourceKind::Http => serde_json::to_value(self.http.resources.get(&address.name)).ok(),
+        }
+    }
+
     pub(crate) fn to_records(&self) -> StackRecords {
         let resources = self
             .resources

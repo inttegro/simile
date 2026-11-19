@@ -58,6 +58,24 @@ pub struct ResponseBodyPlan {
     content: BTreeMap<String, MediaTypePlan>,
 }
 
+/// A non-body JSON value schema compiled into the shared schema graph.
+///
+/// HTTP adapters use this for path, query, header, and cookie parameters. The
+/// plan deliberately shares the same validator and synthesis semantics as
+/// request and response bodies instead of maintaining a weaker second engine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ValueSchemaPlan {
+    schema: SchemaRef,
+}
+
+impl ValueSchemaPlan {
+    #[doc(hidden)]
+    #[must_use]
+    fn is_well_formed(&self, schemas: &SchemaCatalog) -> bool {
+        schemas.contains(self.schema)
+    }
+}
+
 impl ResponseBodyPlan {
     pub fn media_types(&self) -> impl Iterator<Item = &str> {
         self.content.keys().map(String::as_str)
@@ -222,6 +240,35 @@ impl SchemaCatalog {
 pub struct BoundMediaType<'a> {
     selected: SelectedMediaType<'a>,
     schemas: &'a SchemaCatalog,
+}
+
+/// A parameter schema bound to the artifact's shared schema catalog.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundValueSchema<'a> {
+    plan: &'a ValueSchemaPlan,
+    schemas: &'a SchemaCatalog,
+}
+
+impl<'a> BoundValueSchema<'a> {
+    #[must_use]
+    pub const fn new(plan: &'a ValueSchemaPlan, schemas: &'a SchemaCatalog) -> Self {
+        Self { plan, schemas }
+    }
+
+    #[must_use]
+    pub fn validate(&self, value: &Value) -> Vec<ValidationIssue> {
+        self.schemas.validate(self.plan.schema, value)
+    }
+
+    pub fn synthesize_fuzz(&self, seed: u64) -> std::result::Result<Value, SynthesisError> {
+        self.schemas.synthesize_fuzz(self.plan.schema, seed)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        self.plan.is_well_formed(self.schemas)
+    }
 }
 
 impl<'a> BoundMediaType<'a> {

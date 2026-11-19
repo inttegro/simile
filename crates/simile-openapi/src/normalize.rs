@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::{Map, Value};
 use simile_spec::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
-    RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus, ServiceInfo,
+    ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
+    ResponseContract, ResponseStatus, ServiceInfo,
 };
 
 use crate::{Error, Result};
@@ -32,7 +33,7 @@ pub(crate) fn contract(
             entries.extend(additional_operation_entries(path_item)?);
         }
         for (method_name, method, value) in entries {
-            let operation = operation(document, path, method_name, method, value)?;
+            let operation = operation(document, path, path_item, method_name, method, value)?;
             register_operation_id(&mut operation_ids, &operation)?;
             operations.insert(operation.key.clone(), operation);
         }
@@ -110,6 +111,7 @@ fn method(value: &str, supports_extended_methods: bool) -> Option<HttpMethod> {
 fn operation(
     document: &Value,
     path: &str,
+    path_item: &Map<String, Value>,
     method_name: &str,
     method: HttpMethod,
     value: &Value,
@@ -156,6 +158,7 @@ fn operation(
         .get("requestBody")
         .map(|value| request_body(document, value, &format!("{field}.requestBody")))
         .transpose()?;
+    let parameters = operation_parameters(document, path_item, body, &field)?;
 
     Ok(Operation {
         key: OperationKey::new(&method, path),
@@ -164,10 +167,166 @@ fn operation(
         path: path.to_owned(),
         summary,
         tags,
+        parameters,
         request_body: raw_request_body,
         request,
         responses,
     })
+}
+
+fn operation_parameters(
+    document: &Value,
+    path_item: &Map<String, Value>,
+    operation: &Map<String, Value>,
+    field: &str,
+) -> Result<Vec<ParameterContract>> {
+    let mut parameters = BTreeMap::new();
+    collect_parameters(
+        document,
+        path_item.get("parameters"),
+        &format!("{field}.pathParameters"),
+        &mut parameters,
+    )?;
+    collect_parameters(
+        document,
+        operation.get("parameters"),
+        &format!("{field}.parameters"),
+        &mut parameters,
+    )?;
+    Ok(parameters.into_values().collect())
+}
+
+fn collect_parameters(
+    document: &Value,
+    value: Option<&Value>,
+    field: &str,
+    parameters: &mut BTreeMap<(ParameterLocation, String), ParameterContract>,
+) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let values = value.as_array().ok_or_else(|| Error::InvalidField {
+        field: field.to_owned(),
+        expected: "an array",
+    })?;
+    for (index, value) in values.iter().enumerate() {
+        let parameter_field = format!("{field}.{index}");
+        let value = resolve_local_reference(document, value, &parameter_field, 0)?;
+        let object = object(value, &parameter_field)?;
+        let name = string(
+            required(object, "name")?,
+            &format!("{parameter_field}.name"),
+        )?
+        .to_owned();
+        let location = parameter_location(string(
+            required(object, "in")?,
+            &format!("{parameter_field}.in"),
+        )?)
+        .ok_or_else(|| Error::InvalidField {
+            field: format!("{parameter_field}.in"),
+            expected: "one of path, query, header, or cookie",
+        })?;
+        let required = match object.get("required") {
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(Error::InvalidField {
+                    field: format!("{parameter_field}.required"),
+                    expected: "a boolean",
+                });
+            }
+            None => location == ParameterLocation::Path,
+        };
+        if location == ParameterLocation::Path && !required {
+            return Err(Error::InvalidField {
+                field: format!("{parameter_field}.required"),
+                expected: "true for path parameters",
+            });
+        }
+        let style = object
+            .get("style")
+            .map(|value| string(value, &format!("{parameter_field}.style")))
+            .transpose()?
+            .unwrap_or_else(|| default_parameter_style(location))
+            .to_owned();
+        let explode = match object.get("explode") {
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(Error::InvalidField {
+                    field: format!("{parameter_field}.explode"),
+                    expected: "a boolean",
+                });
+            }
+            None => style == "form",
+        };
+        let allow_reserved = match object.get("allowReserved") {
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(Error::InvalidField {
+                    field: format!("{parameter_field}.allowReserved"),
+                    expected: "a boolean",
+                });
+            }
+            None => false,
+        };
+        let schema = parameter_schema(object, &parameter_field)?;
+        let identity_name = if location == ParameterLocation::Header {
+            name.to_ascii_lowercase()
+        } else {
+            name.clone()
+        };
+        parameters.insert(
+            (location, identity_name),
+            ParameterContract {
+                name,
+                location,
+                required,
+                style,
+                explode,
+                allow_reserved,
+                schema,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn parameter_schema(parameter: &Map<String, Value>, field: &str) -> Result<Option<Value>> {
+    if let Some(schema) = parameter.get("schema") {
+        return Ok(Some(schema.clone()));
+    }
+    let Some(content) = parameter.get("content") else {
+        return Ok(None);
+    };
+    let content = object(content, &format!("{field}.content"))?;
+    if content.len() != 1 {
+        return Err(Error::InvalidField {
+            field: format!("{field}.content"),
+            expected: "exactly one media type",
+        });
+    }
+    Ok(content
+        .values()
+        .next()
+        .and_then(Value::as_object)
+        .and_then(|media| media.get("schema"))
+        .cloned())
+}
+
+fn parameter_location(value: &str) -> Option<ParameterLocation> {
+    match value {
+        "path" => Some(ParameterLocation::Path),
+        "query" => Some(ParameterLocation::Query),
+        "header" => Some(ParameterLocation::Header),
+        "cookie" => Some(ParameterLocation::Cookie),
+        _ => None,
+    }
+}
+
+const fn default_parameter_style(location: ParameterLocation) -> &'static str {
+    match location {
+        ParameterLocation::Path | ParameterLocation::Header => "simple",
+        ParameterLocation::Query | ParameterLocation::Cookie => "form",
+    }
 }
 
 fn response_body(

@@ -1,3 +1,4 @@
+use simile_spec::ResourceKind;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -171,6 +172,57 @@ pub enum Error {
 
     #[error("async operation `{name}` is declared more than once")]
     DuplicateAsyncOperation { name: String },
+
+    #[error("effect `{name}` is declared more than once")]
+    DuplicateEffect { name: String },
+
+    #[error("{file}: effect `{effect}` must contain an action or name asynchronous work")]
+    EmptyEffect { file: String, effect: String },
+
+    #[error(
+        "{file}: action resource `{resource}` must be a declared resource address such as `db.orders`"
+    )]
+    InvalidActionResource { file: String, resource: String },
+
+    #[error("{file}: `{action}` is not an effect action supported by `{resource_kind}` resources")]
+    UnknownEffectAction {
+        file: String,
+        resource_kind: ResourceKind,
+        action: String,
+    },
+
+    #[error("{file}: action `{resource} {action}` does not accept argument `{argument}`")]
+    UnknownEffectArgument {
+        file: String,
+        resource: String,
+        action: String,
+        argument: String,
+    },
+
+    #[error("{file}: action `{resource} {action}` requires argument `{argument}`")]
+    MissingEffectArgument {
+        file: String,
+        resource: String,
+        action: String,
+        argument: &'static str,
+    },
+
+    #[error(
+        "{file}: effect argument `{attribute}` must be a literal or a request/response projection"
+    )]
+    InvalidEffectValue { file: String, attribute: String },
+
+    #[error("effect `{effect}` references unknown OpenAPI operationId `{operation_id}`")]
+    UnknownEffectOperation {
+        effect: String,
+        operation_id: String,
+    },
+
+    #[error("effect `{effect}` references unknown async operation `{operation}")]
+    UnknownEffectAsync { effect: String, operation: String },
+
+    #[error("{owner} action references undeclared resource `{resource}`")]
+    UnknownEffectResource { owner: String, resource: String },
 
     #[error("behavior references unknown OpenAPI operationId `{operation_id}`")]
     UnknownOperation { operation_id: String },

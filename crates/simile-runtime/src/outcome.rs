@@ -2,7 +2,7 @@ use simile_artifact::{Artifact, ArtifactOutcome};
 
 use crate::{
     Error, ExecutionOptions, OperationOutcome, ResponseSynthesisRequest, Result, ValidatedBody,
-    synthesize_response,
+    synthesize_response, synthesize_response_with_seed,
 };
 
 pub(crate) fn produce(
@@ -20,16 +20,17 @@ pub(crate) fn produce(
         .map_or(options.response_content_type, |outcome| {
             outcome.content_type().or(options.response_content_type)
         });
-    let response = synthesize_response(
-        artifact,
-        ResponseSynthesisRequest {
-            operation: operation_key,
-            status: response_status,
-            content_type: response_content_type,
-            request_body: request_body.as_ref(),
-            body: selected.as_ref().and_then(ArtifactOutcome::body),
-        },
-    )?;
+    let synthesis = ResponseSynthesisRequest {
+        operation: operation_key,
+        status: response_status,
+        content_type: response_content_type,
+        request_body: request_body.as_ref(),
+        body: selected.as_ref().and_then(ArtifactOutcome::body),
+    };
+    let response = match options.response_seed {
+        Some(seed) => synthesize_response_with_seed(artifact, synthesis, seed),
+        None => synthesize_response(artifact, synthesis),
+    }?;
     Ok(OperationOutcome::new(
         operation_key.to_owned(),
         request_body,

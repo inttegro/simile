@@ -19,7 +19,8 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 13);
+    assert_eq!(summary.format_version, 16);
+    assert_eq!(summary.parameters, 0);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
     assert_eq!(summary.openapi_version, "3.2.1");
@@ -34,6 +35,10 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
     assert_eq!(summary.responses, 1);
     assert_eq!(summary.resources, 1);
     assert_eq!(summary.async_operations, 1);
+    assert_eq!(summary.effects, 0);
+    assert_eq!(summary.provider_authored_effects, 0);
+    assert_eq!(summary.convention_inferred_effects, 0);
+    assert_eq!(summary.effect_actions, 0);
     assert_eq!(summary.faults, 0);
     assert_eq!(summary.fault_profiles, 0);
     assert_eq!(summary.encoded_bytes, first.len());
@@ -253,6 +258,7 @@ fn example_service() -> CompiledService {
         path: "/orders".to_owned(),
         summary: Some("Create an order".to_owned()),
         tags: vec!["orders".to_owned()],
+        parameters: Vec::new(),
         request_body: Some(json!({"required": true, "schema": {"type": "object"}})),
         request: Some(RequestBodyContract {
             required: true,
@@ -401,6 +407,7 @@ fn example_service() -> CompiledService {
     let asynchronous = AsyncOperation {
         name: "recordOrder".to_owned(),
         uses: vec![resource_ref.clone()],
+        actions: Vec::new(),
     };
     let compiled = CompiledOperation {
         contract: operation.clone(),
@@ -445,5 +452,6 @@ fn example_service() -> CompiledService {
         fault_profiles: BTreeMap::new(),
         resources: BTreeMap::from([(resource_ref, resource)]),
         async_operations: BTreeMap::from([(asynchronous.name.clone(), asynchronous)]),
+        effects: BTreeMap::new(),
     }
 }

@@ -8,17 +8,18 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use simile_heuristics::Policy;
 use simile_schema::{
-    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, RequestBodyPlan, ResponseBodyPlan,
-    SchemaCatalog,
+    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, BoundValueSchema, RequestBodyPlan,
+    ResponseBodyPlan, SchemaCatalog, ValueSchemaPlan,
 };
 use simile_spec::{
-    BehaviorOrigin, CompiledService, DescriptionKind, FaultAction, FaultPhase, HttpMethod,
-    OpenApiFeature, OutcomeProvenance, ResourceKind, ResourceRef, ResponseStatus,
+    BehaviorOrigin, CompiledService, DescriptionKind, EffectAction, EffectActionKind, EffectOrigin,
+    EffectValue, FaultAction, FaultPhase, HttpMethod, OpenApiFeature, OutcomeProvenance,
+    ParameterLocation, ResourceKind, ResourceRef, ResponseStatus,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 13;
+pub const FORMAT_VERSION: u16 = 16;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -40,6 +41,7 @@ pub struct ArtifactSummary {
     pub openapi_version: String,
     pub heuristic_policy: Policy,
     pub operations: usize,
+    pub parameters: usize,
     pub request_bodies: usize,
     pub response_bodies: usize,
     pub schema_nodes: usize,
@@ -58,6 +60,10 @@ pub struct ArtifactSummary {
     pub value_nodes: usize,
     pub resources: usize,
     pub async_operations: usize,
+    pub effects: usize,
+    pub provider_authored_effects: usize,
+    pub convention_inferred_effects: usize,
+    pub effect_actions: usize,
     pub encoded_bytes: usize,
     pub payload_sha256: String,
 }
@@ -94,12 +100,25 @@ pub struct ArtifactOperation<'a> {
     operation_id: Option<&'a str>,
     summary: Option<&'a str>,
     request_body: Option<&'a RequestBodyPlan>,
+    parameters: &'a [ParameterRecord],
     responses: &'a [ResponseRecord],
     outcomes: &'a [OutcomeRecord],
     behavior_response_status: Option<u16>,
     strings: &'a [String],
     values: &'a [ValueRecord],
     schemas: &'a SchemaCatalog,
+}
+
+/// One compiled HTTP parameter available to transport adapters.
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactParameter<'a> {
+    name: &'a str,
+    location: ParameterLocation,
+    required: bool,
+    style: &'a str,
+    explode: bool,
+    allow_reserved: bool,
+    schema: Option<BoundValueSchema<'a>>,
 }
 
 /// One compiled response available to the runtime for an operation.
@@ -169,6 +188,18 @@ pub struct ArtifactAsyncOperation<'a> {
     uses: &'a [ResourceId],
     strings: &'a [String],
     resources: &'a [ResourceRecord],
+    actions: &'a [ActionRecord],
+    values: &'a [ValueRecord],
+}
+
+/// One provider-authored effect loaded from a compiled artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactEffect {
+    name: String,
+    origin: EffectOrigin,
+    operations: Vec<String>,
+    actions: Vec<EffectAction>,
+    async_operations: Vec<String>,
 }
 
 /// One abstract resource used by an asynchronous operation.
@@ -219,6 +250,21 @@ impl<'a> ArtifactOperation<'a> {
             .map(|plan| BoundRequestBody::new(plan, self.schemas))
     }
 
+    pub fn parameters(&self) -> impl Iterator<Item = ArtifactParameter<'a>> + 'a {
+        self.parameters.iter().map(|parameter| ArtifactParameter {
+            name: &self.strings[parameter.0 as usize],
+            location: decode_parameter_location(parameter.1),
+            required: parameter.2,
+            style: &self.strings[parameter.3 as usize],
+            explode: parameter.4,
+            allow_reserved: parameter.5,
+            schema: parameter
+                .6
+                .as_ref()
+                .map(|schema| BoundValueSchema::new(schema, self.schemas)),
+        })
+    }
+
     pub fn responses(&self) -> impl Iterator<Item = ArtifactResponse<'a>> + 'a {
         self.responses.iter().map(|response| ArtifactResponse {
             status: decode_status(response.0, response.1),
@@ -258,6 +304,43 @@ impl<'a> ArtifactOperation<'a> {
         // The value arena is stored on the artifact rather than the operation;
         // this field is injected by `operation_at` through the schema-adjacent slot.
         self.values
+    }
+}
+
+impl ArtifactParameter<'_> {
+    #[must_use]
+    pub const fn name(&self) -> &str {
+        self.name
+    }
+
+    #[must_use]
+    pub const fn location(&self) -> ParameterLocation {
+        self.location
+    }
+
+    #[must_use]
+    pub const fn is_required(&self) -> bool {
+        self.required
+    }
+
+    #[must_use]
+    pub const fn style(&self) -> &str {
+        self.style
+    }
+
+    #[must_use]
+    pub const fn explode(&self) -> bool {
+        self.explode
+    }
+
+    #[must_use]
+    pub const fn allow_reserved(&self) -> bool {
+        self.allow_reserved
+    }
+
+    #[must_use]
+    pub const fn schema(&self) -> Option<BoundValueSchema<'_>> {
+        self.schema
     }
 }
 
@@ -433,6 +516,41 @@ impl<'a> ArtifactAsyncOperation<'a> {
             }
         })
     }
+
+    #[must_use]
+    pub fn actions(&self) -> Vec<EffectAction> {
+        self.actions
+            .iter()
+            .map(|action| decode_effect_action(action, self.strings, self.resources, self.values))
+            .collect()
+    }
+}
+
+impl ArtifactEffect {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn origin(&self) -> EffectOrigin {
+        self.origin
+    }
+
+    #[must_use]
+    pub fn operations(&self) -> &[String] {
+        &self.operations
+    }
+
+    #[must_use]
+    pub fn actions(&self) -> &[EffectAction] {
+        &self.actions
+    }
+
+    #[must_use]
+    pub fn async_operations(&self) -> &[String] {
+        &self.async_operations
+    }
 }
 
 impl<'a> ArtifactResource<'a> {
@@ -523,6 +641,12 @@ impl Artifact {
             openapi_version: self.string(self.payload.2.3).to_owned(),
             heuristic_policy: decode_heuristic_policy(self.payload.2.5),
             operations: self.payload.3.len(),
+            parameters: self
+                .payload
+                .3
+                .iter()
+                .map(|operation| operation.11.len())
+                .sum(),
             request_bodies: self
                 .payload
                 .3
@@ -573,6 +697,31 @@ impl Artifact {
             value_nodes: self.payload.4.len(),
             resources: self.payload.5.len(),
             async_operations: self.payload.6.len(),
+            effects: self.payload.8.len(),
+            provider_authored_effects: self
+                .payload
+                .8
+                .iter()
+                .filter(|effect| decode_effect_origin(effect.4) == EffectOrigin::ProviderAuthored)
+                .count(),
+            convention_inferred_effects: self
+                .payload
+                .8
+                .iter()
+                .filter(|effect| decode_effect_origin(effect.4) == EffectOrigin::ConventionInferred)
+                .count(),
+            effect_actions: self
+                .payload
+                .8
+                .iter()
+                .map(|effect| effect.2.len())
+                .sum::<usize>()
+                + self
+                    .payload
+                    .6
+                    .iter()
+                    .map(|operation| operation.2.len())
+                    .sum::<usize>(),
             encoded_bytes: self.encoded_bytes,
             payload_sha256: encode_hex(&self.digest),
         }
@@ -676,7 +825,47 @@ impl Artifact {
                 uses: &operation.1,
                 strings: &self.payload.1,
                 resources: &self.payload.5,
+                actions: &operation.2,
+                values: &self.payload.4,
             })
+    }
+
+    /// Iterate over compiled effects in stable name order.
+    pub fn effects(&self) -> impl Iterator<Item = ArtifactEffect> + '_ {
+        self.payload.8.iter().map(|effect| ArtifactEffect {
+            name: self.string(effect.0).to_owned(),
+            origin: decode_effect_origin(effect.4),
+            operations: effect
+                .1
+                .iter()
+                .map(|operation| self.string(*operation).to_owned())
+                .collect(),
+            actions: effect
+                .2
+                .iter()
+                .map(|action| {
+                    decode_effect_action(action, &self.payload.1, &self.payload.5, &self.payload.4)
+                })
+                .collect(),
+            async_operations: effect
+                .3
+                .iter()
+                .map(|operation| self.string(*operation).to_owned())
+                .collect(),
+        })
+    }
+
+    /// Return the effects attached to one stable operation key.
+    pub fn effects_for<'a>(
+        &'a self,
+        operation: &'a str,
+    ) -> impl Iterator<Item = ArtifactEffect> + 'a {
+        self.effects().filter(move |effect| {
+            effect
+                .operations
+                .iter()
+                .any(|candidate| candidate == operation)
+        })
     }
 
     /// Resolve an opaque scenario into the named outcome for one operation.
@@ -827,6 +1016,7 @@ impl Artifact {
             operation_id: operation.4.map(|id| self.string(id)),
             summary: operation.5.map(|id| self.string(id)),
             request_body: operation.6.as_ref(),
+            parameters: &operation.11,
             responses: &operation.7,
             outcomes: &operation.10,
             behavior_response_status: operation.9,
@@ -987,6 +1177,7 @@ struct Payload(
     Vec<ResourceRecord>,
     Vec<AsyncRecord>,
     SchemaCatalog,
+    Vec<EffectRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1020,6 +1211,18 @@ struct OperationRecord(
     u8,
     Option<u16>,
     Vec<OutcomeRecord>,
+    Vec<ParameterRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ParameterRecord(
+    StringId,
+    u8,
+    bool,
+    StringId,
+    bool,
+    bool,
+    Option<ValueSchemaPlan>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1066,7 +1269,29 @@ struct FaultProfileRecord(
 struct ResourceRecord(u8, StringId);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct AsyncRecord(StringId, Vec<ResourceId>);
+struct AsyncRecord(StringId, Vec<ResourceId>, Vec<ActionRecord>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct EffectRecord(
+    StringId,
+    Vec<StringId>,
+    Vec<ActionRecord>,
+    Vec<StringId>,
+    u8,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ActionRecord(ResourceId, u8, Vec<(StringId, EffectValueRecord)>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+enum EffectValueRecord {
+    Literal(ValueId),
+    Request(StringId),
+    Response(StringId),
+    Array(Vec<Self>),
+    Object(Vec<(StringId, Self)>),
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum ValueRecord {
@@ -1322,7 +1547,40 @@ impl Payload {
                 .request
                 .as_ref()
                 .map(|body| schema_compiler.compile_request(body))
-                .transpose()?;
+                .transpose()
+                .map_err(|source| Error::OperationSchema {
+                    operation: key.to_string(),
+                    source,
+                })?;
+            let parameters = operation
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    let schema = parameter
+                        .schema
+                        .as_ref()
+                        .map(|schema| {
+                            schema_compiler.compile_parameter(
+                                schema,
+                                &format!("operation.{}.parameter.{}", key.as_str(), parameter.name),
+                            )
+                        })
+                        .transpose()
+                        .map_err(|source| Error::OperationSchema {
+                            operation: key.to_string(),
+                            source,
+                        })?;
+                    Ok(ParameterRecord(
+                        strings.id(&parameter.name)?,
+                        encode_parameter_location(parameter.location),
+                        parameter.required,
+                        strings.id(&parameter.style)?,
+                        parameter.explode,
+                        parameter.allow_reserved,
+                        schema,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let mut ordered_responses = operation.responses.iter().collect::<Vec<_>>();
             ordered_responses.sort_by(|left, right| left.status.cmp(&right.status));
             let responses = ordered_responses
@@ -1341,7 +1599,11 @@ impl Payload {
                             .map(|body| {
                                 schema_compiler.compile_response_for(body, request_body.as_ref())
                             })
-                            .transpose()?,
+                            .transpose()
+                            .map_err(|source| Error::OperationSchema {
+                                operation: key.to_string(),
+                                source,
+                            })?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -1389,6 +1651,7 @@ impl Payload {
                 encode_origin(compiled.origin),
                 behavior_response_status,
                 outcomes,
+                parameters,
             ));
         }
 
@@ -1418,7 +1681,47 @@ impl Payload {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(AsyncRecord(strings.id(&operation.name)?, uses))
+                let actions = operation
+                    .actions
+                    .iter()
+                    .map(|action| {
+                        compile_effect_action(action, &resource_ids, &strings, &mut values)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(AsyncRecord(strings.id(&operation.name)?, uses, actions))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let effects = service
+            .effects
+            .values()
+            .map(|effect| {
+                let operations = effect
+                    .operations
+                    .iter()
+                    .map(|operation_id| {
+                        operation_key_for_id(service, operation_id)
+                            .and_then(|key| strings.id(key.as_str()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let actions = effect
+                    .actions
+                    .iter()
+                    .map(|action| {
+                        compile_effect_action(action, &resource_ids, &strings, &mut values)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let asynchronous = effect
+                    .async_operations
+                    .iter()
+                    .map(|operation| strings.id(operation))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(EffectRecord(
+                    strings.id(&effect.name)?,
+                    operations,
+                    actions,
+                    asynchronous,
+                    encode_effect_origin(effect.origin),
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -1434,6 +1737,7 @@ impl Payload {
             resources,
             async_operations,
             schemas,
+            effects,
         ))
     }
 
@@ -1530,7 +1834,7 @@ impl Payload {
             }
         }
         for description in &self.2.10 {
-            if description.0 > 9 {
+            if description.0 > 10 {
                 return Err(Error::Invalid("description kind"));
             }
             validate_optional_index(description.1, strings, "description parent")?;
@@ -1594,6 +1898,20 @@ impl Payload {
                     validate_index(condition.1, values, "outcome condition value")?;
                 }
             }
+            for parameter in &operation.11 {
+                validate_index(parameter.0, strings, "parameter name")?;
+                if parameter.1 > 3 {
+                    return Err(Error::Invalid("parameter location"));
+                }
+                validate_index(parameter.3, strings, "parameter style")?;
+                if parameter
+                    .6
+                    .as_ref()
+                    .is_some_and(|schema| !BoundValueSchema::new(schema, &self.7).is_well_formed())
+                {
+                    return Err(Error::Invalid("parameter schema"));
+                }
+            }
         }
         for operations in self.3.windows(2) {
             let left = &self.1[operations[0].0 as usize];
@@ -1634,12 +1952,90 @@ impl Payload {
             for resource in &operation.1 {
                 validate_index(*resource, resources, "resource")?;
             }
+            for action in &operation.2 {
+                validate_effect_action(action, strings, values, resources, &self.4)?;
+            }
         }
         if !self.7.is_well_formed() {
             return Err(Error::Invalid("body schema catalog"));
         }
+        let async_names = self
+            .6
+            .iter()
+            .map(|operation| operation.0)
+            .collect::<BTreeSet<_>>();
+        for effect in &self.8 {
+            validate_index(effect.0, strings, "effect name")?;
+            for operation in &effect.1 {
+                validate_index(*operation, strings, "effect operation")?;
+                if !operation_keys.contains(operation) {
+                    return Err(Error::Invalid("effect operation reference"));
+                }
+            }
+            for action in &effect.2 {
+                validate_effect_action(action, strings, values, resources, &self.4)?;
+            }
+            for operation in &effect.3 {
+                validate_index(*operation, strings, "effect async operation")?;
+                if !async_names.contains(operation) {
+                    return Err(Error::Invalid("effect async operation reference"));
+                }
+            }
+            if effect.4 > 1 {
+                return Err(Error::Invalid("effect origin"));
+            }
+        }
         Ok(())
     }
+}
+
+fn validate_effect_action(
+    action: &ActionRecord,
+    strings: usize,
+    values: usize,
+    resources: usize,
+    value_records: &[ValueRecord],
+) -> Result<()> {
+    validate_index(action.0, resources, "effect action resource")?;
+    if action.1 > 14 {
+        return Err(Error::Invalid("effect action kind"));
+    }
+    for (name, value) in &action.2 {
+        validate_index(*name, strings, "effect action argument")?;
+        validate_effect_value(value, strings, values, value_records)?;
+    }
+    Ok(())
+}
+
+fn validate_effect_value(
+    value: &EffectValueRecord,
+    strings: usize,
+    values: usize,
+    value_records: &[ValueRecord],
+) -> Result<()> {
+    match value {
+        EffectValueRecord::Literal(value) => {
+            validate_index(*value, values, "effect literal")?;
+            if value_records.get(*value as usize).is_none() {
+                return Err(Error::Invalid("effect literal"));
+            }
+        }
+        EffectValueRecord::Request(pointer) | EffectValueRecord::Response(pointer) => {
+            validate_index(*pointer, strings, "effect projection")?;
+        }
+        EffectValueRecord::Array(items) => {
+            for item in items {
+                validate_effect_value(item, strings, values, value_records)?;
+            }
+        }
+        EffectValueRecord::Object(fields) => {
+            for (name, value) in fields {
+                validate_index(*name, strings, "effect object field")?;
+                validate_effect_value(value, strings, values, value_records)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn operation_key_for_id<'a>(
@@ -1812,6 +2208,10 @@ impl StringTable {
             if let Some(summary) = &operation.summary {
                 values.insert(summary.clone());
             }
+            for parameter in &operation.parameters {
+                values.insert(parameter.name.clone());
+                values.insert(parameter.style.clone());
+            }
             for response in &operation.responses {
                 collect_value_strings(&response.definition, &mut values);
             }
@@ -1869,6 +2269,16 @@ impl StringTable {
         }
         for operation in service.async_operations.values() {
             values.insert(operation.name.clone());
+            for action in &operation.actions {
+                collect_effect_action_strings(action, &mut values);
+            }
+        }
+        for effect in service.effects.values() {
+            values.insert(effect.name.clone());
+            values.extend(effect.async_operations.iter().cloned());
+            for action in &effect.actions {
+                collect_effect_action_strings(action, &mut values);
+            }
         }
 
         let values = values.into_iter().collect::<Vec<_>>();
@@ -1958,6 +2368,154 @@ fn collect_value_strings(value: &Value, strings: &mut BTreeSet<String>) {
     }
 }
 
+fn collect_effect_action_strings(action: &EffectAction, strings: &mut BTreeSet<String>) {
+    for (name, value) in &action.arguments {
+        strings.insert(name.clone());
+        collect_effect_value_strings(value, strings);
+    }
+}
+
+fn collect_effect_value_strings(value: &EffectValue, strings: &mut BTreeSet<String>) {
+    match value {
+        EffectValue::Literal { value } => collect_value_strings(value, strings),
+        EffectValue::Request { pointer } | EffectValue::Response { pointer } => {
+            strings.insert(pointer.clone());
+        }
+        EffectValue::Array { items } => {
+            for item in items {
+                collect_effect_value_strings(item, strings);
+            }
+        }
+        EffectValue::Object { fields } => {
+            for (name, value) in fields {
+                strings.insert(name.clone());
+                collect_effect_value_strings(value, strings);
+            }
+        }
+    }
+}
+
+fn compile_effect_action(
+    action: &EffectAction,
+    resources: &BTreeMap<ResourceRef, ResourceId>,
+    strings: &StringTable,
+    values: &mut ValueArena,
+) -> Result<ActionRecord> {
+    let resource =
+        resources
+            .get(&action.resource)
+            .copied()
+            .ok_or_else(|| Error::UnknownReference {
+                kind: "effect resource",
+                name: action.resource.to_string(),
+            })?;
+    let arguments = action
+        .arguments
+        .iter()
+        .map(|(name, value)| {
+            Ok((
+                strings.id(name)?,
+                compile_effect_value(value, strings, values)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ActionRecord(
+        resource,
+        encode_effect_action_kind(action.kind),
+        arguments,
+    ))
+}
+
+fn compile_effect_value(
+    value: &EffectValue,
+    strings: &StringTable,
+    values: &mut ValueArena,
+) -> Result<EffectValueRecord> {
+    Ok(match value {
+        EffectValue::Literal { value } => EffectValueRecord::Literal(values.push(value, strings)?),
+        EffectValue::Request { pointer } => EffectValueRecord::Request(strings.id(pointer)?),
+        EffectValue::Response { pointer } => EffectValueRecord::Response(strings.id(pointer)?),
+        EffectValue::Array { items } => EffectValueRecord::Array(
+            items
+                .iter()
+                .map(|item| compile_effect_value(item, strings, values))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        EffectValue::Object { fields } => EffectValueRecord::Object(
+            fields
+                .iter()
+                .map(|(name, value)| {
+                    Ok((
+                        strings.id(name)?,
+                        compile_effect_value(value, strings, values)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        ),
+    })
+}
+
+fn decode_effect_action(
+    action: &ActionRecord,
+    strings: &[String],
+    resources: &[ResourceRecord],
+    values: &[ValueRecord],
+) -> EffectAction {
+    let resource = &resources[action.0 as usize];
+    EffectAction {
+        resource: ResourceRef::new(
+            decode_resource_kind(resource.0),
+            &strings[resource.1 as usize],
+        ),
+        kind: decode_effect_action_kind(action.1),
+        arguments: action
+            .2
+            .iter()
+            .map(|(name, value)| {
+                (
+                    strings[*name as usize].clone(),
+                    decode_effect_value(value, strings, values),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn decode_effect_value(
+    value: &EffectValueRecord,
+    strings: &[String],
+    values: &[ValueRecord],
+) -> EffectValue {
+    match value {
+        EffectValueRecord::Literal(value) => EffectValue::Literal {
+            value: decode_value(*value, strings, values),
+        },
+        EffectValueRecord::Request(pointer) => EffectValue::Request {
+            pointer: strings[*pointer as usize].clone(),
+        },
+        EffectValueRecord::Response(pointer) => EffectValue::Response {
+            pointer: strings[*pointer as usize].clone(),
+        },
+        EffectValueRecord::Array(items) => EffectValue::Array {
+            items: items
+                .iter()
+                .map(|item| decode_effect_value(item, strings, values))
+                .collect(),
+        },
+        EffectValueRecord::Object(fields) => EffectValue::Object {
+            fields: fields
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        strings[*name as usize].clone(),
+                        decode_effect_value(value, strings, values),
+                    )
+                })
+                .collect(),
+        },
+    }
+}
+
 fn index_resources(service: &CompiledService) -> Result<BTreeMap<ResourceRef, ResourceId>> {
     service
         .resources
@@ -2036,6 +2594,21 @@ const fn encode_origin(origin: BehaviorOrigin) -> u8 {
     }
 }
 
+const fn encode_effect_origin(origin: EffectOrigin) -> u8 {
+    match origin {
+        EffectOrigin::ProviderAuthored => 0,
+        EffectOrigin::ConventionInferred => 1,
+    }
+}
+
+fn decode_effect_origin(origin: u8) -> EffectOrigin {
+    match origin {
+        0 => EffectOrigin::ProviderAuthored,
+        1 => EffectOrigin::ConventionInferred,
+        _ => unreachable!("artifact validation rejects unknown effect origins"),
+    }
+}
+
 const fn encode_outcome_provenance(provenance: OutcomeProvenance) -> u8 {
     match provenance {
         OutcomeProvenance::OpenApiDerived => 0,
@@ -2067,6 +2640,7 @@ const fn encode_description_kind(kind: DescriptionKind) -> u8 {
         DescriptionKind::AsyncOperation => 7,
         DescriptionKind::Fault => 8,
         DescriptionKind::FaultProfile => 9,
+        DescriptionKind::Effect => 10,
     }
 }
 
@@ -2082,7 +2656,49 @@ fn decode_description_kind(kind: u8) -> DescriptionKind {
         7 => DescriptionKind::AsyncOperation,
         8 => DescriptionKind::Fault,
         9 => DescriptionKind::FaultProfile,
+        10 => DescriptionKind::Effect,
         _ => unreachable!("artifact validation rejects unknown description kinds"),
+    }
+}
+
+const fn encode_effect_action_kind(kind: EffectActionKind) -> u8 {
+    match kind {
+        EffectActionKind::DbPut => 0,
+        EffectActionKind::DbDelete => 1,
+        EffectActionKind::CacheSet => 2,
+        EffectActionKind::CacheDelete => 3,
+        EffectActionKind::CacheIncrement => 4,
+        EffectActionKind::CacheCompareAndSet => 5,
+        EffectActionKind::QueuePublish => 6,
+        EffectActionKind::MailSend => 7,
+        EffectActionKind::ObjectStorePut => 8,
+        EffectActionKind::ObjectStoreDelete => 9,
+        EffectActionKind::EventBusPublish => 10,
+        EffectActionKind::SchedulerSchedule => 11,
+        EffectActionKind::SchedulerCancel => 12,
+        EffectActionKind::HttpRegister => 13,
+        EffectActionKind::HttpCall => 14,
+    }
+}
+
+fn decode_effect_action_kind(kind: u8) -> EffectActionKind {
+    match kind {
+        0 => EffectActionKind::DbPut,
+        1 => EffectActionKind::DbDelete,
+        2 => EffectActionKind::CacheSet,
+        3 => EffectActionKind::CacheDelete,
+        4 => EffectActionKind::CacheIncrement,
+        5 => EffectActionKind::CacheCompareAndSet,
+        6 => EffectActionKind::QueuePublish,
+        7 => EffectActionKind::MailSend,
+        8 => EffectActionKind::ObjectStorePut,
+        9 => EffectActionKind::ObjectStoreDelete,
+        10 => EffectActionKind::EventBusPublish,
+        11 => EffectActionKind::SchedulerSchedule,
+        12 => EffectActionKind::SchedulerCancel,
+        13 => EffectActionKind::HttpRegister,
+        14 => EffectActionKind::HttpCall,
+        _ => unreachable!("artifact validation rejects unknown effect action kinds"),
     }
 }
 
@@ -2145,6 +2761,25 @@ fn decode_resource_kind(kind: u8) -> ResourceKind {
     }
 }
 
+const fn encode_parameter_location(location: ParameterLocation) -> u8 {
+    match location {
+        ParameterLocation::Path => 0,
+        ParameterLocation::Query => 1,
+        ParameterLocation::Header => 2,
+        ParameterLocation::Cookie => 3,
+    }
+}
+
+fn decode_parameter_location(location: u8) -> ParameterLocation {
+    match location {
+        0 => ParameterLocation::Path,
+        1 => ParameterLocation::Query,
+        2 => ParameterLocation::Header,
+        3 => ParameterLocation::Cookie,
+        _ => unreachable!("artifact validation rejects unknown parameter locations"),
+    }
+}
+
 fn validate_index(id: u32, length: usize, field: &'static str) -> Result<()> {
     if usize::try_from(id).map_or(true, |id| id >= length) {
         return Err(Error::Invalid(field));
@@ -2199,11 +2834,13 @@ mod tests {
                 0,
                 None,
                 Vec::new(),
+                Vec::new(),
             )],
             Vec::new(),
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
         );
 
         assert!(matches!(
@@ -2241,6 +2878,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
         );
 
         assert!(matches!(

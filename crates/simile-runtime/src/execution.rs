@@ -1,7 +1,7 @@
 use serde_json::Value;
 use simile_spec::OutcomeProvenance;
 
-use crate::{FaultActivation, SynthesizedResponse, TransportPlan, ValidatedBody};
+use crate::{EffectPlan, FaultActivation, SynthesizedResponse, TransportPlan, ValidatedBody};
 
 /// One operation invocation selected by a transport or another runtime client.
 #[derive(Clone, Copy, Debug)]
@@ -37,6 +37,8 @@ pub struct ExecutionOptions<'a> {
     pub response_status: Option<u16>,
     pub response_content_type: Option<&'a str>,
     pub replay: Option<ReplayIdentity<'a>>,
+    /// Reproduce response synthesis exactly when present.
+    pub response_seed: Option<u64>,
 }
 
 /// The validated request and immediate response for an operation.
@@ -105,6 +107,7 @@ impl OperationOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OperationExecution {
     outcome: OperationOutcome,
+    effects: EffectPlan,
     fault: Option<FaultActivation>,
     transport: TransportPlan,
 }
@@ -113,17 +116,23 @@ impl OperationExecution {
     pub(crate) fn normal(outcome: OperationOutcome) -> Self {
         Self {
             outcome,
+            effects: EffectPlan::default(),
             fault: None,
             transport: TransportPlan::Respond,
         }
     }
 
-    pub(crate) fn with_fault(outcome: OperationOutcome, fault: Option<FaultActivation>) -> Self {
+    pub(crate) fn with_fault(
+        outcome: OperationOutcome,
+        effects: EffectPlan,
+        fault: Option<FaultActivation>,
+    ) -> Self {
         let transport = fault
             .as_ref()
             .map_or(TransportPlan::Respond, FaultActivation::transport_plan);
         Self {
             outcome,
+            effects,
             fault,
             transport,
         }
@@ -137,6 +146,11 @@ impl OperationExecution {
     #[must_use]
     pub const fn fault(&self) -> Option<&FaultActivation> {
         self.fault.as_ref()
+    }
+
+    #[must_use]
+    pub const fn effects(&self) -> &EffectPlan {
+        &self.effects
     }
 
     #[must_use]

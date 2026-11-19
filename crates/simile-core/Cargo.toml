@@ -10,6 +10,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 simile-artifact.workspace = true
@@ -18,6 +19,8 @@ simile-heuristics.workspace = true
 simile-hcl.workspace = true
 simile-runtime.workspace = true
 simile-spec.workspace = true
+simile-stack.workspace = true
+simile-typescript.workspace = true
 thiserror.workspace = true
 time.workspace = true
 ureq.workspace = true

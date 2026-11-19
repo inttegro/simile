@@ -7,11 +7,11 @@ mod parse;
 mod service;
 
 pub use ast::{
-    AsyncDeclaration, BehaviorDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
-    FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
-    OpenApiDeclaration, OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration,
-    ScenarioDeclaration, ScenarioFaultDeclaration, ScenarioSelectionDeclaration,
-    ServiceDeclaration, ServiceDocument, Source,
+    ActionDeclaration, AsyncDeclaration, BehaviorDeclaration, ContractDeclaration,
+    EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration,
+    FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module, OutcomeDeclaration,
+    ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
+    ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, Source, SourceDeclaration,
 };
 pub use compile::compile;
 pub use error::{Error, Result};

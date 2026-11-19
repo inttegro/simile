@@ -1,0 +1,19 @@
+[package]
+name = "simile-smithy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Smithy 2.0 source frontend for Simile"
+
+[dependencies]
+serde_json.workspace = true
+simile-spec.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-smithy.workspace = true
+
+[lints]
+workspace = true

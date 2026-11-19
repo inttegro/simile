@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use simile_spec::{
-    ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind,
-    ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase, FaultProfile, Outcome,
-    OutcomeProvenance, ProtocolError, Resource, Scenario,
+    ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind, Effect,
+    EffectAction, EffectOrigin, ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase,
+    FaultProfile, Outcome, OutcomeProvenance, ProtocolError, Resource, Scenario,
 };
 
 use crate::{Error, Module, Result};
@@ -19,6 +19,7 @@ pub fn compile(
     for module in modules {
         collect_resources(&mut spec, module.resources)?;
         collect_async_operations(&mut spec, module.async_operations)?;
+        collect_effects(&mut spec, module.effects)?;
         collect_error_sets(&mut spec, module.error_sets)?;
         collect_error_set_applications(&mut spec, module.error_set_applications);
         collect_protocol_errors(&mut spec, module.protocol_errors)?;
@@ -32,6 +33,7 @@ pub fn compile(
     collect_fault_uses(&mut spec, fault_uses)?;
 
     validate_resources(&spec)?;
+    validate_effects(&spec, api)?;
     validate_behaviors(&spec, api)?;
     validate_faults(&spec, api)?;
     validate_scenarios(&spec, api)?;
@@ -117,7 +119,23 @@ fn collect_async_operations(
         );
         let operation = AsyncOperation {
             name: name.clone(),
-            uses: declaration.uses,
+            uses: {
+                let mut uses = declaration.uses;
+                uses.extend(
+                    declaration
+                        .actions
+                        .iter()
+                        .map(|action| action.resource.clone()),
+                );
+                uses.sort();
+                uses.dedup();
+                uses
+            },
+            actions: declaration
+                .actions
+                .into_iter()
+                .map(compiled_action)
+                .collect(),
         };
         if spec
             .async_operations
@@ -128,6 +146,45 @@ fn collect_async_operations(
         }
     }
     Ok(())
+}
+
+fn collect_effects(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::EffectDeclaration>,
+) -> Result<()> {
+    for declaration in declarations {
+        let name = declaration.name;
+        insert_description(
+            spec,
+            DescriptionKind::Effect,
+            None,
+            &name,
+            declaration.description,
+        );
+        let effect = Effect {
+            name: name.clone(),
+            origin: EffectOrigin::ProviderAuthored,
+            operations: declaration.operations,
+            actions: declaration
+                .actions
+                .into_iter()
+                .map(compiled_action)
+                .collect(),
+            async_operations: declaration.async_operations,
+        };
+        if spec.effects.insert(name.clone(), effect).is_some() {
+            return Err(Error::DuplicateEffect { name });
+        }
+    }
+    Ok(())
+}
+
+fn compiled_action(declaration: crate::ActionDeclaration) -> EffectAction {
+    EffectAction {
+        resource: declaration.resource,
+        kind: declaration.kind,
+        arguments: declaration.arguments,
+    }
 }
 
 fn collect_behaviors(
@@ -539,6 +596,46 @@ fn validate_resources(spec: &BehaviorSpec) -> Result<()> {
                 return Err(Error::UnknownResource {
                     operation: operation.name.clone(),
                     resource: resource.to_string(),
+                });
+            }
+        }
+        for action in &operation.actions {
+            if !spec.resources.contains_key(&action.resource) {
+                return Err(Error::UnknownEffectResource {
+                    owner: format!("async operation `{}`", operation.name),
+                    resource: action.resource.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_effects(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
+    for effect in spec.effects.values() {
+        let mut operations = BTreeSet::new();
+        for operation_id in &effect.operations {
+            if !operations.insert(operation_id) || api.operation_by_id(operation_id).is_none() {
+                return Err(Error::UnknownEffectOperation {
+                    effect: effect.name.clone(),
+                    operation_id: operation_id.clone(),
+                });
+            }
+        }
+        let mut asynchronous = BTreeSet::new();
+        for operation in &effect.async_operations {
+            if !asynchronous.insert(operation) || !spec.async_operations.contains_key(operation) {
+                return Err(Error::UnknownEffectAsync {
+                    effect: effect.name.clone(),
+                    operation: operation.clone(),
+                });
+            }
+        }
+        for action in &effect.actions {
+            if !spec.resources.contains_key(&action.resource) {
+                return Err(Error::UnknownEffectResource {
+                    owner: format!("effect `{}`", effect.name),
+                    resource: action.resource.to_string(),
                 });
             }
         }

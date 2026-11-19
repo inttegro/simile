@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use simile_artifact::Artifact;
-use simile_compiler::{Compiler, ParsedCompileRequest, Source};
-use simile_hcl::{OpenApiDeclaration, ServiceDocument};
+use simile_compiler::{Compiler, ParsedSourceCompileRequest};
+use simile_hcl::{ContractDeclaration, ServiceDocument, SourceDeclaration};
 use simile_heuristics::Policy;
 use simile_spec::{DescriptionEntry, DescriptionKind};
 
+use super::compile::{ContractFormat, LoadedContract, compiler_source, load_contract};
 use super::run::{SpecSource, read_spec};
 use crate::registry::{Registry, SourceLocation};
 use crate::service_config::{LoadedServiceConfig, ServiceConfigSource};
@@ -53,6 +54,7 @@ pub(crate) struct PreparedConfiguration {
 
 /// Resolve, validate, and compile a runnable service without binding its socket.
 pub fn prepare_service(ctx: &Context, request: &StartRequest) -> Result<PreparedService> {
+    crate::registry::validate_service_name(&request.service)?;
     match &request.config {
         Some(config) => {
             let loaded = LoadedServiceConfig::load(ctx, ServiceConfigSource::Path(config.clone()))?;
@@ -71,9 +73,14 @@ pub(crate) fn prepare_loaded_service(
         simile_hcl::parse_service(simile_hcl::Source::new(&config.name, &config.contents))?;
     verify_service_name(requested_service, &document)?;
 
-    let spec = match &document.service.openapi {
-        OpenApiDeclaration::Path(path) => SpecSource::Path(config.resolve(path, "OpenAPI")?),
-        OpenApiDeclaration::Url(url) => SpecSource::Url(url.clone()),
+    let (declaration, format) = match &document.service.contract {
+        ContractDeclaration::OpenApi(source) => (source, ContractFormat::OpenApi),
+        ContractDeclaration::Smithy(source) => (source, ContractFormat::Smithy),
+        ContractDeclaration::TypeScript(source) => (source, ContractFormat::TypeScript),
+    };
+    let spec = match declaration {
+        SourceDeclaration::Path(path) => SpecSource::Path(config.resolve(path, "contract")?),
+        SourceDeclaration::Url(url) => SpecSource::Url(url.clone()),
     };
     let openapi_source = match &spec {
         SpecSource::Path(path) => SourceLocation::Path {
@@ -81,7 +88,16 @@ pub(crate) fn prepare_loaded_service(
         },
         SpecSource::Url(url) => SourceLocation::Url { value: url.clone() },
     };
-    let (openapi_name, openapi) = read_spec(&spec)?;
+    let contract = match &spec {
+        SpecSource::Path(path) => load_contract(path, format)?,
+        SpecSource::Url(_) => {
+            let (name, contents) = read_spec(&spec)?;
+            LoadedContract {
+                format,
+                sources: vec![(name, contents)],
+            }
+        }
+    };
     let mut behaviors = Vec::with_capacity(document.service.behaviors.len() + 1);
     if !module_is_empty(&document.inline_behavior) {
         behaviors.push(document.inline_behavior);
@@ -98,8 +114,8 @@ pub(crate) fn prepare_loaded_service(
         ))?);
     }
 
-    let mut compiled = Compiler::new().compile_parsed(ParsedCompileRequest {
-        openapi: Source::new(&openapi_name, &openapi),
+    let mut compiled = Compiler::new().compile_source_parsed(ParsedSourceCompileRequest {
+        contract: compiler_source(&contract),
         behaviors,
         heuristic_policy: Policy::Standard,
     })?;
@@ -195,6 +211,7 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
         && module.faults.is_empty()
         && module.fault_profiles.is_empty()
         && module.async_operations.is_empty()
+        && module.effects.is_empty()
 }
 
 #[cfg(test)]

@@ -36,6 +36,8 @@ pub struct EventQuery {
     pub resource: Option<ResourceAddress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub causation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
     #[serde(default)]
     pub after_sequence: u64,
     #[serde(default = "default_limit")]
@@ -51,6 +53,7 @@ impl Default for EventQuery {
         Self {
             resource: None,
             causation_id: None,
+            correlation_id: None,
             after_sequence: 0,
             limit: default_limit(),
         }
@@ -89,6 +92,12 @@ impl Journal {
                     .as_deref()
                     .is_none_or(|causation| entry.causation_id.as_deref() == Some(causation))
             })
+            .filter(|entry| {
+                query
+                    .correlation_id
+                    .as_deref()
+                    .is_none_or(|correlation| entry.correlation_id.as_deref() == Some(correlation))
+            })
             .take(query.limit)
             .collect()
     }
@@ -100,5 +109,46 @@ impl Journal {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use simile_spec::ResourceKind;
+
+    use super::*;
+
+    #[test]
+    fn filters_one_causal_chain_without_exposing_payloads() {
+        let resource = ResourceAddress::new(ResourceKind::Db, "orders")
+            .unwrap_or_else(|error| panic!("{error}"));
+        let mut journal = Journal::default();
+        for (sequence, causation, correlation) in [
+            (1, "request-1", "trace-a"),
+            (2, "request-1", "trace-a"),
+            (3, "request-2", "trace-b"),
+        ] {
+            journal.push(JournalEntry {
+                sequence,
+                command_id: CommandId(sequence),
+                at: LogicalTime::from_unix_millis(sequence as i64),
+                resource: resource.clone(),
+                action: "put".to_owned(),
+                operation_id: Some("createOrder".to_owned()),
+                causation_id: Some(causation.to_owned()),
+                correlation_id: Some(correlation.to_owned()),
+                outcome: JournalOutcome::Succeeded,
+            });
+        }
+
+        let events = journal.query(&EventQuery {
+            causation_id: Some("request-1".to_owned()),
+            correlation_id: Some("trace-a".to_owned()),
+            ..EventQuery::default()
+        });
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, 1);
+        assert_eq!(events[1].sequence, 2);
     }
 }

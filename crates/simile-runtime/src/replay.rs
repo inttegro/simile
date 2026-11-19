@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::{Error, OperationOutcome, ReplayIdentity, Result, ValidatedBody};
+use crate::{EffectPlan, Error, OperationOutcome, ReplayIdentity, Result, ValidatedBody};
 
 /// Owns committed operation outcomes and resolves replay identities atomically.
 ///
@@ -27,6 +27,7 @@ struct ReplayRecord {
 
 pub(crate) struct ReplayResolution {
     pub(crate) outcome: OperationOutcome,
+    pub(crate) effects: EffectPlan,
     pub(crate) replayed: bool,
 }
 
@@ -36,7 +37,7 @@ impl ReplayStore {
         operation: &str,
         identity: ReplayIdentity<'_>,
         request_body: Option<ValidatedBody>,
-        produce: impl FnOnce() -> Result<OperationOutcome>,
+        produce: impl FnOnce() -> Result<(OperationOutcome, EffectPlan)>,
     ) -> Result<ReplayResolution> {
         let key = replay_key(operation, identity)?;
         let mut records = self
@@ -52,11 +53,15 @@ impl ReplayStore {
             }
             return Ok(ReplayResolution {
                 outcome: record.outcome.clone(),
+                effects: EffectPlan::default(),
                 replayed: true,
             });
         }
 
-        let outcome = produce()?;
+        // Plan effects before committing replay identity. An invalid projection
+        // must not leave behind a replayable success whose consequences could
+        // never be rendered.
+        let (outcome, effects) = produce()?;
         records.insert(
             key,
             ReplayRecord {
@@ -66,6 +71,7 @@ impl ReplayStore {
         );
         Ok(ReplayResolution {
             outcome,
+            effects,
             replayed: false,
         })
     }

@@ -159,6 +159,34 @@ pub struct RequestBodyContract {
     pub content: BTreeMap<String, MediaTypeContract>,
 }
 
+/// The HTTP location from which an operation parameter is read.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterLocation {
+    Path,
+    Query,
+    Header,
+    Cookie,
+}
+
+/// One OpenAPI operation parameter retained by the canonical contract.
+///
+/// Simile keeps serialization metadata beside the schema because the wire
+/// representation is part of the public contract: a valid JSON value is not
+/// necessarily a valid path, query, header, or cookie encoding of that value.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParameterContract {
+    pub name: String,
+    pub location: ParameterLocation,
+    pub required: bool,
+    pub style: String,
+    pub explode: bool,
+    pub allow_reserved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ResponseBodyContract {
     pub content: BTreeMap<String, MediaTypeContract>,
@@ -176,6 +204,8 @@ pub struct Operation {
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<ParameterContract>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -2,6 +2,7 @@
 
 mod behavior;
 mod contract;
+mod effect;
 pub mod fault_catalog;
 
 pub use behavior::{
@@ -12,6 +13,7 @@ pub use behavior::{
 };
 pub use contract::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
-    OperationKey, RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus,
-    ServiceInfo,
+    OperationKey, ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
+    ResponseContract, ResponseStatus, ServiceInfo,
 };
+pub use effect::{Effect, EffectAction, EffectActionKind, EffectOrigin, EffectValue};
