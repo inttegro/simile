@@ -4,9 +4,9 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
-- Add automatic redb-backed Stack component checkpoints under `SIMILE_HOME`, with restart recovery,
-  exclusive ownership, format and resource compatibility checks, and rollback when persistence
-  fails.
+- Add automatic redb-backed Stack component checkpoints under `SIMILE_HOME`, with normalized
+  metadata, resource, replay, journal, counter, and clock tables; restart recovery; v1 migration;
+  exclusive ownership; compatibility checks; and rollback when persistence fails.
 - Remove the unused `behavior.trigger` HCL form and operation-to-async artifact links. Async
   declarations remain available for service discovery until the effect model owns attachment and
   dispatch.
