@@ -31,7 +31,11 @@ fn render(report: &ops::RemoveReport, terminal: &Terminal) -> Result<()> {
             terminal.line(format_args!(
                 "{MUTED}registry{MUTED:#} {}",
                 report.directory.display()
-            ))
+            ))?;
+            if report.state_removed {
+                terminal.line(format_args!("{MUTED}state{MUTED:#} removed"))?;
+            }
+            Ok(())
         }
         OutputFormat::Json => terminal.json(report),
     }

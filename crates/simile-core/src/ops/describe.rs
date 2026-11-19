@@ -324,5 +324,6 @@ const fn kind_name(kind: DescriptionKind) -> &'static str {
         DescriptionKind::AsyncOperation => "async",
         DescriptionKind::Fault => "fault",
         DescriptionKind::FaultProfile => "fault_profile",
+        DescriptionKind::Effect => "effect",
     }
 }

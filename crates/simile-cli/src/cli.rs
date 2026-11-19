@@ -26,6 +26,28 @@ pub enum HeuristicChoice {
     Aggressive,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum ContractFormatChoice {
+    #[default]
+    Auto,
+    #[value(name = "openapi")]
+    OpenApi,
+    Smithy,
+    #[value(name = "typescript")]
+    TypeScript,
+}
+
+impl From<ContractFormatChoice> for simile_core::ops::ContractFormat {
+    fn from(value: ContractFormatChoice) -> Self {
+        match value {
+            ContractFormatChoice::Auto => Self::Auto,
+            ContractFormatChoice::OpenApi => Self::OpenApi,
+            ContractFormatChoice::Smithy => Self::Smithy,
+            ContractFormatChoice::TypeScript => Self::TypeScript,
+        }
+    }
+}
+
 impl From<HeuristicChoice> for simile_heuristics::Policy {
     fn from(value: HeuristicChoice) -> Self {
         match value {
@@ -80,26 +102,51 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Compile an OpenAPI contract and optional HCL behavior modules.
+    /// Audit provider fidelity and explain every remaining contract gap.
+    Audit(AuditArgs),
+    /// Compile an OpenAPI, Smithy, or semantic TypeScript contract with optional HCL behavior.
     Compile(CompileArgs),
+    /// Replay one or more executable examples as a conformance suite.
+    Conformance(ConformanceArgs),
     /// Check the local environment and report actionable problems.
     Doctor,
     /// Explain the public semantics of a compiled service.
     Describe(DescribeArgs),
     /// Verify and summarize a compiled Simile artifact.
     Inspect(InspectArgs),
-    /// Execute one operation from an OpenAPI contract.
+    /// Execute one operation from an OpenAPI, Smithy, or semantic TypeScript contract.
     Run(RunArgs),
+    /// Re-run and verify a self-contained reproduction bundle.
+    Replay(ReplayArgs),
     /// Compile and register a named service for later use.
     Register(RegisterArgs),
     /// Permanently remove a registered service and its local data.
     Remove(RemoveArgs),
     /// Start a configured service emulator.
     Start(StartArgs),
+    /// Inspect persisted resources and causal history.
+    State(StateArgs),
     /// Reload and recompile a registered service.
     Update(UpdateArgs),
     /// Print detailed build information.
     Version,
+}
+
+#[derive(Debug, Args)]
+pub struct AuditArgs {
+    /// Compiled `.similec` artifact to audit.
+    pub artifact: PathBuf,
+
+    /// Return failure when the report contains warnings as well as errors.
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ConformanceArgs {
+    /// Reproduction bundle or directory containing bundles. Repeat as needed.
+    #[arg(required = true, value_name = "BUNDLE_OR_SUITE")]
+    pub bundles: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -126,8 +173,13 @@ pub struct DescribeServiceArgs {
 
 #[derive(Debug, Args)]
 pub struct CompileArgs {
-    /// OpenAPI JSON or YAML contract.
-    pub openapi: PathBuf,
+    /// Contract file, or a directory containing semantic TypeScript declarations.
+    #[arg(value_name = "CONTRACT")]
+    pub contract: PathBuf,
+
+    /// Contract source language. By default Simile infers it from the path.
+    #[arg(long, value_enum, default_value_t)]
+    pub contract_format: ContractFormatChoice,
 
     /// HCL behavior module. Repeat to compile multiple modules.
     #[arg(short, long, value_name = "FILE")]
@@ -164,13 +216,17 @@ pub struct InspectArgs {
     )
 )]
 pub struct RunArgs {
-    /// OpenAPI JSON or YAML contract on disk.
-    #[arg(value_name = "SPEC")]
+    /// Contract file, or a semantic TypeScript declaration entrypoint or directory.
+    #[arg(value_name = "CONTRACT")]
     pub spec: Option<PathBuf>,
 
-    /// Read the OpenAPI contract from this URL without saving it.
+    /// Read a self-contained contract from this URL without saving it.
     #[arg(long, value_name = "URL")]
     pub spec_url: Option<String>,
+
+    /// Contract source language. Local paths are inferred; remote sources default to OpenAPI.
+    #[arg(long, value_enum, default_value_t)]
+    pub contract_format: ContractFormatChoice,
 
     /// HCL behavior module. Repeat to compile multiple modules.
     #[arg(short, long, value_name = "FILE")]
@@ -180,7 +236,7 @@ pub struct RunArgs {
     #[arg(long, value_name = "METHOD /path")]
     pub operation: Option<String>,
 
-    /// Select an operation by its exact OpenAPI `operationId`.
+    /// Select an operation by its exact contract `operationId`.
     #[arg(long, value_name = "ID")]
     pub operation_id: Option<String>,
 
@@ -203,6 +259,20 @@ pub struct RunArgs {
     /// Control provider-neutral synthesis inference for this run.
     #[arg(long, value_enum, default_value_t, env = "SIMILE_HEURISTICS")]
     pub heuristics: HeuristicChoice,
+
+    /// Reproduce request and response synthesis exactly.
+    #[arg(long, value_name = "U64")]
+    pub seed: Option<u64>,
+
+    /// Write a self-contained, replayable execution bundle to this directory.
+    #[arg(long, value_name = "DIR")]
+    pub bundle: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReplayArgs {
+    /// Directory produced by `simile run --bundle`.
+    pub bundle: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -229,6 +299,46 @@ pub struct StartArgs {
     /// Enable one bounded stochastic environmental-fault profile.
     #[arg(long, value_name = "NAME")]
     pub fault_profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StateArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Restrict events to one resource such as `db.orders`.
+    #[arg(long, value_name = "RESOURCE")]
+    pub resource: Option<String>,
+
+    /// Restrict events to one causal parent identifier.
+    #[arg(long = "caused-by", value_name = "ID")]
+    pub causation_id: Option<String>,
+
+    /// Restrict events to one end-to-end correlation identifier.
+    #[arg(long = "correlation", value_name = "ID")]
+    pub correlation_id: Option<String>,
+
+    /// Return events after this journal sequence.
+    #[arg(long, default_value_t = 0)]
+    pub after: u64,
+
+    /// Maximum number of events to return.
+    #[arg(long, default_value_t = 100, value_parser = parse_state_limit)]
+    pub limit: usize,
+
+    /// Include stored values. Journal inspection is payload-free by default.
+    #[arg(long)]
+    pub values: bool,
+}
+
+fn parse_state_limit(value: &str) -> Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| "limit must be an integer from 1 through 1000".to_owned())?;
+    (1..=1000)
+        .contains(&limit)
+        .then_some(limit)
+        .ok_or_else(|| "limit must be from 1 through 1000".to_owned())
 }
 
 #[derive(Debug, Args)]

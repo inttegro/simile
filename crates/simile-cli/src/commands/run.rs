@@ -30,6 +30,7 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
     };
     let report = ops::run(&ops::RunRequest {
         spec,
+        contract_format: arguments.contract_format.into(),
         behaviors: arguments.behavior,
         operation,
         outcome: arguments.outcome,
@@ -37,6 +38,8 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
         request: arguments.request.map(ops::RequestInput::from_argument),
         content_type: arguments.content_type,
         heuristic_policy: arguments.heuristics.into(),
+        seed: arguments.seed,
+        bundle: arguments.bundle,
     })?;
 
     if !terminal.is_verbose() {
@@ -63,6 +66,7 @@ fn render_human(report: &ops::RunReport, terminal: &Terminal) -> Result<()> {
         "{HEADING}Ran{HEADING:#} {}{operation_id}",
         report.operation
     ))?;
+    terminal.line(format_args!("{MUTED}seed{MUTED:#} {}", report.seed))?;
     let request_source = match report.request.source {
         ops::RequestSource::None => "none",
         ops::RequestSource::Synthesized => "synthesized",

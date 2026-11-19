@@ -115,6 +115,7 @@ fn compiles_a_service_contract_as_json() {
             "{\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
+            "  \"contractFormat\": \"openapi\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",
             "  \"operations\": 1,\n",
             "  \"openapiDefaults\": 0,\n",
@@ -127,6 +128,31 @@ fn compiles_a_service_contract_as_json() {
             "}\n"
         ))
         .stderr_eq("");
+}
+
+#[test]
+fn compiles_smithy_and_typescript_contracts_as_json() {
+    for (source, format, schema_version) in [
+        ("orders.smithy", "smithy", "3.0.3-compatible Smithy 2.0"),
+        ("orders.d.ts", "typescript", "3.1.1"),
+    ] {
+        let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+            .args(["--output", "json", "compile", &fixture(source)])
+            .output()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(report["service"], "Orders");
+        assert_eq!(report["contractFormat"], format);
+        assert_eq!(report["openapiVersion"], schema_version);
+        assert_eq!(report["operations"], 1);
+    }
 }
 
 #[test]
@@ -483,12 +509,12 @@ fn writes_and_inspects_a_compiled_artifact() {
         .stdout_eq(format!(
             concat!(
                 "Compiled Orders 1.0.0\n",
-                "contract OpenAPI 3.2.1 · 1 operations\n",
-                "behavior 0 OpenAPI defaults · 1 HCL overlays\n",
+                "contract OpenAPI · JSON Schema 3.2.1 · 1 operations\n",
+                "behavior 0 contract defaults · 1 HCL overlays\n",
                 "runtime 1 async operations · 1 resources\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 13 · [..] bytes\n",
+                "artifact {} · format 16 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -500,13 +526,14 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 13,\n",
+            "  \"formatVersion\": 16,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",
             "  \"heuristicPolicy\": \"standard\",\n",
             "  \"operations\": 1,\n",
+            "  \"parameters\": 0,\n",
             "  \"requestBodies\": 0,\n",
             "  \"responseBodies\": 0,\n",
             "  \"schemaNodes\": 0,\n",
@@ -537,12 +564,102 @@ fn writes_and_inspects_a_compiled_artifact() {
             "  \"valueNodes\": [..],\n",
             "  \"resources\": 1,\n",
             "  \"asyncOperations\": 1,\n",
+            "  \"effects\": 0,\n",
+            "  \"providerAuthoredEffects\": 0,\n",
+            "  \"conventionInferredEffects\": 0,\n",
+            "  \"effectActions\": 0,\n",
             "  \"encodedBytes\": [..],\n",
             "  \"payloadSha256\": \"[..]\"\n",
             "}\n"
         ));
 
     fs::remove_file(artifact).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn captures_replays_audits_and_verifies_a_conformance_bundle() {
+    let root = registry_home().join("reproduction");
+    drop(fs::remove_dir_all(&root));
+    let bundle = root.join("cases").join("create-order");
+    let artifact = root.join("orders.similec");
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "run",
+            &fixture("run-orders.yaml"),
+            "--operation-id",
+            "createOrder",
+            "--seed",
+            "42",
+            "--bundle",
+            &bundle.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+    assert!(bundle.join("bundle.json").is_file());
+    assert!(bundle.join("service.similec").is_file());
+    assert!(bundle.join("request.json").is_file());
+
+    let replay = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "replay", &bundle.to_string_lossy()])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let replay: serde_json::Value =
+        serde_json::from_slice(&replay.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(replay["operation"], "POST /orders");
+    assert_eq!(replay["seed"], 42);
+    assert_eq!(replay["matched"], true);
+
+    let conformance = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--output",
+            "json",
+            "conformance",
+            &root.join("cases").to_string_lossy(),
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        conformance.status.success(),
+        "{}",
+        String::from_utf8_lossy(&conformance.stderr)
+    );
+    let conformance: serde_json::Value =
+        serde_json::from_slice(&conformance.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(conformance["total"], 1);
+    assert_eq!(conformance["passed"], 1);
+    assert_eq!(conformance["failed"], 0);
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "compile",
+            &fixture("run-orders.yaml"),
+            "--artifact",
+            &artifact.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+    let audit = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "audit", &artifact.to_string_lossy()])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        audit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let audit: serde_json::Value =
+        serde_json::from_slice(&audit.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(audit["service"], "Orders");
+    assert_eq!(audit["operations"], 3);
+    assert!(audit["findings"].is_array());
+
+    fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
@@ -564,6 +681,7 @@ fn runs_an_operation_by_id_with_a_synthesized_request() {
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"operation\": \"POST /orders\",\n",
+            "  \"seed\": [..],\n",
             "  \"operationId\": \"createOrder\",\n",
             "  \"request\": {\n",
             "    \"source\": \"synthesized\",\n",
@@ -608,6 +726,7 @@ fn runs_an_operation_with_a_complete_request_object() {
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"operation\": \"POST /orders\",\n",
+            "  \"seed\": [..],\n",
             "  \"operationId\": \"createOrder\",\n",
             "  \"request\": {\n",
             "    \"source\": \"provided\",\n",
@@ -790,6 +909,7 @@ fn synthesizes_an_optional_form_request() {
         .success()
         .stdout_eq(concat!(
             "Ran POST /optional (optionalForm)\n",
+            "seed [..]\n",
             "request synthesized · application/x-www-form-urlencoded\n",
             "{\"note\":\"[..]\"}\n",
             "response 204\n"

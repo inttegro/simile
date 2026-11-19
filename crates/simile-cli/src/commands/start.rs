@@ -1,5 +1,6 @@
 use anstyle::{AnsiColor, Effects, Style};
 use simile_core::{Context, ops};
+use std::path::PathBuf;
 
 use crate::cli::{OutputFormat, StartArgs};
 use crate::commands::Status;
@@ -20,22 +21,25 @@ pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Resu
             port: arguments.port,
         },
     )?;
+    let state_path = ops::service_state_path(ctx, &prepared.report.service)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(Error::AsyncRuntime)?;
-    runtime.block_on(run(prepared, scenario, fault_profile, terminal))
+    runtime.block_on(run(prepared, scenario, fault_profile, state_path, terminal))
 }
 
 async fn run(
     mut prepared: ops::PreparedService,
     scenario: Option<String>,
     fault_profile: Option<String>,
+    state_path: PathBuf,
     terminal: &Terminal,
 ) -> Result<Status> {
-    let server = simile_server::Server::bind_with_options(
+    let server = simile_server::Server::bind_durable_with_options(
         prepared.report.listen,
         prepared.artifact,
+        state_path,
         simile_server::ServerOptions {
             scenario,
             fault_profile: fault_profile.clone(),

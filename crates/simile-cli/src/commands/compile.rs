@@ -11,7 +11,8 @@ const MUTED: Style = AnsiColor::BrightBlack.on_default();
 
 pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
     let report = ops::compile(&ops::CompileRequest {
-        openapi: arguments.openapi,
+        contract: arguments.contract,
+        contract_format: arguments.contract_format.into(),
         behaviors: arguments.behavior,
         artifact: arguments.artifact,
         heuristic_policy: arguments.heuristics.into(),
@@ -23,11 +24,11 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
                 report.service, report.service_version
             ))?;
             terminal.line(format_args!(
-                "{MUTED}contract{MUTED:#} OpenAPI {} · {} operations",
-                report.openapi_version, report.operations
+                "{MUTED}contract{MUTED:#} {} · JSON Schema {} · {} operations",
+                report.contract_format, report.openapi_version, report.operations
             ))?;
             terminal.line(format_args!(
-                "{MUTED}behavior{MUTED:#} {} OpenAPI defaults · {} HCL overlays",
+                "{MUTED}behavior{MUTED:#} {} contract defaults · {} HCL overlays",
                 report.openapi_defaults, report.hcl_behaviors
             ))?;
             terminal.line(format_args!(

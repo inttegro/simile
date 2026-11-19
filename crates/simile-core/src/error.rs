@@ -22,6 +22,18 @@ pub enum Error {
         source: io::Error,
     },
 
+    #[error("could not infer contract format from `{path}`; pass --contract-format")]
+    UnknownContractFormat { path: PathBuf },
+
+    #[error("TypeScript contract path `{path}` contains no declaration files")]
+    EmptyTypeScriptContract { path: PathBuf },
+
+    #[error("TypeScript declaration `{importer}` imports unresolved relative module `{specifier}`")]
+    UnresolvedTypeScriptModule {
+        importer: PathBuf,
+        specifier: String,
+    },
+
     #[error("could not read request `{path}`: {source}")]
     ReadRequest {
         path: PathBuf,
@@ -153,6 +165,50 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+
+    #[error("reproduction bundle `{path}` already exists")]
+    ReproductionExists { path: PathBuf },
+
+    #[error("could not {action} reproduction bundle path `{path}`: {source}")]
+    ReproductionIo {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("could not decode reproduction manifest `{path}`: {source}")]
+    ReproductionManifest {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("unsupported reproduction bundle format {found}; supported format is {supported}")]
+    ReproductionFormat { found: u16, supported: u16 },
+
+    #[error(
+        "reproduction bundle contains artifact format {found}; this Simile supports format {supported}"
+    )]
+    ReproductionArtifactFormat { found: u16, supported: u16 },
+
+    #[error("reproduction artifact digest does not match its manifest")]
+    ReproductionDigest,
+
+    #[error("no reproduction bundles were found")]
+    NoConformanceBundles,
+
+    #[error("conformance path `{path}` is not a reproduction bundle or suite directory")]
+    ConformancePath { path: PathBuf },
+
+    #[error("service `{service}` has no persisted state yet; start it before inspecting state")]
+    StateNotFound { service: String },
+
+    #[error(transparent)]
+    StateStore(#[from] simile_stack::StateStoreError),
+
+    #[error(transparent)]
+    Resource(#[from] simile_stack::ResourceError),
 
     #[error(transparent)]
     Artifact(#[from] simile_artifact::Error),

@@ -8,11 +8,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use simile_heuristics::Policy;
 use simile_runtime::{
-    ExecutionOptions, OperationValueCall, Runtime, SynthesisRequest, synthesize_request_value,
+    ExecutionOptions, OperationValueCall, Runtime, SynthesisRequest,
+    synthesize_request_value_with_seed,
 };
 use simile_spec::OutcomeProvenance;
 
-use super::compile::compile_service;
+use super::compile::{ContractFormat, compile_contract_path, compile_contract_source};
 use crate::{Error, Result};
 
 const MAX_REMOTE_SPEC_BYTES: u64 = 64 * 1024 * 1024;
@@ -55,6 +56,7 @@ impl RequestInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunRequest {
     pub spec: SpecSource,
+    pub contract_format: ContractFormat,
     pub behaviors: Vec<PathBuf>,
     pub operation: OperationSelector,
     pub outcome: Option<String>,
@@ -62,6 +64,8 @@ pub struct RunRequest {
     pub request: Option<RequestInput>,
     pub content_type: Option<String>,
     pub heuristic_policy: Policy,
+    pub seed: Option<u64>,
+    pub bundle: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,7 +92,7 @@ struct PreparedRequest {
     body: Option<Value>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestSource {
     None,
@@ -96,11 +100,13 @@ pub enum RequestSource {
     Provided,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutedRequest {
     pub source: RequestSource,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    // Why: bundles omit empty headers for compactness, so replay must reconstruct that omission
+    // as the same empty map instead of rejecting Simile's own serialized request.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
@@ -108,7 +114,7 @@ pub struct ExecutedRequest {
     pub body: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutedResponse {
     pub status: u16,
@@ -124,6 +130,7 @@ pub struct RunReport {
     pub service: String,
     pub service_version: String,
     pub operation: String,
+    pub seed: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,13 +143,30 @@ pub struct RunReport {
 
 /// Compile a service source in memory and execute one selected operation.
 pub fn run(request: &RunRequest) -> Result<RunReport> {
-    let (source_name, source) = read_spec(&request.spec)?;
-    let compiled = compile_service(
-        &source_name,
-        &source,
-        &request.behaviors,
-        request.heuristic_policy,
-    )?;
+    let seed = request.seed.unwrap_or_else(rand::random);
+    let compiled = match &request.spec {
+        SpecSource::Path(path) => compile_contract_path(
+            path,
+            request.contract_format,
+            &request.behaviors,
+            request.heuristic_policy,
+        )?,
+        SpecSource::Url(_) => {
+            let (source_name, source) = read_spec(&request.spec)?;
+            let format = if request.contract_format == ContractFormat::Auto {
+                ContractFormat::OpenApi
+            } else {
+                request.contract_format
+            };
+            compile_contract_source(
+                &source_name,
+                &source,
+                format,
+                &request.behaviors,
+                request.heuristic_policy,
+            )?
+        }
+    };
     let service = compiled.contract.info.title.clone();
     let service_version = compiled.contract.info.version.clone();
     let encoded = simile_artifact::encode(&compiled)?;
@@ -164,7 +188,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         };
     let operation = selected.key().to_owned();
     let operation_id = selected.operation_id().map(str::to_owned);
-    let prepared = prepare_request(&artifact, &operation, request)?;
+    let prepared = prepare_request(&artifact, &operation, request, seed)?;
     let outcome = Runtime::from_artifact(artifact).execute_value_with_options(
         OperationValueCall {
             operation: &operation,
@@ -174,6 +198,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         ExecutionOptions {
             outcome: request.outcome.as_deref(),
             scenario: request.scenario.as_deref(),
+            response_seed: Some(response_seed(seed)),
             ..ExecutionOptions::default()
         },
     )?;
@@ -193,22 +218,34 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         content_type: response.media_type().map(str::to_owned),
         body: response.value().cloned(),
     };
-    Ok(RunReport {
+    let report = RunReport {
         service,
         service_version,
         operation,
+        seed,
         operation_id,
         outcome: outcome.selected_outcome().map(str::to_owned),
         outcome_provenance: outcome.provenance(),
         request: executed_request,
         response: executed_response,
-    })
+    };
+    if let Some(path) = &request.bundle {
+        super::reproduce::write(
+            path,
+            &encoded,
+            &report,
+            request.outcome.as_deref(),
+            request.scenario.as_deref(),
+        )?;
+    }
+    Ok(report)
 }
 
 fn prepare_request(
     artifact: &simile_artifact::Artifact,
     operation: &str,
     request: &RunRequest,
+    seed: u64,
 ) -> Result<PreparedRequest> {
     if let Some(input) = &request.request {
         let (source_name, bytes) = read_request(input)?;
@@ -243,12 +280,13 @@ fn prepare_request(
             body: None,
         });
     };
-    let synthesized = synthesize_request_value(
+    let synthesized = synthesize_request_value_with_seed(
         artifact,
         SynthesisRequest {
             operation,
             content_type: request.content_type.as_deref(),
         },
+        request_seed(seed),
     )?;
     Ok(PreparedRequest {
         source: RequestSource::Synthesized,
@@ -256,6 +294,14 @@ fn prepare_request(
         content_type: Some(synthesized.media_type().to_owned()),
         body: Some(synthesized.value().clone()),
     })
+}
+
+const fn request_seed(seed: u64) -> u64 {
+    seed ^ 0x243f_6a88_85a3_08d3
+}
+
+pub(crate) const fn response_seed(seed: u64) -> u64 {
+    seed ^ 0x1319_8a2e_0370_7344
 }
 
 fn read_request(input: &RequestInput) -> Result<(String, Vec<u8>)> {
@@ -380,6 +426,7 @@ mod tests {
     fn synthesizes_a_request_when_no_request_is_provided() {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
@@ -387,6 +434,8 @@ mod tests {
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -420,6 +469,39 @@ mod tests {
     }
 
     #[test]
+    fn writes_and_replays_a_self_contained_reproduction_bundle() {
+        let bundle =
+            std::env::temp_dir().join(format!("simile-reproduction-{}-{}", std::process::id(), 17));
+        if bundle.exists() {
+            fs::remove_dir_all(&bundle).unwrap_or_else(|error| panic!("{error}"));
+        }
+        let report = run(&RunRequest {
+            spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
+            behaviors: Vec::new(),
+            operation: OperationSelector::Id("createOrder".to_owned()),
+            outcome: None,
+            scenario: None,
+            request: None,
+            content_type: None,
+            heuristic_policy: Policy::Standard,
+            seed: Some(17),
+            bundle: Some(bundle.clone()),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        let replayed = super::super::reproduce::replay(&super::super::reproduce::ReplayRequest {
+            bundle: bundle.clone(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::remove_dir_all(bundle).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(replayed.matched);
+        assert_eq!(replayed.seed, 17);
+        assert_eq!(replayed.actual, report.response);
+    }
+
+    #[test]
     fn validates_and_uses_a_provided_request_object() {
         let request =
             std::env::temp_dir().join(format!("simile-run-request-{}.json", std::process::id()));
@@ -430,6 +512,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("{error}"));
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
@@ -437,6 +520,8 @@ mod tests {
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         });
         fs::remove_file(request).unwrap_or_else(|error| panic!("{error}"));
         let report = result.unwrap_or_else(|error| panic!("{error}"));
@@ -471,6 +556,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
             outcome: None,
@@ -478,6 +564,8 @@ mod tests {
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         });
         fs::remove_file(request).unwrap_or_else(|error| panic!("{error}"));
         let report = result.unwrap_or_else(|error| panic!("{error}"));
@@ -502,6 +590,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("{error}"));
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
@@ -509,6 +598,8 @@ mod tests {
             request: Some(RequestInput::Path(request.clone())),
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         });
         fs::remove_file(request).unwrap_or_else(|error| panic!("{error}"));
 
@@ -522,6 +613,7 @@ mod tests {
     fn runs_a_bodyless_operation_by_structural_key() {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Key("GET /health".to_owned()),
             outcome: None,
@@ -529,6 +621,8 @@ mod tests {
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -542,6 +636,7 @@ mod tests {
     fn synthesizes_an_optional_form_request_when_none_is_provided() {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
             outcome: None,
@@ -549,6 +644,8 @@ mod tests {
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -593,6 +690,7 @@ mod tests {
 
         let report = run(&RunRequest {
             spec: SpecSource::Url(format!("http://{address}/openapi.yaml")),
+            contract_format: ContractFormat::Auto,
             behaviors: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
@@ -600,6 +698,8 @@ mod tests {
             request: None,
             content_type: None,
             heuristic_policy: Policy::Standard,
+            seed: None,
+            bundle: None,
         })
         .unwrap_or_else(|error| panic!("{error}"));
         server
