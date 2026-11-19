@@ -3,12 +3,13 @@ title: Compiled artifact
 description: Why Simile uses a deterministic indexed binary artifact and how it stays compatible.
 ---
 
-`.similec` is Simile's runtime distribution format. OpenAPI and HCL remain the provider-authored
-and reviewable source formats; the runtime never needs to parse either one on startup.
+`.similec` is Simile's runtime distribution format. OpenAPI, Smithy, semantic TypeScript, and HCL
+remain provider-authored and reviewable source formats; the runtime never needs to parse them on
+startup.
 
-The split is comparable to source code and an executable. OpenAPI and HCL optimize for authoring,
-review, and diagnostics. `.similec` optimizes for linked references, compact storage, fast loading,
-and a clear compatibility boundary.
+The split is comparable to source code and an executable. Contract sources and HCL optimize for
+authoring, review, and diagnostics. `.similec` optimizes for linked references, compact storage,
+fast loading, and a clear compatibility boundary.
 
 ```mermaid
 flowchart LR
@@ -29,7 +30,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 13
+## Envelope version 16
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -37,7 +38,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 13 |
+| 10 | 2 | unsigned big-endian flags; zero in version 16 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -48,7 +49,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 13 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 16 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -57,12 +58,13 @@ The payload is an ordered CBOR array rather than a serialized Rust struct map. V
 5. an indexed value arena used by response definitions, exact outcome bodies, and predicates;
 6. resources in stable resource-reference order;
 7. asynchronous operations in stable name order;
-8. one shared request/response schema catalog.
+8. typed synchronous effects in stable name order; and
+9. one shared request/response/parameter schema catalog.
 
 Strings, value nodes, resources, and asynchronous operations are referenced with unsigned numeric
-identifiers. Async-operation records point directly to their abstract resources. They are retained
-for discovery and are not linked from behavior or operation records; the future effect model will
-own operation attachment.
+identifiers. Async-operation records point directly to their abstract resources. Effect records
+link operation IDs to synchronous actions and named async units, while each action retains only a
+typed resource command and a compact request/response value template.
 
 Service metadata also carries the provider-neutral protocol-error table, opaque scenario
 selections, environmental faults, bounded stochastic fault profiles, and a sorted public
@@ -77,8 +79,10 @@ Fault records contain a typed phase and action. Profile records contain probabil
 parts per million, linked fault indexes, linked operation indexes, repetition bounds, and an
 optional seed. The runtime never reparses HCL or resolves profile names through source documents.
 
-Each operation embeds a compact request-body plan and a body plan for every response that declares
-content. Plans contain declared media types, schema root identifiers, and optional declared media
+Each operation embeds compact parameter records, a request-body plan, and a body plan for every
+response that declares content. Parameter records retain location, requiredness, style,
+explosion/reserved flags, and an optional compiled schema root. Body plans contain declared media
+types, schema root identifiers, and optional declared media
 examples. Those roots point into the shared catalog, where component schemas are compiled once per
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
@@ -89,23 +93,23 @@ or responses without parsing OpenAPI, interpreting arbitrary source JSON, or cop
 schemas into every operation. String patterns are compiled into the schema graph and therefore
 participate in validation and synthesis without reparsing OpenAPI.
 
-Before encoding, provider-authored outcome bodies are checked against their selected OpenAPI
+Before encoding, provider-authored outcome bodies are checked against their selected contract
 response schema. The public-export audit rejects explicit private implementation markers. This
 audit is a guardrail; the provider remains responsible for reviewing all published values.
 
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 13 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 16 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
-records; the runtime does not reparse their OpenAPI extension syntax.
+records; the runtime does not reparse their source constraint syntax.
 
 Response media plans may additionally carry a compiled `x-simile-from-request` relation. Its
 bindings, derivations, guarded lifecycle rules, and omission rules reference the shared request and
 response schema graph by validated identifiers. This is the proof material that distinguishes a
 merely schema-valid response from one proven reachable from the submitted request.
 
-Version 13 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 16 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

@@ -34,8 +34,16 @@ An entry includes:
 - optional operation, causation, and correlation identifiers; and
 - `succeeded` or `failed` with a stable error code.
 
-Queries can filter by resource, causation identifier, and sequence cursor, then apply a limit. This
-makes it possible to inspect all consequences of one request or follow activity incrementally.
+Queries can filter by resource, causation identifier, correlation identifier, and sequence cursor,
+then apply a limit. This makes it possible to inspect direct consequences, an end-to-end trace, or
+incremental activity:
+
+```bash
+simile state inttegro --caused-by request_8f2a
+simile state inttegro --correlation checkout_42 --after 100
+```
+
+Stored values require a separate `--values` opt-in; see [State inspection](/state-inspection).
 
 ## Journal versus component history
 

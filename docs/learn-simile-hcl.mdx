@@ -174,28 +174,43 @@ is intentionally private.
 
 ## 5. Model effects without vendors
 
-Resources name abstract capabilities. Async operations describe observable follow-up work and the
-capabilities it uses.
+Resources name abstract capabilities. Effects attach consequences to committed operations. Async
+units describe actions that run outside the response-critical path.
 
 ```hcl
-resource "queue" "orders" {
+resource "db" "orders" {
+  description = "Stores committed order state."
+}
+
+resource "queue" "fulfillment" {
   description = "Carries order work to background processors."
 }
 
-resource "mail" "receipts" {
-  description = "Delivers customer receipts."
+async "dispatch_order" {
+  description = "Queue the order for fulfillment in the background."
+
+  action "queue.fulfillment" "publish" {
+    body = response.order
+  }
 }
 
-async "dispatch_order" {
-  description = "Queue fulfillment and send the customer receipt."
-  uses = ["queue.orders", "mail.receipts"]
+effect "commit_order" {
+  description = "Persist the order before delivery, then queue fulfillment."
+  operations  = ["createOrder"]
+  async       = ["dispatch_order"]
+
+  action "db.orders" "put" {
+    collection = "orders"
+    key        = response.order.id
+    value      = response.order
+  }
 }
 ```
 
 Use `queue`, not SQS; `db`, not PostgreSQL; `cache`, not Redis. The emulator needs the capability,
-not a leak of the production implementation. Today Simile compiles and describes these standalone
-declarations. Attaching them to operations and dispatching resource actions belong to the
-forthcoming effect layer.
+not a leak of the production implementation. The synchronous database action commits and
+checkpoints before delivery. The named queue action dispatches afterwards, so it does not add
+response latency.
 
 **Question 7.** Which resource declaration is portable?
 
@@ -313,14 +328,13 @@ $ simile --output json describe service inttegro
 
 ## 9. Capstone
 
-You need a test that creates an order, forces a public `requires_payment` result, documents a queued
-receipt job for future effect execution, and independently tests a response lost after commit.
+You need a test that creates an order, forces a public `requires_payment` result, persists the
+committed order, queues follow-up work, and independently tests a response lost after commit.
 Which design is sound today?
 
 - A. Put every rule and vendor name into one large `scenario`
-- B. Define the HTTP shapes in OpenAPI; define the named outcome and standalone async declaration
-  in HCL; use one scenario to select the outcome and another to inject the environmental fault,
-  without claiming that the async work ran
+- B. Define HTTP shapes in OpenAPI; define the named outcome, effect, and async unit in HCL; use one
+  scenario to select the outcome and another to inject the environmental fault
 - C. Return a random valid response and let the client infer what happened
 
 <Accordion title="Show answer">

@@ -137,7 +137,7 @@ Use HCL only for public observable behavior that OpenAPI cannot express adequate
 - public request predicates;
 - opaque test scenarios;
 - protocol-error mappings;
-- standalone asynchronous-work declarations and abstract dependencies for discovery; and
+- typed effects, post-response asynchronous work, and abstract dependencies;
 - environmental delivery faults and bounded stochastic fault profiles.
 
 Prefer OpenAPI named examples before introducing HCL outcomes.
@@ -165,7 +165,9 @@ Only use public request values in predicates. Represent dependencies with portab
 
 Do not use implementation-specific names such as PostgreSQL, Redis, SQS, or SendGrid.
 
-Remember that the current runtime plans declared async work but does not yet execute those resources. Document this honestly.
+Remember that synchronous actions commit before delivery and named async work dispatches without
+blocking delivery. Do not claim crash-safe async delivery: the current dispatcher has no durable
+outbox or retry lease.
 
 Model domain failures and transport faults separately. Invalid parameters, declined payment methods, and forbidden states are deterministic named outcomes selected by public predicates or opaque scenarios. They must never be members of a stochastic profile.
 

@@ -11,12 +11,16 @@ service described by the long-term charter.
 
 ### Source and compilation
 
-- OpenAPI 3.0, 3.1, and 3.2 feature-line ingestion from JSON or YAML
+- OpenAPI 3.0, 3.1, and 3.2 ingestion from JSON or YAML
+- Smithy 2.0 IDL ingestion for HTTP services
+- declarations-only semantic TypeScript ingestion, including split packages and relative imports
 - optional HCL behavior modules and service configuration
 - named outcomes, reusable error sets, public request predicates, and opaque scenarios
 - abstract resource and async-operation declarations
 - supported JSON Schema compilation, explicit soundness constraints, and generation heuristics
 - deterministic, versioned `.similec` artifacts with integrity validation
+- compiled path, query, header, and cookie parameter contracts
+- typed synchronous effects, named asynchronous units, and conservative database-write inference
 
 ### Operation runtime
 
@@ -32,6 +36,9 @@ service described by the long-term charter.
 - deterministic scenario faults and bounded, seeded stochastic fault profiles
 - response delay before delivery and disconnect after commit
 - resolved planning of HCL-declared async work
+- transactional synchronous effect execution with durable Stack checkpoints
+- background dispatch of named asynchronous units without response-path waiting
+- deterministic reproduction bundles and batch conformance replay
 
 ### Stack resource layer
 
@@ -43,6 +50,7 @@ service described by the long-term charter.
 - separately runnable `simile-*` component processes with uniform lifecycle endpoints
 - automatic redb checkpoints under `SIMILE_HOME` that restore complete component state, time,
   journal, counters, and replay records after restart
+- read-only state and causal-journal inspection with explicit payload opt-in
 
 ### HTTP server
 
@@ -50,6 +58,7 @@ service described by the long-term charter.
 - `404` and `405` transport responses
 - an 8 MiB body limit
 - request body content-type handling
+- compiled-schema validation for path, query, header, and cookie parameters
 - one process-wide opaque scenario selection
 - one optional process-wide stochastic fault profile
 - one-line safe access logs and graceful Ctrl-C shutdown
@@ -58,23 +67,24 @@ service described by the long-term charter.
 
 ### Request surface
 
-Path, query, and header parameter schemas are not compiled or validated. Authentication behavior
-is not emulated. Form URL-encoded, multipart, and other non-JSON body codecs are not decoded.
+Authentication behavior is not emulated. Form URL-encoded, multipart, and other non-JSON body
+codecs are not decoded. Less common OpenAPI serialization styles that the adapter cannot execute
+are reported by `simile audit` rather than silently approximated.
 
 ### Stateful behavior
 
-The Stack engines can retain, snapshot, and automatically persist resource state across component
-process restarts, but the operation runtime does not yet compile or dispatch provider-authored
-state actions. A POST served by `simile start` therefore does not implicitly create a resource for
-a later GET. Operation-server replay remains process-local.
+The service supervisor persists provider-authored effects and conservatively inferred ordinary
+database writes. It does not yet infer a full CRUD algebra from route names: a later GET is not
+automatically served from the record written by a POST, and ambiguous DELETE or projection
+semantics still require provider authorship. Operation-response replay remains process-local.
 
 ### Effect execution
 
-HCL async operations and their abstract dependencies are retained for discovery, but are not
-attached to operation results. The HTTP server does not launch or dispatch Stack components. The
-components already provide local state, a causal journal, logical time, and manual advancement; the
-missing layer is the provider-authored effect and action IR plus the adapter that sends commands
-after operation commit.
+Synchronous effects are transactional and named asynchronous units dispatch outside the response
+critical path. The current background dispatcher is process-owned: it does not yet provide a durable
+outbox, lease, retry policy, or crash recovery for work that was committed immediately before the
+process stopped. Providers should not use completion of async actions as evidence of a production
+delivery guarantee.
 
 ### Production equivalence
 
@@ -88,17 +98,19 @@ outcomes are contract-valid approximations, not evidence of exact production bod
 You can confidently test:
 
 - whether your JSON request body satisfies the published supported schema;
+- whether supported path, query, header, and cookie values satisfy their schemas;
 - how your integration handles declared success and error bodies;
 - public scenarios published by the provider;
 - same-path values returned from a request-aware response;
 - request-constrained results when the provider publishes `x-simile-from-request`;
 - idempotency conflict handling and stable process-local replay;
 - how an integration handles declared latency or a lost response after commit; and
-- which follow-up operations the definition declares as planned.
+- whether synchronous resource consequences commit atomically; and
+- which named post-response actions a definition dispatches.
 
-Do not yet assert through `simile start` that cross-operation resource state changed or that a
-declared async effect was delivered. Stack can model both in isolation, but automatic operation
-integration is still a documented boundary.
+Do not yet assert that ordinary GET/DELETE semantics were inferred from route shape or that
+post-response work survived a process crash. Those are still explicit boundaries rather than
+plausible claims.
 
 Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
 [Fault injection](/fault-injection) for the environmental failure model, or

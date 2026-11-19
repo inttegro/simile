@@ -4,13 +4,25 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Add first-class Smithy 2.0 and declarations-only semantic TypeScript contract frontends for
+  `compile`, `run`, and service configurations, including split TypeScript package resolution and
+  lowering of public soundness and request-to-response relations into the canonical artifact.
 - Add automatic redb-backed Stack component checkpoints under `SIMILE_HOME`, with normalized
   metadata, resource, replay, journal, counter, and clock tables; restart recovery; v1 migration;
   exclusive ownership; compatibility checks; and rollback when persistence fails.
-- Remove the unused `behavior.trigger` HCL form and operation-to-async artifact links. Async
-  declarations remain available for service discovery until the effect model owns attachment and
+- Add typed HCL effects, synchronous transactional Stack actions, post-delivery async dispatch,
+  conservative database-write inference, and a protocol-neutral service supervisor.
+- Compile and validate OpenAPI path, query, header, and cookie parameters, including path-item
+  inheritance and operation-level overrides.
+- Add seeded reproduction bundles, exact replay, batch conformance suites, explainable fidelity
+  audits, and compatibility metadata.
+- Add durable state and causality inspection with resource, sequence, causation, and correlation
+  filters; stored values require explicit opt-in.
+- Bind durable state to service and artifact identity, prevent removal while state is owned by a
+  running process, and remove the state database with a confirmed service deletion.
+- Remove the unused `behavior.trigger` HCL form; effects now own operation attachment and async
   dispatch.
-- Advance the compiled artifact format to version 13. Existing artifacts must be recompiled.
+- Advance the compiled artifact format to version 16. Existing artifacts must be recompiled.
 
 ## 0.2.0 - 2026-11-18
 

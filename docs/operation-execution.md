@@ -24,19 +24,21 @@ Transport adapters that have already decoded a body call `Runtime::execute_value
 formats remain adapter concerns while schema validation and response projection operate on one
 normalized value model.
 
-The normal execution path selects its response from the compiled OpenAPI contract and optional HCL
+The normal execution path selects its response from the compiled contract and optional HCL
 behavior. Public request predicates may select a named outcome automatically. Test scenarios that
 need a particular result can use `Runtime::execute_with_options` with a named outcome or opaque
 scenario; those controls are not presented as part of the incoming operation call. An adapter can
 also supply an opaque `ReplayIdentity`:
 `IdempotencyKey` for mutations or `Resource` for GET requests.
 
-It performs one ordered run:
+The runtime performs one ordered run:
 
 1. resolve the operation from the loaded artifact;
 2. decode and validate the request body;
 3. synthesize the immediate response, using the validated request as context; and
-4. cache the completed outcome when the adapter supplied a replay identity.
+4. render the typed synchronous and asynchronous effect plans attached to that committed result;
+   and
+5. cache the completed outcome when the adapter supplied a replay identity.
 
 ```mermaid
 sequenceDiagram
@@ -51,18 +53,19 @@ sequenceDiagram
   O-->>R: named outcome or default selection
   R->>S: synthesize and validate response
   S-->>R: response
-  R-->>A: completed response
+  R-->>A: committed result + effect plan
 ```
 
-The result owns the validated request body and synthesized response. Future state and effect
-execution can consume that completed result as a single success boundary instead of spreading
-partial work across transport handlers.
+The result owns the validated request body, synthesized response, transport plan, and rendered
+effect plan. `simile-service` composes that result with Stack: synchronous actions execute as one
+rollback-capable transition and checkpoint before delivery; named asynchronous units dispatch
+on a background worker without blocking delivery. The HTTP handler never applies resource commands itself.
 
 ## One-shot CLI execution
 
-The `simile run` command compiles a local OpenAPI path or an in-memory `--spec-url` response and
+The `simile run` command compiles a local contract path or an in-memory `--spec-url` response and
 invokes this runtime boundary once. Callers select the operation using either its stable
-`METHOD /path` key or its exact OpenAPI `operationId`. The selectors are mutually exclusive.
+`METHOD /path` key or its exact contract `operationId`. The selectors are mutually exclusive.
 
 If the caller supplies `--request`, Simile reads an inline JSON request object, a bare file path
 (`@file` remains supported), or standard input when passed `-`. The object contains a `headers`
@@ -107,12 +110,16 @@ The replay index stores only `OperationOutcome`. Consequently, a disconnect afte
 the first delivery, while an idempotent retry returns the already committed response normally. The
 HTTP adapter enacts the transport plan; the runtime never sleeps or manipulates a socket.
 
-## Asynchronous work
+## Consequence supervision
 
-HCL may declare named async work and its abstract resource references, such as `db.orders` or
-`mail.receipts`. Those declarations are retained for discovery but are not attached to operations,
-so every current operation result contains no asynchronous work. Simile does not infer storage or
-effects from route names. The forthcoming effect model will own explicit attachment and dispatch.
+HCL effects attach typed resource actions to one or more operation IDs. Inline actions are
+synchronous consequences: the supervisor snapshots Stack, applies every command, checkpoints the
+new snapshot, and restores the prior snapshot on command or storage failure. A replayed public
+operation does not repeat those actions.
+
+Named `async` units contain their own typed actions. The supervisor dispatches them outside the
+response-critical path so they do not add immediate response latency. This dispatcher is currently
+process-owned, not a durable outbox; crash recovery and retry leases remain an explicit boundary.
 
 ## HTTP adapter
 
@@ -121,14 +128,15 @@ effects from route names. The forthcoming effect model will own explicit attachm
 1. listen on the configured local port;
 2. match the incoming method and path to a compiled operation key;
 3. apply transport limits and gather the request values;
-4. pass the wire body and any process-selected scenario to `Runtime::execute`; and
-5. translate the result or runtime error into an HTTP response.
+4. validate compiled path, query, header, cookie, and body schemas;
+5. ask the service supervisor to execute the operation and synchronous effects;
+6. translate the result or runtime error into an HTTP response; and
+7. dispatch named post-response work.
 
-It currently matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, extracts
-`Content-Type` and `Idempotency-Key`, and preserves GET replay by full URI. Path, query, and header
-schema validation, authentication behavior, form and multipart codecs, durable state, and execution
-of provider-authored effects remain later runtime slices. They are not silently treated as
-implemented by the current body-oriented runtime.
+It matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, validates the four
+OpenAPI parameter locations, extracts `Content-Type` and `Idempotency-Key`, and preserves GET replay
+by full URI. Authentication behavior and form/multipart codecs remain later adapter slices; they are
+not silently treated as implemented.
 
 For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
 current persistence model, read [State, identity, and replay](/state-and-replay). For routing,

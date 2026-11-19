@@ -29,6 +29,7 @@
 							"openapi-and-hcl",
 							"service-configuration",
 							"describe-service",
+							"fidelity-audit",
 							"service-authoring-prompt",
 							"service-lifecycle"
 						]
@@ -51,7 +52,14 @@
 					},
 					{
 						"group": "Run operations",
-						"pages": ["run-operation", "request-validation", "response-synthesis"]
+						"pages": [
+							"run-operation",
+							"http-contract",
+							"request-validation",
+							"response-synthesis",
+							"reproduction-bundles",
+							"conformance-suites"
+						]
 					},
 					{
 						"group": "Model behavior",
@@ -62,6 +70,7 @@
 								"pages": ["fault-injection", "fault-glossary"]
 							},
 							"state-and-replay",
+							"state-inspection",
 							"dependencies-and-effects"
 						]
 					},
@@ -79,17 +88,17 @@
 						"pages": [
 							"simile-stack",
 							"stack-cache",
-							"stack-journal",
 							"stack-db",
 							"stack-event-bus",
-							"stack-time",
+							"stack-http",
+							"stack-journal",
 							"stack-mail",
 							"stack-object-store",
-							"stack-http",
 							"stack-persistence",
 							"stack-protocol",
 							"stack-queue",
-							"stack-scheduler"
+							"stack-scheduler",
+							"stack-time"
 						]
 					},
 					{
@@ -103,6 +112,7 @@
 							"operation-execution",
 							"http-server",
 							"application-registry",
+							"compatibility",
 							"current-boundaries"
 						]
 					}

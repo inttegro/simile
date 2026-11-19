@@ -1,91 +1,109 @@
 ---
 title: Dependencies and effects
-description: Model observable follow-up work without leaking production infrastructure.
+description: Commit observable consequences without publishing private infrastructure.
 ---
 
-Many operations do work after the immediate HTTP response. Simile can already name that work and
-its abstract dependencies without exposing production infrastructure. It does not yet attach the
-work to an HTTP operation; that responsibility belongs to the forthcoming effect model.
+An HTTP result and its consequences are different things. `behavior` selects the public result;
+`effect` attaches the state changes and follow-up work that become true when that result commits.
+This separation keeps a provider definition reviewable and prevents background mechanics from
+changing response selection by accident.
+
+```mermaid
+flowchart LR
+  Request --> Runtime[Operation runtime]
+  Runtime --> Result[Committed result]
+  Result --> Sync[Synchronous actions]
+  Sync --> Checkpoint[(Atomic checkpoint)]
+  Checkpoint --> Response[Deliver response]
+  Checkpoint --> Async[Background asynchronous work]
+  Sync --> Stack[Simile Stack]
+  Async --> Stack
+```
+
+## Declare abstract dependencies
+
+Resources describe capabilities, not production vendors:
 
 ```hcl
 resource "db" "orders" {}
 resource "event_bus" "commerce" {}
 resource "mail" "receipts" {}
+```
 
+The definition says database-like state, an event bus, and mail are externally relevant. It does
+not expose PostgreSQL, Kafka, SES, private table names, credentials, or topology. Supported kinds
+are `cache`, `db`, `event_bus`, `http`, `mail`, `object_store`, `queue`, and `scheduler`.
+
+## Define reusable background work
+
+An `async` block is a named unit whose actions must not contribute to immediate response latency:
+
+```hcl
 async "publish_order" {
-  uses = [
-    "db.orders",
-    "event_bus.commerce",
-    "mail.receipts",
-  ]
+  description = "Publish the committed order for downstream consumers."
+
+  action "event_bus.commerce" "publish" {
+    topic = "orders.created"
+    body  = response.order
+  }
 }
 ```
 
-## Why resources are abstract
+The action language is deliberately small. Arguments may use literals and public values projected
+from the validated request or committed response. It is not a general-purpose expression language
+and cannot call production systems during compilation.
 
-The portable definition says that `publish_order` may use database-like state, an event bus, and
-mail. It does not say PostgreSQL, Kafka, or SES. Production vendor choices are neither necessary
-for local emulation nor safe to treat as part of a public behavioral contract.
+## Attach consequences to operations
 
-Supported resource kinds are:
+```hcl
+effect "commit_order" {
+  description = "Persist an order and announce it in the background."
+  operations  = ["createOrder"]
 
-- `cache`
-- `db`
-- `event_bus`
-- `http`
-- `mail`
-- `object_store`
-- `queue`
-- `scheduler`
+  action "db.orders" "put" {
+    collection = "orders"
+    key        = response.order.id
+    value      = response.order
+  }
 
-The compiler rejects any other kind and rejects references to undeclared resources.
-
-## What the operation runtime does today
-
-The compiler validates every `uses` reference, retains resources and async declarations in the
-artifact, and exposes them through `simile describe service`. The operation runtime does not return
-an async plan. A declaration is service vocabulary, not an operation attachment and not evidence
-that background work ran.
-
-The former `trigger` block under `behavior` has been removed. A behavior selects an HTTP result; it
-is not the right owner for state changes or follow-up work.
-
-## What Simile Stack adds
-
-[Simile Stack](/simile-stack) now implements each supported abstract resource as a deterministic,
-serializable engine and local component process. Stack provides one typed command protocol, a
-shared logical-time model, reset and snapshots, idempotent command replay, and a payload-free causal
-journal.
-
-The operation runtime does not yet dispatch those commands. `uses = ["queue.orders"]` proves that
-an async operation may use the queue; it does not say which message to publish. Simile will not
-invent that payload. A provider-authored action model must compile the intended state mutations and
-effects into Stack commands before `simile start` can execute them.
-
-## Where effects will fit
-
-An effect will be a self-contained provider-authored attachment: it will select operations, define
-state or background actions, and run only after the operation result is committed. That keeps HTTP
-result selection in `behavior` and consequence execution in `effect`.
-
-This preserves architectural separation:
-
-```mermaid
-flowchart LR
-  HTTP[HTTP adapter] --> Runtime[Operation runtime]
-  Runtime --> Response[Immediate response]
-  Runtime -. future committed outcome .-> Effects[Provider-authored effects]
-  Effects --> Actions[Compiled action IR]
-  Actions --> Resources[Simile Stack]
+  async = ["publish_order"]
+}
 ```
 
-## What not to encode
+The compiler resolves operation IDs, resource references, action names, and required arguments. It
+lowers them into typed artifact records. At runtime the service supervisor:
 
-Do not publish credentials, private table names, vendor topology, security thresholds, or an
-internal decision tree. A resource declaration should identify the externally relevant capability
-needed for local behavior. Private production decisions belong behind named public outcomes or
-opaque scenarios.
+1. validates the request and commits one public outcome;
+2. renders synchronous action arguments from that committed request and response;
+3. applies the synchronous unit transactionally and checkpoints durable Stack state;
+4. schedules named asynchronous units on a background worker; and
+5. allows HTTP response delivery to proceed without waiting for that work.
 
-Read [Current boundaries](/current-boundaries) before writing tests that assume an effect exists or
-has executed, [Simile Stack](/simile-stack) for the resource architecture, and
-[OpenAPI and HCL](/openapi-and-hcl) for the source ownership rules.
+If a synchronous action or checkpoint fails, the Stack rolls back to its prior snapshot and the
+response is not delivered as though the effect succeeded. Idempotent operation replay does not
+repeat an already committed effect.
+
+Request and response projections also define when an effect applies. An action that reads
+`response.order.id` is rendered only for outcomes that contain that value; a provider error or an
+accepted-without-entity outcome therefore does not accidentally run the write or turn the public
+outcome into an execution failure.
+
+## Convention inference
+
+When a service declares exactly one database, a `POST`, `PUT`, or `PATCH` operation has a stable
+`operationId`, and one successful response contains exactly one identifiable entity, Simile can
+infer the ordinary `db.put` action. The collection name comes from the semantic route segment and
+the key comes from the response entity's `id`.
+
+Inference stops at ambiguity. Multiple databases, multiple candidate entities, missing IDs, or an
+authored effect require the provider to say what happens. Run [`simile audit`](/fidelity-audit) to
+see which actions were authored, inferred, or missing.
+
+## Causality and inspection
+
+Every Stack command records a payload-free journal entry with its operation, causal parent,
+correlation identifier, resource, action, time, and outcome. Stored values are never included in
+the default journal view. Operators must explicitly opt in with `simile state SERVICE --values`.
+
+See [State inspection](/state-inspection), [Simile Stack](/simile-stack), and the
+[HCL language specification](/hcl-language-specification) for the complete forms.

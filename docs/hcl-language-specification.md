@@ -15,15 +15,15 @@ attributes, types, defaults, name resolution, and compile-time rules.
 
 ## Language model
 
-A Simile service has two provider-authored sources:
+A Simile service has one contract source and an optional behavior source:
 
-- **OpenAPI** is the authority for HTTP routes, request schemas, response statuses, media types,
-  and response schemas.
-- **Simile HCL** composes the runnable service and adds public behavior that OpenAPI cannot express,
+- **OpenAPI, Smithy, or semantic TypeScript** is the authority for HTTP routes, request schemas,
+  response statuses, media types, and response schemas. Exactly one is selected.
+- **Simile HCL** composes the runnable service and adds public behavior the contract cannot express,
   such as named outcomes, scenarios, abstract effects, and environmental faults.
 
 HCL is an overlay. It cannot create an HTTP route, introduce an undeclared response status, replace
-a schema, or contradict OpenAPI. Every cross-source reference is resolved during compilation;
+a schema, or contradict the contract. Every cross-source reference is resolved during compilation;
 invalid references stop the service before it can run.
 
 ## Documents
@@ -69,12 +69,12 @@ local service configuration.
 
 | Block | Service config | Behavior module | Purpose |
 | --- | --- | --- | --- |
-| [`service`](#service) | exactly one | not allowed | Compose the listener, OpenAPI source, and imported modules. |
+| [`service`](#service) | exactly one | not allowed | Compose the listener, contract source, and imported modules. |
 | [`resource`](#resource) | optional | optional | Name an abstract dependency. |
 | [`async`](#async) | optional | optional | Declare planned follow-up work. |
-| [`behavior`](#behavior) | optional | optional | Refine one OpenAPI operation. |
+| [`behavior`](#behavior) | optional | optional | Refine one contract operation. |
 | [`error_set`](#error_set) | optional | optional | Define reusable named outcomes. |
-| [`apply_error_set`](#apply_error_set) | optional | optional | Attach an error set through OpenAPI tags. |
+| [`apply_error_set`](#apply_error_set) | optional | optional | Attach an error set through contract tags. |
 | [`protocol_error`](#protocol_error) | optional | optional | Map a runtime failure cause into service responses. |
 | [`scenario`](#scenario) | optional | optional | Define deterministic outcome and fault selections. |
 | [`faults`](#faults-and-use) | optional | optional | Import built-in environmental faults. |
@@ -158,9 +158,9 @@ The block is the composition root for a runnable service.
 | `description` | no | non-empty string | — | Public human-readable service description retained for `simile describe`. |
 | `behaviors` | no | array of strings | `[]` | Local behavior-module paths, resolved relative to the configuration file. |
 | `listen` | yes | one block | — | Listener configuration. |
-| `openapi` | yes | one block | — | OpenAPI source. |
+| `openapi`, `smithy`, or `typescript` | yes | exactly one of these blocks | — | Public HTTP contract source. |
 
-Exactly one `service` block, one `listen` block, and one `openapi` block are required.
+Exactly one `service` block, one `listen` block, and one contract block are required.
 
 ### `listen`
 
@@ -179,7 +179,7 @@ listen {
 The CLI `simile start ... --port PORT` overrides `listen.port` for that invocation without changing
 the configuration.
 
-### `openapi`
+### `openapi`, `smithy`, and `typescript`
 
 Exactly one source attribute is required:
 
@@ -191,13 +191,20 @@ openapi { path = "./commerce.yml" }
 openapi { url = "https://example.test/commerce.yml" }
 ```
 
+```hcl
+smithy { path = "./commerce.smithy" }
+typescript { path = "./typescript/commerce.d.ts" }
+```
+
 | Attribute | Type | Meaning |
 | --- | --- | --- |
-| `path` | non-empty string | Local JSON or YAML OpenAPI document. Relative paths resolve from the configuration directory. |
-| `url` | non-empty string | HTTP or HTTPS OpenAPI source read into memory during compilation. |
+| `path` | non-empty string | Local contract file, or TypeScript declaration package entrypoint/directory. Relative paths resolve from the configuration directory. |
+| `url` | non-empty string | HTTP or HTTPS single-source contract read into memory during compilation. |
 
-`path` and `url` are mutually exclusive. A service configuration loaded from a URL has no local
-base directory, so it must use `openapi.url` and inline behavior declarations.
+`path` and `url` are mutually exclusive. The three contract blocks are mutually exclusive. A
+service configuration loaded from a URL has no local base directory, so it must use a contract URL
+and inline behavior declarations. Split TypeScript packages require a local path; a TypeScript URL
+must identify a self-contained declaration document.
 
 ## Behavior declarations
 
@@ -236,6 +243,10 @@ provider-neutral; names such as `postgres`, `redis`, or `s3` are rejected.
 async "NAME" {
   description = "PUBLIC_DESCRIPTION"
   uses = ["RESOURCE_REFERENCE", ...]
+
+  action "RESOURCE_REFERENCE" "COMMAND" {
+    ARGUMENT = VALUE
+  }
 }
 ```
 
@@ -243,11 +254,60 @@ async "NAME" {
 | --- | --- | --- | --- | --- |
 | `description` | no | non-empty string | — | Public explanation of the planned work. |
 | `uses` | no | array of strings | `[]` | Resource references required by the planned work. |
+| `action` | no | zero or more blocks | — | Typed resource commands dispatched outside the response-critical path. |
 
-Every reference must resolve to a declared resource. An `async` declaration currently stands on
-its own: Simile compiles it into the service artifact and exposes it through `simile describe`, but
-does not attach it to an HTTP operation or execute it. Operation attachment belongs to the
-forthcoming effect model, not to `behavior`.
+Every reference must resolve to a declared resource. Action resources are added to `uses`
+automatically. An async declaration is inert until an `effect.async` attribute names it; once
+attached, the service supervisor dispatches its actions on a background worker without making
+response delivery wait for them.
+
+### `effect`
+
+```hcl
+effect "NAME" {
+  description = "PUBLIC_DESCRIPTION"
+  operations  = ["OPERATION_ID", ...]
+  async       = ["ASYNC_NAME", ...]
+
+  action "RESOURCE_REFERENCE" "COMMAND" {
+    ARGUMENT = VALUE
+  }
+}
+```
+
+| Member | Required | Type or multiplicity | Meaning |
+| --- | --- | --- | --- |
+| `description` | no | non-empty string | Public explanation of the consequence. |
+| `operations` | yes | non-empty array | Exact contract `operationId` values that commit the effect. |
+| `async` | no | array | Named async units dispatched outside the response-critical path. |
+| `action` | no | zero or more blocks | Synchronous typed commands committed before delivery. |
+
+An effect must contain at least one synchronous action or one async reference. Operation IDs,
+async names, resources, commands, required arguments, and accepted optional arguments are all
+validated at compile time.
+
+An action value may be a JSON-compatible literal, `request`, `response`, a dotted projection such
+as `request.customer_id` or `response.order.id`, or an array/object recursively containing those
+values. Projections are compiled into JSON Pointers; arbitrary functions and private resource reads
+are not part of the expression language.
+
+Supported mutation commands are:
+
+| Resource | Commands |
+| --- | --- |
+| `db` | `put`, `delete` |
+| `cache` | `set`, `delete`, `increment`, `compare_and_set` |
+| `queue` | `publish` |
+| `mail` | `send` |
+| `object_store` | `put`, `delete` |
+| `event_bus` | `publish` |
+| `scheduler` | `schedule`, `cancel` |
+| `http` | `register`, `call` |
+
+The command determines required and optional arguments. For example, `db.put` requires
+`collection`, `key`, and `value`; `queue.publish` requires `body` and optionally accepts
+`attributes` and `delay_ms`. Unsupported reads such as `db.get` are rejected because an effect
+describes consequences, not an alternate query API.
 
 ### `behavior`
 

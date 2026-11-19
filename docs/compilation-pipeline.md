@@ -1,6 +1,6 @@
 ---
 title: Compilation pipeline
-description: Follow OpenAPI and HCL from provider source to a validated runtime artifact.
+description: Follow a public HTTP contract and HCL from provider source to a validated runtime artifact.
 ---
 
 Simile compiles provider-authored text into a source-independent runtime artifact. Compilation is
@@ -9,8 +9,8 @@ checked, and constraints become typed proof rules.
 
 ```mermaid
 flowchart TD
-  OA[OpenAPI JSON or YAML] --> ParseOA[Parse feature line]
-  ParseOA --> Contract[Canonical API contract]
+  Sources[OpenAPI, Smithy, or semantic TypeScript] --> Frontend[Parse source semantics]
+  Frontend --> Contract[Canonical API contract]
   HCL[Optional HCL modules] --> ParseHCL[Parse declarations]
   ParseHCL --> Semantics[Resolve against contract]
   Contract --> Semantics
@@ -22,11 +22,12 @@ flowchart TD
   Encode --> Similec[.similec]
 ```
 
-## 1. Normalize OpenAPI
+## 1. Normalize the public contract
 
-`simile-openapi` accepts JSON or YAML and dispatches by the OpenAPI feature line. Simile supports
-the 3.0, 3.1, and 3.2 lines while preserving the exact patch version for diagnostics and
-reproducibility.
+`simile-openapi` accepts OpenAPI 3.0, 3.1, and 3.2 JSON or YAML. `simile-smithy` accepts Smithy 2.0
+IDL. `simile-typescript` accepts a declarations-only semantic contract package without running
+JavaScript or invoking `tsc`. Each frontend preserves the source semantics needed for diagnostics
+and reproducibility.
 
 The adapter produces a canonical contract containing service metadata, stable `METHOD /path`
 operation keys, optional `operationId` values, request bodies, responses, tags, examples, and
@@ -34,7 +35,7 @@ schema fragments. Source-format details do not escape into the canonical model.
 
 ## 2. Parse and resolve HCL
 
-`simile-hcl` first parses syntax without consulting OpenAPI. A semantic pass then resolves every
+`simile-hcl` first parses syntax without consulting the contract. A semantic pass then resolves every
 behavior against the canonical contract. Collection before resolution makes module order
 irrelevant.
 
@@ -54,12 +55,13 @@ This two-phase design keeps syntax errors separate from cross-source meaning.
 `simile-compiler` is the only layer allowed to combine source languages. Each HTTP operation gets
 an origin:
 
-- `open_api` when the contract supplies its complete current behavior;
+- `open_api` when the contract supplies its complete current behavior (the stable artifact label
+  is retained for compatibility across all three source frontends);
 - `hcl` when an optional overlay refines it.
 
 The compiler builds a named outcome catalog from bodyless responses, OpenAPI examples, schema-only
 responses, error sets, and operation outcomes. Provider-authored bodies are later checked against
-the selected OpenAPI response schema.
+the selected contract response schema.
 
 ## 4. Compile executable schemas
 

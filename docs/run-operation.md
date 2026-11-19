@@ -1,9 +1,9 @@
 ---
 title: Run one operation
-description: Execute one OpenAPI operation directly, with a provided or synthesized request.
+description: Execute one contract operation directly, with a provided or synthesized request.
 ---
 
-`simile run` is the shortest path from an OpenAPI operation to an executed result. It compiles the
+`simile run` is the shortest path from a contract operation to an executed result. It compiles the
 contract in memory, selects one operation, prepares a request, invokes the same protocol-neutral
 runtime used by the HTTP server, and exits.
 
@@ -13,6 +13,8 @@ Use a local specification:
 
 ```bash
 simile run ./openapi.yaml --operation-id createOrder
+simile run ./service.smithy --operation-id createOrder
+simile run ./typescript/commerce.d.ts --operation-id createOrder
 ```
 
 Or read a remote specification into memory:
@@ -25,13 +27,16 @@ simile run \
 
 A positional specification path and `--spec-url` are mutually exclusive. A structural
 `--operation "METHOD /path"` selector and an exact, case-sensitive `--operation-id` are also
-mutually exclusive. Remote OpenAPI is read with a 64 MiB limit and is not saved to disk.
+mutually exclusive. Remote contract text is read with a 64 MiB limit and is not saved to disk.
+Local `.smithy` and `.d.ts` paths are inferred automatically. A TypeScript entrypoint resolves only
+its relative declaration imports; passing a directory loads every non-test `.d.ts` file below it.
+Use `--contract-format` for an ambiguous path or remote source.
 
 ## Let Simile build the request
 
 When the operation declares any request body and `--request` is absent, Simile chooses a declared
 JSON media type, synthesizes a fresh schema-valid value, and validates it through the ordinary
-request path. This applies even when OpenAPI marks the body optional. An operation with no request
+request path. This applies even when the contract marks the body optional. An operation with no request
 body runs without one.
 
 Choose a particular declared media type with `--content-type`:
@@ -107,6 +112,22 @@ simile run ./openapi.yaml --operation-id createOrder | jq .id
 
 With `--verbose`, Simile also reports the normalized request, operation, response metadata, and
 selected outcome and provenance. Diagnostics remain on stderr so stdout is safe to pipe.
+
+## Capture a reproduction
+
+Use a fixed seed and bundle when a run needs to become durable debugging evidence:
+
+```bash
+simile run ./openapi.yaml \
+  --operation-id createOrder \
+  --seed 42 \
+  --bundle ./create-order.simile-repro
+```
+
+The bundle contains the exact compiled artifact, normalized request, generation seed, selected
+controls, compatibility metadata, and expected response. Repeat it with
+`simile replay ./create-order.simile-repro`; group many bundles with `simile conformance DIR`.
+See [Reproduction bundles](/reproduction-bundles) for the trust boundary.
 
 Next, read [Request validation](/request-validation) and
 [Response synthesis](/response-synthesis) for the two halves of execution.

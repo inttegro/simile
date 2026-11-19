@@ -18,7 +18,7 @@ sequenceDiagram
   participant Registry as ~/.simile registry
 
   CLI->>Core: register or update service
-  Core->>Source: resolve config, OpenAPI, and HCL
+  Core->>Source: resolve config, HTTP contract, and HCL
   Source-->>Core: source snapshots + provenance
   Core->>Compiler: compile complete service
   Compiler-->>Core: validated artifact + report
@@ -36,9 +36,10 @@ so a failed compile or interrupted write cannot expose a partial service.
 source with a file or URL, resolves its provenance, compiles a complete new revision, and advances
 `current` only after success. Older revisions remain immutable.
 
-`simile remove NAME --confirm NAME` deletes the service's entire directory, including all revisions
-and local state. Exact-name confirmation is mandatory. The registry layout and other named services
-are not changed.
+`simile remove NAME --confirm NAME` deletes the service's entire registry directory and its durable
+service state database. Exact-name confirmation is mandatory. Removal first acquires the same
+exclusive state lock used by the supervisor, so it refuses to unlink a running service's state.
+The registry layout, standalone component state, and other named services are not changed.
 
 ## Start a named service
 
@@ -53,7 +54,7 @@ flowchart LR
   Command --> Resolve --> Read --> Prepare --> Listen
 ```
 
-Starting by name never returns to the original OpenAPI URL or HCL path. It loads the selected
+Starting by name never returns to the original contract URL or HCL path. It loads the selected
 artifact, validates its envelope and internal indexes, prepares the runtime, and gives the artifact
 to `simile-server`. This makes a registered service reproducible even if a remote specification
 later changes or disappears.
@@ -67,7 +68,7 @@ and returns a structured report. Terminal color, verbosity, and pretty-printing 
 ## Ownership boundary
 
 Core may coordinate source loading, compilation, registry transactions, and listener preparation.
-It does not interpret OpenAPI or HCL, validate JSON Schema itself, encode CBOR, match HTTP routes,
+It does not interpret OpenAPI, Smithy, TypeScript, or HCL, validate JSON Schema itself, encode CBOR, match HTTP routes,
 or format terminal output. Keeping those responsibilities in their component crates makes every
 application operation replaceable and testable.
 

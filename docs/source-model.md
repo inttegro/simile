@@ -1,18 +1,20 @@
 ---
 title: Source model
-description: How OpenAPI and optional HCL become one canonical description of a service.
+description: How one public contract and optional HCL become one canonical description of a service.
 ---
 
-Providers publish familiar, reviewable source files. Simile does not invent a second HTTP contract:
-OpenAPI describes what callers can send and receive, while HCL is an optional layer for behavior
-that OpenAPI cannot express precisely.
+Providers publish familiar, reviewable source files. Simile accepts OpenAPI, Smithy, or semantic
+TypeScript as the sole HTTP contract for one service. HCL remains an optional layer for observable
+behavior the selected contract cannot express precisely.
 
 ```mermaid
 flowchart LR
-  subgraph OpenAPI["HTTP contract"]
+  subgraph Contracts["Choose one HTTP contract"]
     O30["OpenAPI 3.0"]
     O31["OpenAPI 3.1"]
     O32["OpenAPI 3.2"]
+    Smithy["Smithy 2.0 IDL"]
+    TS["Semantic TypeScript .d.ts"]
   end
 
   subgraph Behavior["Behavior overlay"]
@@ -22,17 +24,24 @@ flowchart LR
     Modules --> AST --> Semantic
   end
 
-  Adapter["<code>simile-openapi</code><br/>version adapters"]
+  OpenAPIAdapter["<code>simile-openapi</code>"]
+  SmithyAdapter["<code>simile-smithy</code>"]
+  TSAdapter["<code>simile-typescript</code>"]
   Contract["API contract"]
   Overlay["Behavior specification"]
   Model["<code>simile-spec</code><br/>canonical service model"]
   Coordinator["<code>simile-compiler</code>"]
   Service["CompiledService"]
 
-  O30 --> Adapter
-  O31 --> Adapter
-  O32 --> Adapter
-  Adapter --> Contract --> Model
+  O30 --> OpenAPIAdapter
+  O31 --> OpenAPIAdapter
+  O32 --> OpenAPIAdapter
+  Smithy --> SmithyAdapter
+  TS --> TSAdapter
+  OpenAPIAdapter --> Contract
+  SmithyAdapter --> Contract
+  TSAdapter --> Contract
+  Contract --> Model
   Semantic --> Overlay --> Model
   Model --> Coordinator --> Service
 ```
@@ -47,22 +56,44 @@ Each operation is normalized into a stable method/path identity plus its optiona
 parameters, request bodies, responses, and source schema fragments. An OpenAPI-only operation does
 not need an `operationId`. HCL does, because it needs a published name that survives path refactors.
 
+## Smithy frontend
+
+`simile-smithy` parses Smithy 2.0 IDL and lowers HTTP traits, structures, unions, mixins, examples,
+and public OpenAPI-extension traits into the same canonical contract. Smithy mixins are flattened
+according to Smithy member-copy semantics before closed JSON objects are compiled. Published
+projection fragments retained for OpenAPI-only composition rules are compiled with OpenAPI 3.0
+schema semantics instead of being discarded or approximated.
+
+## Semantic TypeScript frontend
+
+`simile-typescript` parses declaration files with OXC. It never invokes `tsc`, executes JavaScript,
+or treats an OpenAPI-shaped object literal as the contract. Literal operation registries define the
+HTTP surface; payload interfaces, unions, intersections, templates, and semantic relation types
+define payload meaning. `SchemaSoundness` lowers typed cross-field relationships, while
+`ResponseRelations` lowers request-to-response bindings. `Closed<T>` explicitly distinguishes a
+closed public object from TypeScript's normally open structural object types.
+
+A `.d.ts` entrypoint resolves only its relative declaration imports. A directory source loads all
+non-test declaration files recursively. Unsupported unused declarations are ignored, but an
+unsupported declaration referenced by the public payload graph fails compilation.
+
 ## HCL frontend
 
 `simile-hcl` deliberately separates syntax from meaning:
 
-1. The parser turns modules into declarations without consulting OpenAPI.
+1. The parser turns modules into declarations without consulting the selected contract frontend.
 2. The semantic compiler resolves those declarations against the normalized API contract.
 
 The semantic phase rejects duplicate declarations, unknown operation IDs, response statuses absent
-from OpenAPI, missing asynchronous targets, undeclared resources, and provider-specific resource
-kinds. It collects declarations before resolving references, so module order has no meaning.
+from the contract, missing asynchronous targets, undeclared resources, invalid effect commands or
+arguments, and provider-specific resource kinds. It collects declarations before resolving
+references, so module order has no meaning.
 
 ## Canonical model
 
 `simile-spec` contains the nouns shared by compilation and execution: API contracts, operations,
-behaviors, abstract resources, asynchronous operations, and the compiled service. It has no YAML,
-HCL, file, URL, CLI, or HTTP-server concerns.
+parameters, behaviors, effects, abstract resources, asynchronous operations, and the compiled
+service. It has no YAML, HCL, file, URL, CLI, or HTTP-server concerns.
 
 That neutrality matters. A new source frontend can target the same model, and a new runtime adapter
 can consume the same artifact, without either side learning the other's syntax.

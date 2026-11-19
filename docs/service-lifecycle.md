@@ -9,7 +9,7 @@ have different persistence and replay behavior.
 
 ```mermaid
 flowchart TD
-  Sources[OpenAPI + optional HCL]
+  Sources[HTTP contract + optional HCL]
   Sources --> Run[simile run]
   Run --> One[Compile in memory\nexecute once\nexit]
   Sources --> Register[simile register]
@@ -30,8 +30,8 @@ simile register inttegro --config ./inttegro.simile.hcl
 Registration performs the expensive and failure-prone work before installation:
 
 1. load the service configuration from a local path or HTTP(S) URL;
-2. resolve and load its OpenAPI source and behavior modules;
-3. parse and semantically validate both languages;
+2. resolve and load its OpenAPI, Smithy, or TypeScript source and behavior modules;
+3. parse and semantically validate the selected contract language and HCL;
 4. compile schemas, outcomes, constraints, and heuristic plans;
 5. encode and decode the `.similec` artifact to verify it; and
 6. install a private immutable revision, then atomically advance `current`.
@@ -46,7 +46,7 @@ simile start inttegro
 ```
 
 Starting a registered service reads the current manifest and artifact from the registry. It does
-not reopen the original configuration, read local OpenAPI files, or refetch remote sources. This
+not reopen the original configuration, read local contract files, or refetch remote sources. This
 makes startup independent of the provider's availability and ensures the process runs the exact
 revision that registration validated.
 
@@ -84,14 +84,14 @@ revision.
 simile remove inttegro --confirm inttegro
 ```
 
-Removal permanently deletes the named service's complete registry directory: its `current`
-pointer, every immutable revision, and any local `state/` data. The `--confirm` value is required
-and must exactly match the service name. A missing or different value fails before the registry is
-changed. Other registered services and the registry layout remain intact.
+Removal permanently deletes the named service's complete registry directory and
+`state/services/NAME.redb`. The `--confirm` value is required and must exactly match the service
+name. A missing or different value fails before the registry is changed. If a running process owns
+the state lock, removal fails rather than unlinking live state. Other services and the registry
+layout remain intact.
 
-Removing a service does not stop an already running process, because that process has already
-loaded its artifact into memory. Stop it separately. After removal, `simile start inttegro` fails
-until the service is registered again.
+Stop a running service before removal. After removal, `simile start inttegro` fails until the
+service is registered again.
 
 ## Run
 
@@ -99,7 +99,7 @@ until the service is registered again.
 simile run ./openapi.yaml --operation-id createOrder
 ```
 
-`run` compiles the OpenAPI document and optional `--behavior` modules in memory, executes one
+`run` compiles the selected contract and optional `--behavior` modules in memory, executes one
 operation, prints the result, and exits. It does not read or write the service registry. Because
 each invocation creates a fresh runtime, replay state does not cross CLI invocations.
 
@@ -118,8 +118,9 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 │       │       ├── config.hcl
 │       │       ├── manifest.json
 │       │       └── service.similec
-│       └── state/
 ├── state/
+│   ├── services/
+│   │   └── inttegro.redb
 │   └── stack/
 │       └── KIND/
 │           └── RESOURCE_FINGERPRINT.redb
@@ -127,11 +128,11 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 └── tmp/
 ```
 
-Each Stack component automatically checkpoints its resource state under the root `state/stack/`
-directory. The `state/` directory inside a registered service remains reserved for the orchestration
-layer that will bind those components to that service. `locks/` is likewise reserved as
-cross-process registry coordination expands; installation currently relies on same-filesystem
-staging and atomic rename.
+The service supervisor checkpoints the complete service-owned Stack under `state/services/`.
+Separately launched Stack component processes use `state/stack/`. Both use embedded redb and
+sidecar ownership locks; the registry revisions themselves remain immutable. `locks/` is reserved
+for broader registry coordination; installation currently relies on same-filesystem staging and
+atomic rename.
 
 See [Configuration](/service-configuration) for configuration rules and
 [Compiled artifact](/compiled-artifact) for what the installed runtime reads. The component

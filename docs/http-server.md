@@ -11,17 +11,24 @@ synthesize values, or execute a provider's private infrastructure.
 sequenceDiagram
   participant App as Application under test
   participant HTTP as simile-server
+  participant Service as simile-service
   participant Run as simile-runtime
   participant Graph as Compiled schema graph
+  participant Stack as Simile Stack
 
   App->>HTTP: method, URI, headers, body
-  HTTP->>HTTP: match route and enforce wire limit
-  HTTP->>Run: operation key + normalized request
+  HTTP->>HTTP: match route, decode parameters, enforce wire limit
+  HTTP->>Graph: validate path, query, header, cookie
+  HTTP->>Service: operation key + normalized request
+  Service->>Run: execute committed result
   Run->>Graph: decode and validate request
   Graph-->>Run: validated value or structured issues
   Run->>Graph: select and synthesize response
   Graph-->>Run: validated response value
-  Run-->>HTTP: committed outcome + transport plan
+  Run-->>Service: committed outcome + effect plan
+  Service->>Stack: transactional synchronous actions
+  Stack-->>Service: durable checkpoint
+  Service-->>HTTP: committed outcome + transport plan
   alt ordinary response
     HTTP-->>App: status, headers, encoded body
   else delay before response
@@ -30,6 +37,7 @@ sequenceDiagram
   else disconnect after commit
     HTTP--xApp: response stream reset
   end
+  HTTP-->>Service: dispatch named async work
 ```
 
 ## Route table
@@ -40,8 +48,10 @@ table points to stable artifact operation keys; route handlers do not carry sour
 
 ## Transport normalization
 
-The adapter enforces an 8 MiB request-body limit, reads the declared content type, and passes the
-decoded media choice to the runtime. It also normalizes replay identity:
+The adapter captures template path values, repeated query values, case-insensitive headers, and
+cookie pairs, then validates them through their compiled parameter schemas. It enforces an 8 MiB
+request-body limit, reads the declared content type, and passes the decoded media choice to the
+runtime. It also normalizes replay identity:
 
 - an `Idempotency-Key` identifies repeated mutation attempts;
 - a GET request's full URI identifies repeat retrievals, including its query string.

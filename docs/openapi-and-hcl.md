@@ -42,7 +42,7 @@ HCL can:
 - select outcomes from public request values;
 - group outcomes into opaque test scenarios;
 - map Simile's protocol-error categories to declared service responses; and
-- declare background work and its abstract dependencies for discovery and future effect execution.
+- declare abstract resources, transactional consequences, and post-response work.
 
 HCL cannot add a route, replace a request schema, invent a response status, or contradict OpenAPI.
 It targets an operation by its exact `operationId`, which is why an operation needs an ID only when
@@ -55,21 +55,27 @@ The provider can choose that response and declare observable follow-up work:
 
 ```hcl
 resource "queue" "orders" {}
-resource "mail" "receipts" {}
 
 async "dispatch_order" {
-  uses = ["queue.orders", "mail.receipts"]
+  action "queue.orders" "publish" {
+    body = response.order
+  }
 }
 
 behavior "createOrder" {
   response { status = 201 }
 }
+
+effect "commit_order" {
+  operations = ["createOrder"]
+  async      = ["dispatch_order"]
+}
 ```
 
-The compiler verifies that `createOrder` exists, `201` is declared, and both resource references
-resolve. It retains `dispatch_order` as a standalone declaration for `simile describe`. The runtime
-does not attach or execute it. A forthcoming effect model will express when an operation schedules
-background work without overloading `behavior`.
+The compiler verifies that `createOrder` exists, `201` is declared, and the resource reference
+resolves. `behavior` selects the public HTTP result, `effect` owns its synchronous consequences,
+and `async` owns work dispatched outside the response-critical path. The service supervisor applies
+this compiled plan without reopening HCL.
 
 ## Exact outcomes without private rules
 
