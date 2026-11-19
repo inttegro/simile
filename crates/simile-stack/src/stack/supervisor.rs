@@ -18,11 +18,11 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(super) struct ReplayRecord {
-    resource: ResourceAddress,
-    key: String,
-    command: StackCommand,
-    receipt: CommandReceipt,
+pub(crate) struct ReplayRecord {
+    pub(crate) resource: ResourceAddress,
+    pub(crate) key: String,
+    pub(crate) command: StackCommand,
+    pub(crate) receipt: CommandReceipt,
 }
 
 #[derive(Clone, Debug)]

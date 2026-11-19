@@ -88,7 +88,7 @@ pub enum QueueResult {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-struct StoredMessage {
+pub(crate) struct StoredMessage {
     id: String,
     body: Value,
     attributes: BTreeMap<String, String>,
@@ -114,9 +114,9 @@ impl StoredMessage {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QueueEngine {
-    resources: BTreeMap<String, VecDeque<StoredMessage>>,
-    next_message: u64,
-    next_receipt: u64,
+    pub(crate) resources: BTreeMap<String, VecDeque<StoredMessage>>,
+    pub(crate) next_message: u64,
+    pub(crate) next_receipt: u64,
 }
 
 impl QueueEngine {

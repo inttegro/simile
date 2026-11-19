@@ -64,6 +64,10 @@ pub struct Journal {
 }
 
 impl Journal {
+    pub(crate) fn from_entries(entries: Vec<JournalEntry>) -> Self {
+        Self { entries }
+    }
+
     pub(crate) fn push(&mut self, entry: JournalEntry) {
         self.entries.push(entry);
     }

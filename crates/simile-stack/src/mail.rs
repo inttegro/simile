@@ -107,8 +107,8 @@ pub enum MailResult {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct MailEngine {
-    resources: BTreeMap<String, BTreeMap<String, MailMessage>>,
-    next_message: u64,
+    pub(crate) resources: BTreeMap<String, BTreeMap<String, MailMessage>>,
+    pub(crate) next_message: u64,
 }
 
 impl MailEngine {

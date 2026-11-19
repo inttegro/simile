@@ -77,7 +77,7 @@ pub enum CacheResult {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct CacheEngine {
-    resources: BTreeMap<String, BTreeMap<String, CacheEntry>>,
+    pub(crate) resources: BTreeMap<String, BTreeMap<String, CacheEntry>>,
 }
 
 impl CacheEngine {

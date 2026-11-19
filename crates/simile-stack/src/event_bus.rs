@@ -73,7 +73,7 @@ pub enum BusResult {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-struct BusState {
+pub(crate) struct BusState {
     topics: BTreeMap<String, Vec<BusEvent>>,
     checkpoints: BTreeMap<String, BTreeMap<String, u64>>,
     next_event: u64,
@@ -81,7 +81,7 @@ struct BusState {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BusEngine {
-    resources: BTreeMap<String, BusState>,
+    pub(crate) resources: BTreeMap<String, BusState>,
 }
 
 impl BusEngine {

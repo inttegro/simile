@@ -99,7 +99,7 @@ pub enum HttpResult {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-struct HttpState {
+pub(crate) struct HttpState {
     expectations: Vec<HttpExpectation>,
     requests: Vec<RecordedRequest>,
     next_request: u64,
@@ -107,7 +107,7 @@ struct HttpState {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct HttpEngine {
-    resources: BTreeMap<String, HttpState>,
+    pub(crate) resources: BTreeMap<String, HttpState>,
 }
 
 impl HttpEngine {

@@ -83,8 +83,8 @@ pub enum SchedulerResult {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct SchedulerEngine {
-    resources: BTreeMap<String, BTreeMap<String, ScheduledTask>>,
-    next_task: u64,
+    pub(crate) resources: BTreeMap<String, BTreeMap<String, ScheduledTask>>,
+    pub(crate) next_task: u64,
 }
 
 impl SchedulerEngine {

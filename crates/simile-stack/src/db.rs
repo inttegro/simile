@@ -117,7 +117,7 @@ pub enum DbResult {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct DbEngine {
-    resources: BTreeMap<String, BTreeMap<String, BTreeMap<String, StoredDocument>>>,
+    pub(crate) resources: BTreeMap<String, BTreeMap<String, BTreeMap<String, StoredDocument>>>,
 }
 
 impl DbEngine {

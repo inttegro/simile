@@ -40,5 +40,5 @@ pub use protocol::{
 pub use queue::{QueueCommand, QueueMessage, QueueResult};
 pub use scheduler::{ScheduledTask, SchedulerCommand, SchedulerResult, TaskState};
 pub use stack::{AdvanceReport, Stack, StackBuilder, StackSnapshot};
-pub use store::{MemoryStateStore, RedbStateStore, StateStore, StateStoreError};
+pub use store::{MemoryStateStore, RedbStateStore, StateIdentity, StateStore, StateStoreError};
 pub use time::{Clock, ClockError, ClockMode, ClockSnapshot, LogicalTime};

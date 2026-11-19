@@ -98,7 +98,7 @@ pub enum ObjectResult {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ObjectEngine {
-    resources: BTreeMap<String, BTreeMap<String, StoredObject>>,
+    pub(crate) resources: BTreeMap<String, BTreeMap<String, StoredObject>>,
 }
 
 impl ObjectEngine {
