@@ -138,7 +138,11 @@ fn compiles_smithy_and_typescript_contracts_as_json() {
             "smithy",
             "JSON Schema 2020-12-compatible Smithy 2.0",
         ),
-        ("orders.d.ts", "typescript", "3.1.1"),
+        (
+            "orders.d.ts",
+            "typescript",
+            "JSON Schema 2020-12-compatible TypeScript declarations",
+        ),
     ] {
         let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
             .args(["--output", "json", "compile", &fixture(source)])

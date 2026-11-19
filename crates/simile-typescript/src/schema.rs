@@ -212,7 +212,6 @@ fn is_payload_declaration(name: &str) -> bool {
     !matches!(
         name,
         "CollectionVersion"
-            | "SourceOpenApiSha256"
             | "OperationCount"
             | "SchemaCount"
             | "ConstraintCount"

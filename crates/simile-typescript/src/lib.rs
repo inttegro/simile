@@ -12,9 +12,9 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 use simile_spec::{
-    ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
-    OperationKey, ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    ApiContract, HttpMethod, MediaTypeContract, Operation, OperationKey, ParameterContract,
+    ParameterLocation, RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus,
+    SchemaFeature, SchemaVersion, ServiceInfo,
 };
 
 use crate::ast::{ContractAst, TypeExpr};
@@ -38,7 +38,7 @@ impl<'a> Source<'a> {
 /// Compile declarations-only TypeScript contract types into Simile's canonical HTTP contract.
 ///
 /// The frontend parses declarations and literal types. It does not execute JavaScript, invoke the
-/// TypeScript compiler, or inspect an OpenAPI-shaped intermediate representation.
+/// TypeScript compiler, or depend on a source-format intermediate representation.
 pub fn parse(sources: &[Source<'_>]) -> Result<ApiContract> {
     let ast = ContractAst::parse(sources)?;
     contract(&ast, sources)
@@ -104,21 +104,21 @@ fn contract(ast: &ContractAst, sources: &[Source<'_>]) -> Result<ApiContract> {
         .unwrap_or("0.0.0")
         .to_owned();
 
-    Ok(ApiContract {
-        // Semantic TypeScript payloads lower to JSON Schema 2020-12-compatible values, using the
-        // same body compiler semantics as OpenAPI 3.1 without treating OpenAPI syntax as input.
-        openapi: OpenApiVersion {
-            exact: "3.1.1".to_owned(),
-            feature: OpenApiFeature::V3_1,
+    Ok(ApiContract::from_schema(
+        // Why: the TypeScript package is an independent contract source, so its canonical schema
+        // capability is stated directly instead of borrowing another frontend's source version.
+        SchemaVersion {
+            exact: "JSON Schema 2020-12-compatible TypeScript declarations".to_owned(),
+            feature: SchemaFeature::V3_1,
         },
-        info: ServiceInfo {
+        ServiceInfo {
             title,
             version,
             description: Some("Semantic TypeScript declaration contract".to_owned()),
         },
         operations,
-        schemas: schema::components(ast)?,
-    })
+        schema::components(ast)?,
+    ))
 }
 
 fn operation(
