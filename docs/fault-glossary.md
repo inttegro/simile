@@ -163,7 +163,7 @@ several independently configured faults.
 | Phase | The boundary at which the transport action occurs |
 | Action | The transport plan enacted by an adapter, currently `delay` or `disconnect` |
 | Activation | One decision to apply one declared fault to one eligible operation attempt |
-| Scenario injection | Deterministically applies a named fault to a named OpenAPI `operationId` |
+| Scenario injection | Deterministically applies a named fault to a named contract operation ID |
 | Fault profile | Applies declared environmental faults stochastically within explicit bounds |
 | Seed | Reproduces a profile's pseudo-random activation sequence for the same compiled service and Simile release |
 | Cooldown | Required eligible clean attempts after a profile reaches its consecutive-activation limit |

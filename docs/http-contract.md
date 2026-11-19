@@ -4,7 +4,7 @@ description: See how routes, parameters, bodies, and protocol failures cross the
 ---
 
 The HTTP adapter is intentionally thin. It translates wire input into the protocol-neutral service
-supervisor and never reparses OpenAPI at request time.
+supervisor and never reparses the source contract at request time.
 
 ```mermaid
 flowchart LR
@@ -18,9 +18,10 @@ flowchart LR
 
 ## Route and parameter ownership
 
-Path-item parameters and operation parameters are merged according to OpenAPI rules. An
-operation-level declaration overrides the same location and name; header names compare
-case-insensitively. Local parameter references are resolved at compile time.
+Source-level parameter declarations are normalized during compilation. Where OpenAPI supplies both
+path-item and operation parameters, the operation-level declaration overrides the same location
+and name. Header names compare case-insensitively, and local references are resolved at compile
+time.
 
 Simile compiles parameter schemas into the same portable schema catalog used by request bodies.
 The server validates required presence, scalar types, arrays, objects, patterns, bounds, and other
@@ -31,8 +32,8 @@ supported schema rules for:
 - case-insensitive headers; and
 - parsed cookie pairs.
 
-The common OpenAPI styles are decoded without source parsing. The fidelity audit reports styles
-that are valid OpenAPI but not executable by the current adapter.
+Common compiled parameter styles are decoded without source parsing. For OpenAPI contracts, the
+fidelity audit reports styles that are valid OpenAPI but not executable by the current adapter.
 
 ## Helpful failures
 

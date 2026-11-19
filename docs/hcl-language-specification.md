@@ -321,7 +321,7 @@ behavior "OPERATION_ID" {
 }
 ```
 
-The label is an exact OpenAPI `operationId`. Each operation may have at most one behavior across the
+The label is an exact contract operation ID. Each operation may have at most one behavior across the
 complete service.
 
 | Member | Required | Multiplicity | Meaning |
@@ -332,7 +332,7 @@ complete service.
 | `outcome` | no | zero or more | Provider-authored named result. |
 
 All referenced error sets must exist. All selected statuses must already be declared by the
-OpenAPI operation.
+contract operation.
 
 ### `response`
 
@@ -343,7 +343,7 @@ response {
 ```
 
 `status` is required and must be an HTTP status integer from `100` through `599`. The operation's
-OpenAPI responses must declare it.
+contract responses must declare it.
 
 ### `outcome`
 
@@ -367,13 +367,13 @@ outcome "manual_review" {
 | --- | --- | --- | --- |
 | label | yes | string | Public outcome name. |
 | `description` | no | non-empty string | Public explanation of the result. |
-| `status` | yes | integer `100`–`599` | Response status already declared by OpenAPI. |
+| `status` | yes | integer `100`–`599` | Response status already declared by the contract. |
 | `content_type` | no | string | Response media type. |
 | `body` | no | JSON-compatible HCL value | Exact provider-authored response body. |
 | `when` | no | zero or more blocks | Public request predicates. |
 
-A supplied body must validate against the selected OpenAPI response schema. A provider-authored
-outcome may replace an OpenAPI-derived outcome with the same name. Two different provider-authored
+A supplied body must validate against the selected contract response schema. A provider-authored
+outcome may replace a contract-derived outcome with the same name. Two different provider-authored
 outcomes with the same name for one operation are a compilation error.
 
 #### `when`
@@ -415,7 +415,7 @@ apply_error_set "payment_errors" {
 }
 ```
 
-`tags` is a required, non-empty array of OpenAPI tag strings. The named error set is attached to
+`tags` is a required, non-empty array of contract tag strings. The named error set is attached to
 every operation that has at least one listed tag. Every named tag and the error set must exist.
 Each attached outcome is checked against every affected operation's declared responses.
 
@@ -468,8 +468,8 @@ A scenario is an opaque, deterministic test control. Its optional `description` 
 
 | Nested block | Label | Required attribute | Meaning |
 | --- | --- | --- | --- |
-| `select` | OpenAPI `operationId` | `outcome` string | Select a named outcome. |
-| `inject` | OpenAPI `operationId` | `fault` string | Apply a named environmental fault. |
+| `select` | Contract operation ID | `outcome` string | Select a named outcome. |
+| `inject` | Contract operation ID | `fault` string | Apply a named environmental fault. |
 
 One scenario may contain selections and injections for several operations. It may select and inject
 for the same operation, but it may not contain two selections or two injections for one operation.
@@ -581,7 +581,7 @@ fault_profile "rough_network" {
 | `description` | no | non-empty string | — | Public explanation of the stochastic test policy. |
 | `probability` | yes | number | — | `0.000001` through `1`; stored as parts per million. |
 | `faults` | yes | non-empty array of strings | — | Each fault must exist and occur once. |
-| `operations` | no | array of strings | `[]` | OpenAPI `operationId` allowlist; empty means every operation. |
+| `operations` | no | array of strings | `[]` | Contract operation-ID allowlist; empty means every operation. |
 | `max_consecutive` | no | unsigned integer | `1` | Must be positive. |
 | `cooldown_requests` | no | unsigned integer | `20` | Requests suppressed after activation bounds are reached. |
 | `seed` | no | unsigned integer | random | Reproducible stochastic sequence. |
@@ -592,15 +592,15 @@ randomly selected by a fault profile.
 ## Name resolution and compilation
 
 Parsing proves that each file uses legal HCL structure and value types. Compilation then combines
-all modules with OpenAPI and resolves the service as a whole.
+all modules with the selected contract and resolves the service as a whole.
 
 Resolution is independent of declaration order. A reference may target a declaration in a later
 file. Compilation rejects:
 
 - duplicate resources, behaviors, error sets, async operations, scenarios, custom faults, or fault
   profiles;
-- unknown OpenAPI operation IDs or tags;
-- response statuses absent from the targeted OpenAPI operation;
+- unknown contract operation IDs or tags;
+- response statuses absent from the targeted contract operation;
 - provider-authored response bodies that fail the selected response schema;
 - unknown resources, error sets, outcomes, or faults;
 - duplicate provider-authored outcome names for one operation; and
@@ -626,4 +626,4 @@ optional blocks or attributes may be added compatibly; incompatible syntax or se
 require an appropriate Simile release and migration notes.
 
 For terminology, read the [HCL glossary](/hcl-glossary). For source ownership and design rationale,
-read [OpenAPI and HCL](/openapi-and-hcl).
+read [Contract sources and HCL](/contract-sources-and-hcl).

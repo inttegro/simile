@@ -1,148 +1,164 @@
 ---
 title: Authoring prompt
-description: Give a coding agent the evidence, constraints, and validation standard needed to produce a faithful Simile service contract.
+description: Give a coding agent the evidence, source-language rules, and validation standard needed to produce a faithful Simile service contract.
 ---
 
-Use this prompt when asking a coding agent to create or improve a service's OpenAPI contract and
-Simile configuration. Replace every bracketed value before sending it. Give the agent access to the
-service's public documentation, implementation, tests, and existing contract where possible.
+Use this prompt when asking a coding agent to create or improve an OpenAPI, Smithy, or semantic
+TypeScript contract and its Simile configuration. Replace every bracketed value before sending it.
+Give the agent access to public documentation, implementation, tests, fixtures, existing contracts,
+and real error behavior where possible.
 
-The prompt deliberately separates the public HTTP contract, observable behavior, and private
-implementation logic. Its required audit and coverage report make uncertainty visible instead of
-letting the agent silently invent contract details.
+The prompt treats all three contract sources as first-class standards. It requires the selected
+source to be independently complete and keeps public HTTP behavior separate from private
+implementation logic.
 
 ````text
 You are designing a production-quality, Simile-compatible public contract for [SERVICE_NAME].
 
 Inputs
 
-- Service source/docs: [PATHS_OR_URLS]
-- Existing OpenAPI document, if any: [OPENAPI_PATH_OR_URL]
+- Contract format: [openapi | smithy | typescript]
+- Service source and public documentation: [PATHS_OR_URLS]
+- Existing contract, if any: [CONTRACT_PATH_OR_URL]
+- Desired contract output: [CONTRACT_OUTPUT]
 - Desired service config path: [CONFIG_PATH]
 - Desired listener: [HOST]:[PORT]
 - Intended users and primary workflows: [WORKFLOWS]
 
-Your goal is to produce the most accurate public OpenAPI specification and the smallest useful Simile service configuration. The result must let integrators validate requests, generate sound requests and responses, exercise meaningful outcomes, and run the service locally without exposing private implementation logic.
+Goal
+
+Produce the most accurate public contract in the selected format and the smallest useful Simile
+service configuration. The contract must independently define the complete HTTP surface. It must
+let integrators validate requests, synthesize sound requests and responses, exercise meaningful
+public outcomes, and run the service locally without exposing private production logic.
+
+Do not translate another contract format mechanically. Model the service's public meaning using
+the selected language's native types and Simile's public semantic constructs.
 
 Before editing
 
-1. Study the public API documentation, implementation, tests, fixtures, existing schemas, and error handling.
+1. Study public documentation, handlers, domain types, validation, tests, fixtures, existing
+   schemas, examples, and error handling.
 2. Build an operation inventory containing:
    - method and path;
-   - stable `operationId`;
-   - request parameters and body;
-   - success and error responses;
-   - content types;
-   - public side effects;
-   - asynchronous work observable by callers;
-   - cross-field relationships;
-   - uncertainties or contradictions.
+   - stable operation ID;
+   - path, query, header, and cookie parameters;
+   - request-body presence, requiredness, content types, and shapes;
+   - success and error statuses, headers, content types, and shapes;
+   - public side effects and caller-observable asynchronous work;
+   - provider-authored examples;
+   - cross-field soundness relationships;
+   - request-to-response construction relationships; and
+   - uncertainties, contradictions, and missing evidence.
 3. Treat implementation behavior as evidence, not permission to publish private details.
-4. Do not invent endpoints, statuses, fields, constraints, error codes, or guarantees. Flag unresolved facts explicitly.
+4. Do not invent endpoints, statuses, fields, constraints, examples, error codes, or guarantees.
+   Report unresolved facts explicitly.
 
-OpenAPI requirements
+Contract-neutral requirements
 
-OpenAPI is the complete authority for the HTTP contract. Preserve the existing OpenAPI version when updating a specification. For a new specification, prefer OpenAPI 3.1.1 unless a required feature justifies another Simile-supported 3.x version.
+- Preserve existing public methods, paths, field names, payload alternatives, and behavior.
+- Give every operation a stable, unique ID when HCL, examples, or tooling needs to target it.
+- Define every documented success and error response.
+- Distinguish request-only and response-only fields where the selected language supports it.
+- Encode requiredness, optionality, explicit null, and absence distinctly.
+- Use finite literals or enums for closed public value sets.
+- Keep exact provider-authored examples as literal witnesses and validate them against their
+  operation edge.
+- Express mutually exclusive payload alternatives as genuine alternatives, not one object with
+  unrelated optional fields.
+- Reject unknown object properties only when the real service rejects them.
+- Put machine-readable semantics in types, traits, schemas, examples, and semantic relationships,
+  not only in prose.
+- Attach a cross-field relationship to the narrowest object that owns every participating value.
+- Every relationship must be both validatable and constructible during synthesis.
+- Use only public request and response paths in request-to-response relationships.
+- If a public invariant cannot be expressed faithfully, document the gap instead of approximating
+  it.
 
-For every operation:
+OpenAPI standard
 
-- Provide a stable, unique `operationId`.
-- Accurately define path, query, header, and cookie parameters.
-- Define request-body presence, requiredness, content types, and schemas.
-- Define every documented success and error status.
-- Define response headers, content types, and schemas.
-- Add realistic named examples for important successes and errors.
-- Use reusable `components` for shared objects, errors, parameters, and responses.
-- Use tags consistently so reusable Simile error sets can later target product areas.
-- Distinguish request and response fields with `readOnly` and `writeOnly`.
-- Use accurate primitive types and formats such as `integer`, `int64`, `date-time`, `uuid`, `uri`, and `email`.
-- Use `oneOf`, `anyOf`, discriminators, enums, constants, required fields, and nullability to express genuine alternatives precisely.
-- Ensure mutually exclusive success and error shapes cannot appear together.
-- Use `additionalProperties: false` only when the real service rejects unknown fields.
-- Put machine-readable semantics in schemas, formats, examples, and extensions—not only in descriptions.
-- Define reusable public error envelopes with real error codes and helpful examples.
+When Contract format is `openapi`:
 
-Prefer named OpenAPI examples for exact outcomes. They require less Simile-specific configuration and provide stronger fidelity than schema-only synthesis.
+- Preserve the existing supported OpenAPI 3.x version. For a new document, prefer OpenAPI 3.1.1
+  unless evidence requires another Simile-supported version.
+- Use reusable components for shared payloads, parameters, errors, headers, and responses.
+- Use standard OpenAPI keywords for field-local validation, including required, type unions or
+  nullability, enum, const, format, bounds, array limits, uniqueItems, oneOf, readOnly, and
+  writeOnly.
+- Use realistic named OpenAPI examples for important successes and errors.
+- Use `x-simile-constraints` only for public relationships involving several values.
+- Use `x-simile-from-request` on a response media type for public request-to-response bindings,
+  conditions, omissions, defaults, and derived values.
+- Ensure every JSON Pointer is RFC 6901 and relative to the object or operation edge carrying it.
+- Do not place private rules, database details, or provider infrastructure in extensions.
 
-Soundness extensions
+Smithy standard
 
-Use `x-simile-constraints` only for public cross-field relationships ordinary OpenAPI cannot express.
+When Contract format is `smithy`:
 
-Attach the extension to the narrowest object schema that owns every participating field. Every path is an RFC 6901 JSON Pointer relative to that object.
+- Produce one standalone Smithy 2.0 IDL document with exactly one service as the public root.
+- Model the HTTP surface with `@http`; use operation names as stable operation IDs.
+- Bind path, query, header, cookie, and payload members with Smithy's HTTP binding traits.
+- Mark body members with `@httpPayload`; declare the local `contentType` trait when needed.
+- Attach errors to operations and give each error shape `@error` and `@httpError`.
+- Use ordinary Smithy shapes and traits for structures, unions, mixins, required members, patterns,
+  lengths, ranges, uniqueness, documentation, and read-only values.
+- Declare every custom Simile trait locally. Supported public traits include `simileConstraints`,
+  `responseRelations`, `simileSchema`, `httpSuccessResponses`, `dataExamples`, `contentType`,
+  `untagged`, `collectionVersion`, and `availability`.
+- Use `simileConstraints` only for public cross-field relationships.
+- Use `responseRelations` on operations for request-to-response construction by status and content
+  type.
+- Use `simileSchema` only when the public schema cannot be represented by the base Smithy shape
+  algebra. Do not use it to embed or refer to another contract format.
+- The published Smithy model must compile without consulting OpenAPI or an external Smithy model
+  package.
 
-Supported clauses include:
+Semantic TypeScript standard
 
-- `ordered` for chronological or numeric ordering;
-- `bounded` for values constrained by other fields;
-- `implies` for conditional presence, nullability, or values;
-- `equal` for scalar values that must agree;
-- `distinct` for unique values selected through arrays;
-- `set` for subset, superset, or disjoint scalar arrays;
-- `equation` for arithmetic relationships;
-- `aggregate` for sums, counts, minima, or maxima over arrays;
-- `lifecycle` for finite states and transition timestamps;
-- `template` for strings rendered from required scalar fields.
+When Contract format is `typescript`:
 
-Examples:
-
-```yaml
-x-simile-constraints:
-  - ordered:
-      paths: [/created_at, /published_at, /updated_at]
-
-  - implies:
-      when: { path: /active, equals: false }
-      then: { all: [{ path: /published_at, state: null-or-absent }, { path: /checkout_enabled, equals: false }] }
-
-  - equation:
-      target: /amount_remaining
-      value: { subtract: [{ path: /amount_due }, { path: /amount_paid }] }
-
-  - aggregate:
-      target: /subtotal
-      operation: sum
-      source: /lines/data/*/amount
-      when: { path: /lines/has_more, equals: false }
-```
-
-Constraint rules:
-
-- Use ordinary OpenAPI for field-local validation.
-- Ensure every path resolves and every participating type is compatible.
-- Ensure required construction sources are available and non-null where necessary.
-- Do not encode database structure, fraud thresholds, vendor rules, private decision trees, or undisclosed production invariants.
-- If a relationship is not part of the public contract, do not publish it.
-- A constraint must support both proof and construction. Do not add inert annotations.
-
-For operation results, add `x-simile-from-request` to a response media type whenever standalone
-request and response schemas are not enough to prove reachability. Declare only public behavior:
-
-- bind caller-owned values to their response paths;
-- derive public totals and other deterministic response values;
-- use guarded rules for lifecycle states controlled by request fields and their documented defaults;
-- omit optional response data that the selected request flow cannot produce; and
-- never encode private decision trees merely to make synthesis more specific.
-
-See [`x-simile-from-request`](/request-response-relations) for the executable grammar.
+- Produce declarations only. Do not emit JavaScript, executable initializers, decorators, or
+  runtime validators.
+- Publish literal `ServiceName` and `CollectionVersion` declarations.
+- Define operation interfaces whose names end in `Operations`. Every operation member must declare
+  literal method and path values, request content when present, and every response alternative.
+- Group parameters under literal `path`, `query`, `header`, and `cookie` object types.
+- Model public JSON values directly with object types, interfaces, literals, unions,
+  intersections, tuples, arrays, templates, and named references.
+- Use `Closed<T>` only for objects that reject undeclared properties.
+- Use optional properties for absence and explicit `null` in the value type for nullability; do
+  not conflate them.
+- Use literal unions and template literal types for finite and patterned scalar contracts. Report
+  integer, numeric-bound, string-length, or array-length facets that the current frontend cannot
+  express; do not pretend a branded alias enforces them.
+- Publish cross-field propositions in `SchemaSoundness`. Supported relationships are `Ordered`,
+  `Bounded`, `Implies`, `EqualFields`, `DistinctValues`, `SetRelationship`, `Equation`,
+  `Aggregate`, `Template`, and `Lifecycle`, with their supported predicates and expressions.
+- Publish request-to-response construction in `ResponseRelations` or resource-local interfaces
+  ending in `ResponseRelations`.
+- Publish exact literal witnesses in `OperationExamples`.
+- A split package must have a small public entrypoint and only relative declaration imports.
+- Do not publish an AST, source digest, metadata type, or vocabulary from another contract format
+  as the semantic TypeScript contract.
 
 Simile HCL requirements
 
-HCL is optional and additive. Do not duplicate routes, schemas, or response definitions already owned by OpenAPI.
+HCL is optional and additive. Do not duplicate routes, payload schemas, or response definitions
+already owned by the selected contract.
 
-Use HCL only for public observable behavior that OpenAPI cannot express adequately, including:
+Use HCL only for public observable behavior that the contract cannot express adequately, including:
 
-- selecting a response status already declared by an operation;
-- exact named outcomes whose bodies validate against OpenAPI;
+- selecting a declared response status;
+- exact named outcomes whose bodies validate against the selected response;
 - reusable public error families;
 - public request predicates;
 - opaque test scenarios;
-- protocol-error mappings;
-- typed effects, post-response asynchronous work, and abstract dependencies;
-- environmental delivery faults and bounded stochastic fault profiles.
+- protocol-error mappings; and
+- declared effects, asynchronous work, and portable dependencies.
 
-Prefer OpenAPI named examples before introducing HCL outcomes.
-
-Never reproduce private production decision logic. If a private decision can lead to a publicly observable result, expose an opaque scenario that selects the result:
+Never reproduce private production decision logic. If a private decision can lead to a public
+result, expose an opaque scenario that selects that result:
 
 ```hcl
 scenario "payment_declined" {
@@ -152,57 +168,13 @@ scenario "payment_declined" {
 }
 ```
 
-Only use public request values in predicates. Represent dependencies with portable capability names such as:
-
-- `db`
-- `cache`
-- `queue`
-- `mail`
-- `object_store`
-- `event_bus`
-- `scheduler`
-- `http`
-
-Do not use implementation-specific names such as PostgreSQL, Redis, SQS, or SendGrid.
-
-Remember that synchronous actions commit before delivery and named async work dispatches without
-blocking delivery. Do not claim crash-safe async delivery: the current dispatcher has no durable
-outbox or retry lease.
-
-Model domain failures and transport faults separately. Invalid parameters, declined payment methods, and forbidden states are deterministic named outcomes selected by public predicates or opaque scenarios. They must never be members of a stochastic profile.
-
-Use faults only for environmental delivery behavior. Prefer Simile's built-in HTTP catalog so a
-service does not repeat standard phase and action mechanics:
-
-```hcl
-faults {
-  use "http.slow" {}
-  use "http.response_lost" {}
-}
-```
-
-Use `"*"` to import the complete catalog, `"namespace.*"` to import a namespace, and a leading
-`^` to exclude an exact fault or namespace from the selected set. Prefer the narrowest selection
-that expresses the service's testing contract.
-
-Override a catalog default only when the service contract needs it:
-
-```hcl
-faults {
-  use "http.slow" {
-    latency = "2s"
-  }
-}
-```
-
-Define a custom `fault` only when no catalog entry represents the required environmental
-behavior. Never use catalog or custom faults to model domain rejection.
-
-Use scenario `inject` blocks for deterministic tests. Use a `fault_profile` only for bounded stochastic resilience testing, with a conservative probability, operation scope, `max_consecutive`, `cooldown_requests`, and an optional reproducible seed. Do not claim that profile probabilities reproduce production measurements unless the provider supplies that evidence.
+Only use public request values in predicates. Name dependencies by portable capabilities such as
+`db`, `cache`, `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, or `http`. Do not publish
+vendor names, credentials, private tables, thresholds, or topology.
 
 Service configuration
 
-Produce a minimal composition-root configuration:
+Produce one composition-root configuration:
 
 ```hcl
 service "[SERVICE_NAME]" {
@@ -211,8 +183,8 @@ service "[SERVICE_NAME]" {
     port = [PORT]
   }
 
-  openapi {
-    path = "./openapi.yaml"
+  [openapi | smithy | typescript] {
+    path = "./[CONTRACT_FILE]"
   }
 
   behaviors = [
@@ -223,55 +195,55 @@ service "[SERVICE_NAME]" {
 
 Rules:
 
-- The file must contain exactly one `service` block.
-- The service label must match the CLI service name.
-- The `openapi` block must use exactly one of `path` or `url`.
-- Omit `behaviors` when no behavior module is needed.
-- Relative paths resolve from the local config directory.
-- A remotely loaded config must use an OpenAPI URL and inline behavior declarations; it cannot rely on relative files.
+- The file contains exactly one `service` block.
+- The service label matches the CLI service name.
+- The selected contract block uses exactly one of `path` or `url`.
+- Omit `behaviors` when no behavior module is justified.
+- Relative paths resolve from the local configuration directory.
+- A remote configuration uses a contract URL and inline behavior declarations.
+- A remote TypeScript contract is one self-contained declaration document; split TypeScript
+  packages require a local path.
 - Default to `127.0.0.1` unless public binding is explicitly required.
-- Keep the configuration concerned with composition, not endpoint definitions.
+- Keep configuration concerned with composition, not endpoint definitions.
 
 Required deliverables
 
-1. A short contract audit:
-   - evidence inspected;
-   - contradictions found;
-   - unresolved questions;
-   - assumptions avoided.
-2. The completed OpenAPI document.
+1. A short contract audit: evidence inspected, contradictions, unresolved questions, and assumptions
+   deliberately avoided.
+2. The completed contract in the selected format.
 3. The minimal Simile service configuration.
 4. Optional behavior HCL only where justified.
-5. An operation coverage table showing:
-   - operation;
-   - request example;
-   - success outcomes;
-   - error outcomes;
-   - soundness constraints;
-   - HCL behavior, if any;
-   - remaining schema-synthesized outcomes.
-6. A validation report.
+5. An operation coverage table showing requests, success outcomes, error outcomes, soundness
+   relationships, response construction, examples, HCL behavior, and remaining synthesized
+   outcomes.
+6. A validation report with exact commands and results.
 
 Validation
 
-- Parse and lint the OpenAPI document.
-- Compile/register the service with Simile.
-- Treat every Simile compilation error as a contract defect; do not remove a rule merely to make compilation pass.
+- Parse and compile the selected contract with Simile.
+- Treat every Simile compilation error as a contract defect; do not remove a true public rule only
+  to make compilation pass.
+- Compile any native source checker available for the selected format, such as Smithy tooling or
+  `tsc --noEmit`, without treating it as a substitute for Simile compilation.
+- Register or compile the service configuration.
 - Run representative operations with synthesized requests.
 - Run representative operations with supplied valid requests.
 - Test malformed and schema-invalid requests.
-- Verify that generated responses match exactly one declared response alternative.
-- Verify every generated payload against its compiled schema and constraints.
-- Verify important errors use provider-authored examples or outcomes rather than random strings.
-- Confirm no private implementation details are present in OpenAPI, HCL, examples, metadata, or scenario names.
-- Report the exact commands and results.
+- Exercise provider-authored success and error examples.
+- Validate every synthesized payload against the same compiled contract and semantic constraints.
+- Confirm generated responses match exactly one declared response alternative.
+- Confirm important errors use provider-authored examples or outcomes rather than random strings.
+- Confirm no private implementation details appear in the contract, HCL, examples, metadata, or
+  scenario names.
+- Report exact commands, results, and any validation that could not be performed.
 
 Quality standard
 
-The finished contract should be useful without HCL, faithful without exposing internals, economical for the provider to maintain, and strict enough that a successful Simile test gives an integrator meaningful confidence—not merely schema-shaped random data.
+The finished contract must be useful without HCL, faithful without exposing internals, economical
+for the provider to maintain, and strict enough that a successful Simile test gives an integrator
+meaningful confidence—not merely schema-shaped random data.
 ````
 
-Read [OpenAPI and HCL](/openapi-and-hcl) for the source-ownership model,
-[OpenAPI extensions](/openapi-extensions) for the supported constraint vocabulary,
-[`x-simile-from-request`](/request-response-relations) for cross-message reachability, and
-[Service configuration](/service-configuration) for the configuration grammar.
+Read [Contract sources and HCL](/contract-sources-and-hcl) for the ownership model, then use the
+format-specific standards for [OpenAPI](/openapi-and-hcl), [Smithy](/smithy-contracts), or
+[semantic TypeScript](/typescript-contracts).

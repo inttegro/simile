@@ -203,8 +203,8 @@ protocol-neutral runtime. It currently provides:
 - `404 Not Found` and `405 Method Not Allowed` responses at the transport boundary;
 - an 8 MiB request-body limit;
 - JSON request-body decoding and compiled-schema validation through the runtime;
-- generated OpenAPI response status, media type, and body;
-- named OpenAPI and HCL outcomes, including an optional process-wide `--scenario NAME`;
+- generated contract response status, media type, and body;
+- named contract and HCL outcomes, including an optional process-wide `--scenario NAME`;
 - deterministic scenario fault injection and an optional bounded stochastic
   `--fault-profile NAME`;
 - service-declared protocol-error mappings for malformed or contract-invalid requests, with a
@@ -228,4 +228,4 @@ starting a service is not mistaken for full production equivalence.
 
 Continue with [Lifecycle](/service-lifecycle) to see how this file becomes a registered
 revision, [Fault injection](/fault-injection) for environmental failure controls, or
-[OpenAPI and HCL](/openapi-and-hcl) to decide what belongs in each source.
+[Contract sources and HCL](/contract-sources-and-hcl) to decide what belongs in each source.

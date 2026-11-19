@@ -83,15 +83,15 @@ Each operation embeds compact parameter records, a request-body plan, and a body
 response that declares content. Parameter records retain location, requiredness, style,
 explosion/reserved flags, and an optional compiled schema root. Body plans contain declared media
 types, schema root identifiers, and optional declared media
-examples. Those roots point into the shared catalog, where component schemas are compiled once per
+examples. Those roots point into the shared catalog, where reusable schemas are compiled once per
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
 response graphs. The catalog also contains compact schema example and default hints, plus explicit
-OpenAPI `format` annotations used by seeded synthesis. OpenAPI schema description prose is
-deliberately not interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
-or responses without parsing OpenAPI, interpreting arbitrary source JSON, or copying common
-schemas into every operation. String patterns are compiled into the schema graph and therefore
-participate in validation and synthesis without reparsing OpenAPI.
+source-format annotations used by seeded synthesis. Description prose is deliberately not
+interpreted as schema metadata. The runtime therefore validates requests and synthesizes requests
+or responses without parsing the source contract, interpreting arbitrary source data, or copying
+common schemas into every operation. String patterns are compiled into the schema graph and
+therefore participate in validation and synthesis without reparsing the source contract.
 
 Before encoding, provider-authored outcome bodies are checked against their selected contract
 response schema. The public-export audit rejects explicit private implementation markers. This

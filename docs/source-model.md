@@ -56,6 +56,8 @@ Each operation is normalized into a stable method/path identity plus its optiona
 parameters, request bodies, responses, and source schema fragments. An OpenAPI-only operation does
 not need an `operationId`. HCL does, because it needs a published name that survives path refactors.
 
+See the [OpenAPI authoring standard](/openapi-and-hcl).
+
 ## Smithy frontend
 
 `simile-smithy` parses a standalone Smithy 2.0 IDL model and lowers HTTP traits, structures,
@@ -65,6 +67,8 @@ are compiled. A model can use local `simileSchema`, `simileConstraints`, `respon
 `httpSuccessResponses` traits for public relationships that Smithy's base shape algebra cannot
 state directly; the Smithy frontend consumes those traits without consulting another contract
 format.
+
+See the [Smithy authoring standard](/smithy-contracts).
 
 ## Semantic TypeScript frontend
 
@@ -78,6 +82,8 @@ closed public object from TypeScript's normally open structural object types.
 A `.d.ts` entrypoint resolves only its relative declaration imports. A directory source loads all
 non-test declaration files recursively. Unsupported unused declarations are ignored, but an
 unsupported declaration referenced by the public payload graph fails compilation.
+
+See the [semantic TypeScript authoring standard](/typescript-contracts).
 
 ## HCL frontend
 
@@ -103,10 +109,8 @@ can consume the same artifact, without either side learning the other's syntax.
 ## Merge ownership
 
 Only `simile-compiler` may combine the two sources. Every HTTP operation receives exactly one
-behavior origin:
-
-- `open_api` for behavior derived from the public contract;
-- `hcl` for a validated overlay that refines that operation.
+behavior origin: the selected public contract or a validated HCL overlay that refines that
+operation.
 
 HCL is therefore additive, not a second specification of the route. Cross-source contradictions
 fail compilation instead of becoming ambiguous run-time branches.

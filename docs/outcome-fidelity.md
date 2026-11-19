@@ -3,9 +3,10 @@ title: Outcome fidelity
 description: Select trustworthy public results without publishing private production decision logic.
 ---
 
-OpenAPI defines which responses are legal. Simile compiles those responses into named outcomes so
-tests can select a public cause instead of asking for an arbitrary HTTP status. The resulting
-catalog is carried in `.similec`; the runtime does not reopen OpenAPI or HCL.
+The selected OpenAPI, Smithy, or semantic TypeScript contract defines which responses are legal.
+Simile compiles those responses into named outcomes so tests can select a public cause instead of
+asking for an arbitrary HTTP status. The resulting catalog is carried in `.similec`; the runtime
+does not reopen the source contract or HCL.
 
 Schema validity and behavioral fidelity are different. A synthesized `402` error may satisfy the
 schema while still using meaningless generated strings. A named provider example carries stronger
@@ -16,8 +17,9 @@ difference instead of presenting both as equivalent.
 
 Every compiled outcome reports one fidelity source:
 
-- `open_api_derived`: an exact OpenAPI example or fully described bodyless response;
-- `provider_authored`: an HCL outcome whose body is checked against the OpenAPI response;
+- `open_api_derived`: the historical wire name for an exact contract example or fully described
+  bodyless response, regardless of the source frontend;
+- `provider_authored`: an HCL outcome whose body is checked against the contract response;
 - `recorded_reviewed`: reserved for provider-reviewed examples produced by authoring tools;
 - `schema_synthesized`: a schema-valid approximation where no exact example was published.
 
@@ -39,7 +41,7 @@ flowchart TD
   Select -->|--outcome| Named[Named outcome]
   Select -->|--scenario| Scenario[Scenario selection]
   Select -->|public request predicate| Predicate[First matching outcome]
-  Select -->|none| Default[OpenAPI/HCL response selection]
+  Select -->|none| Default[Contract/HCL response selection]
   Named --> Body[Exact body or schema synthesis]
   Scenario --> Body
   Predicate --> Body
@@ -47,11 +49,12 @@ flowchart TD
   Body --> Validate[Validate selected response schema]
 ```
 
-## OpenAPI first
+## Contract first
 
-Simile derives named outcomes from response statuses, media types, and named OpenAPI examples. A
-provider only needs HCL for public behavior that OpenAPI cannot express precisely. Named examples
-are the lowest-maintenance way to publish exact successes and errors.
+Simile derives named outcomes from response statuses, media types, and named examples in any
+supported contract source. A provider only needs HCL for public behavior that the selected source
+cannot express precisely. Named examples are the lowest-maintenance way to publish exact successes
+and errors.
 
 Descriptions are not executable decision trees. Simile may display them to an author, but does not
 turn prose about internal checks into runtime rules.
@@ -83,9 +86,9 @@ apply_error_set "payment_errors" {
 }
 ```
 
-The status must already be declared by that OpenAPI operation. The body must validate against the
+The status must already be declared by that contract operation. The body must validate against the
 selected response schema or compilation fails. `apply_error_set` attaches the family to every
-operation carrying any listed OpenAPI tag, so providers can cover a product area without repeating
+operation carrying any listed contract tag, so providers can cover a product area without repeating
 operation identifiers.
 
 ## Public request predicates
@@ -158,6 +161,6 @@ markers such as `_internal*`, `private_*`, `implementation_detail`, `fraud_thres
 passed this audit. This is a guardrail, not a substitute for provider review of all published
 examples and scenario names.
 
-Read [OpenAPI and HCL](/openapi-and-hcl) for the source boundary and
+Read [Contract sources and HCL](/contract-sources-and-hcl) for the source boundary and
 [Fault injection](/fault-injection) for delivery disruptions, or
 [Current boundaries](/current-boundaries) for what an exact outcome does—and does not—prove.

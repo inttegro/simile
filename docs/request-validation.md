@@ -3,9 +3,9 @@ title: Request validation
 description: How Simile selects, decodes, and proves an incoming JSON request body.
 ---
 
-Simile validates a request from the compiled `.similec` artifact. OpenAPI is parsed only while the
-provider builds that artifact; the local runtime does not need the original document or an HCL
-module.
+Simile validates a request from the compiled `.similec` artifact. The selected OpenAPI, Smithy, or
+semantic TypeScript contract is parsed only while the provider builds that artifact; the local
+runtime does not need the original contract or an HCL module.
 
 Validation answers a narrow question: **does this decoded body satisfy every rule Simile compiled
 for this operation and direction?** It does not infer business meaning from route names or prose.
@@ -30,7 +30,7 @@ human-readable `message`.
 When an operation declares a suitable client-error response, the HTTP service returns that response
 instead of exposing Simile's runtime error. For example, an operation that declares a `400` error
 object receives a contract-sound instance of that object when request validation fails. This keeps
-the emulator's observable behavior inside the service's OpenAPI contract.
+the emulator's observable behavior inside the service's published contract.
 
 If the operation declares no suitable error response, Simile falls back to its own HTTP 422
 diagnostic and preserves every discovered problem under `error.issues`, for example:
@@ -89,7 +89,7 @@ flowchart LR
 The schema compiler supports the request constraints needed for the first runtime slice:
 
 - boolean schemas and local `#/components/schemas/...` references, including recursive schemas;
-- `type`, OpenAPI 3.0 `nullable`, `enum`, and `const`;
+- `type`, nullability (including OpenAPI 3.0 `nullable`), `enum`, and `const`;
 - `properties`, `required`, `additionalProperties`, `minProperties`, and `maxProperties`;
 - `items`, `minItems`, `maxItems`, and `uniqueItems`;
 - `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and `multipleOf`;

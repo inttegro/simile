@@ -35,9 +35,9 @@ $ simile describe service inttegro --config ./inttegro.simile.hcl
 $ simile describe service inttegro --config https://example.com/inttegro.simile.hcl
 ```
 
-The service label in the HCL must still match `inttegro`. Relative OpenAPI and behavior paths work
-for a local configuration. A remote configuration has no local base directory, so it must use an
-OpenAPI URL and inline behavior declarations.
+The service label in the HCL must still match `inttegro`. Relative contract and behavior paths work
+for a local configuration. A remote configuration has no local base directory, so it must use a
+contract URL and inline behavior declarations.
 
 ## `description` metadata
 

@@ -1,14 +1,16 @@
 ---
-title: OpenAPI and HCL
-description: Learn why OpenAPI is the complete HTTP baseline and HCL is an optional behavior overlay.
+title: OpenAPI authoring standard
+sidebarTitle: OpenAPI
+description: Use OpenAPI as the complete HTTP contract and HCL as an optional behavior overlay.
 ---
 
-Simile accepts two provider-authored languages because they solve different problems. OpenAPI
-describes the public HTTP contract. HCL describes selected observable behavior that does not belong
-in that contract.
+When OpenAPI is selected as the service's contract source, OpenAPI describes the complete public
+HTTP contract. HCL describes selected observable behavior that does not belong in that contract.
+Smithy and semantic TypeScript are equally supported alternatives; see
+[Contract sources and HCL](/contract-sources-and-hcl) before choosing a format.
 
-The relationship is asymmetric: OpenAPI is required and independently executable; HCL is optional
-and must agree with OpenAPI.
+The relationship is asymmetric: the selected contract is required and independently executable;
+HCL is optional and must agree with it. This page covers the OpenAPI form of that model.
 
 ```mermaid
 flowchart TD

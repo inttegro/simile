@@ -59,11 +59,12 @@ production.
 
 ## Design principles
 
-### OpenAPI remains useful on its own
+### The contract remains useful on its own
 
-Every operation in the OpenAPI document can run without HCL. Simile validates the request and
-synthesizes a schema-valid response. Providers add HCL only when they need behavior OpenAPI cannot
-state. This lowers adoption cost and avoids maintaining two competing HTTP contracts.
+Every operation in an OpenAPI, Smithy, or semantic TypeScript contract can run without HCL. Simile
+validates the request and synthesizes a schema-valid response. Providers add HCL only when they
+need observable behavior the selected contract cannot state. This lowers adoption cost and avoids
+maintaining two competing HTTP contracts.
 
 ### Invalid definitions fail early
 
@@ -92,5 +93,5 @@ fallback, or substitute for final conformance testing against the real service.
 The goal is narrower and more useful: let an integration exercise the provider's published
 contract and observable scenarios locally, with enough honesty to know where approximation begins.
 
-Continue with the [Quickstart](/quickstart), or read [OpenAPI and HCL](/openapi-and-hcl) for the
-definition model.
+Continue with the [Quickstart](/quickstart), or read
+[Contract sources and HCL](/contract-sources-and-hcl) for the definition model.

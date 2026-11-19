@@ -156,6 +156,10 @@ versioned envelope with a payload length and SHA-256 integrity digest. The strin
 operation records, value arena, async-operation records, and resource records are all
 ordered before encoding, so identical compiler input produces identical artifact bytes. See the
 [compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
+The public authoring standards are documented separately for
+[OpenAPI](docs/openapi-and-hcl.md), [Smithy](docs/smithy-contracts.md), and
+[semantic TypeScript](docs/typescript-contracts.md), with their shared ownership model in
+[Contract sources and HCL](docs/contract-sources-and-hcl.md).
 The supported request-validation boundary is documented in
 [request validation](docs/request-validation.md). Response selection and synthesis are documented
 in [response synthesis](docs/response-synthesis.md). The transport-independent execution boundary

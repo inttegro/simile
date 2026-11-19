@@ -143,7 +143,7 @@ scenario "lost_after_commit" {
 }
 ```
 
-The label on `inject` is an exact OpenAPI `operationId`. The referenced fault must exist. A scenario
+The label on `inject` is an exact contract operation ID. The referenced fault must exist. A scenario
 may also select named outcomes, so one opaque test setup can choose a public service result and a
 delivery failure without exposing a provider's private decision tree.
 
@@ -172,7 +172,7 @@ fault_profile "rough_network" {
 
 - `probability` is per eligible attempt, from `0.000001` through `1`.
 - `faults` is a non-empty set of declared environmental faults.
-- `operations` is an optional list of OpenAPI `operationId` values; omit it to cover all operations.
+- `operations` is an optional list of contract operation IDs; omit it to cover all operations.
 - `max_consecutive` defaults to `1` and limits uninterrupted activations.
 - `cooldown_requests` defaults to `20` and counts eligible clean attempts after that limit.
 - `seed` is optional. When omitted, Simile creates a session seed and reports it at startup.

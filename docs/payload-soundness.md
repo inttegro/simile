@@ -4,8 +4,8 @@ description: Define and prove relationships that ordinary field-by-field schemas
 ---
 
 Simile treats a request or response payload as sound only when it satisfies the complete compiled
-contract. The contract includes the supported OpenAPI schema rules and every recognized
-cross-field relationship declared with `x-simile-constraints`.
+contract. The contract includes the supported compiled schema rules and every recognized
+cross-field relationship declared in the selected source format.
 
 There is one authority for relationships: `simile-schema::soundness`. It owns extension parsing,
 compiled constraint types, proof evaluation, and the establishment step used during synthesis. The
@@ -13,19 +13,21 @@ schema validator delegates all multi-value rules to that module. Incoming reques
 accepted only after the complete validator reports no violations. Request and response synthesis
 use the same validator as their final gate, so generation cannot bypass a relationship that
 validation enforces. The compiled `.similec` artifact carries the typed constraints; the runtime
-does not reparse source OpenAPI or infer relationships from property names or prose.
+does not reparse the source contract or infer relationships from property names or prose.
 
 This is a proof relative to the published contract. It does not claim that an incomplete contract
 describes every private production invariant. A service provider must publish each relationship it
 wants Simile to prove.
 
-For a lookup-oriented list of every supported clause, path form, predicate, and example, use the
-[OpenAPI extension reference](/openapi-extensions). This page explains the proof and construction
-model behind that syntax.
+For source syntax, use the [OpenAPI extension reference](/openapi-extensions),
+[Smithy contract standard](/smithy-contracts), or
+[TypeScript contract standard](/typescript-contracts). This page explains the shared proof and
+construction model behind those forms.
 
 ## Valid shape is not enough
 
-OpenAPI can say that `amount_due`, `amount_paid`, and `amount_remaining` are non-negative integers.
+An ordinary field schema can say that `amount_due`, `amount_paid`, and `amount_remaining` are
+non-negative integers.
 That makes each field individually valid, but it does not prove the accounting identity between
 them. Likewise, four nullable status timestamps can each be valid while describing an impossible
 lifecycle.
@@ -64,7 +66,7 @@ Paths are RFC 6901 JSON Pointers relative to the object that owns the extension.
 collection relationships additionally reserve a complete `*` segment to visit every item in an
 array, as in `/lines/data/*/amount`. An ordered
 constraint means each present, non-null value is less than or equal to the next present, non-null
-value. Equality is valid. Ordinary OpenAPI `required` and nullable declarations continue to decide
+value. Equality is valid. Ordinary source requiredness and nullability continue to decide
 whether a value may be absent or null.
 
 The compiler accepts an ordered relationship only when:
@@ -176,7 +178,7 @@ An equality constraint proves that every selected value is the same:
 
 The compiler resolves the scalar schema at the end of every selector, requires compatible kinds,
 and finds a value accepted by every participating schema. That common witness makes the relation
-constructive during synthesis. An empty array contributes no selected values; ordinary OpenAPI
+constructive during synthesis. An empty array contributes no selected values; ordinary source
 `required` and item-count rules continue to decide whether that collection may be empty.
 
 ## Distinct selected values

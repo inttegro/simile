@@ -45,7 +45,8 @@ References are resolved once per request or response direction. Recursive refere
 edges instead of copied trees. The compiler retains the keywords needed by the runtime and emits
 bounded, structured validation issues whose locations are JSON Pointers.
 
-The graph is embedded in `.similec`; execution never reparses OpenAPI or follows a source `$ref`.
+The graph is embedded in `.similec`; execution never reparses the source contract or follows a
+source reference.
 This makes validation deterministic and keeps source-loading failures out of the request path.
 
 ## Proof and construction are different
@@ -75,5 +76,7 @@ hints, then run the authoritative validator. Simile returns the value only if it
 compiled graph used for caller input. Exhausted synthesis remains a distinct error rather than
 returning a merely plausible payload.
 
-For the authoring language, see [OpenAPI extensions](/openapi-extensions). For concrete proof
-patterns, see [Payload soundness](/payload-soundness) and [Generation heuristics](/generation-heuristics).
+For source-specific authoring, see the [OpenAPI](/openapi-and-hcl),
+[Smithy](/smithy-contracts), and [TypeScript](/typescript-contracts) standards. For concrete proof
+patterns, see [Payload soundness](/payload-soundness) and
+[Generation heuristics](/generation-heuristics).

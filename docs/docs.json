@@ -26,7 +26,10 @@
 					{
 						"group": "Define a service",
 						"pages": [
+							"contract-sources-and-hcl",
 							"openapi-and-hcl",
+							"smithy-contracts",
+							"typescript-contracts",
 							"service-configuration",
 							"describe-service",
 							"fidelity-audit",

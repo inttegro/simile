@@ -3,8 +3,9 @@ title: Response synthesis
 description: How Simile selects a legal response and constructs a sound payload with or without a request.
 ---
 
-Simile synthesizes responses from the compiled `.similec` artifact. It does not parse OpenAPI or
-HCL at runtime, and it does not require an incoming request to produce a contract-sound response.
+Simile synthesizes responses from the compiled `.similec` artifact. It does not parse the source
+contract or HCL at runtime, and it does not require an incoming request to produce a
+contract-sound response.
 
 There are two separate questions: **which declared response should be used?** and **what valid body
 should that response contain?** Selection is handled before generation so the synthesizer never
@@ -21,13 +22,13 @@ in this order:
 4. a declared `2XX` range, represented as status 200;
 5. the lowest other exact status;
 6. the lowest declared status range; or
-7. a `default` response, represented as status 500.
+7. a source-format default response, represented as status 500.
 
 For an explicit or HCL-selected status, an exact response wins over a matching range, which wins
-over `default`. OpenAPI does not give a `default` response a concrete wire status, so Simile uses
-500 when it is the only spec-derived choice; an explicit caller or behavior status is preserved
-instead. A response without content remains bodyless; Simile does not invent a media type or
-payload.
+over `default`. OpenAPI's `default` response does not carry a concrete wire status, so Simile uses
+500 when it is the only contract-derived choice; an explicit caller or behavior status is
+preserved instead. A response without content remains bodyless; Simile does not invent a media
+type or payload.
 
 ## Body generation
 
@@ -37,15 +38,16 @@ published example or default. Constants remain fixed and enums stay within their
 The candidate is always validated again before it is encoded.
 
 That final validation includes compiled cross-field relationships. A response is returned only when
-the complete candidate is sound under both the supported OpenAPI schema rules and every recognized
-`x-simile-constraints` declaration. This includes typed ordering, relative bounds, implication,
+the complete candidate is sound under both the supported compiled schema rules and every
+recognized cross-field constraint. This includes typed ordering, relative bounds, implication,
 equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle proofs. See
 [payload soundness](payload-soundness.md).
 
-Explicit OpenAPI `format` annotations are compiled with the schema. Simile emits varying
-format-valid values for supported standard formats and the provider formats it understands, while
-JSON integers remain integer-shaped on the wire. It does not infer formats from descriptions. A
-seeded synthesis entry point reproduces a generated response when a test needs exact replay.
+Explicit source-format annotations such as OpenAPI `format`, Smithy traits, and semantic
+TypeScript scalar declarations are compiled with the schema. Simile emits varying format-valid
+values for supported standard formats and the provider formats it understands, while JSON
+integers remain integer-shaped on the wire. It does not infer formats from descriptions. A seeded
+synthesis entry point reproduces a generated response when a test needs exact replay.
 
 This spec-only path is the baseline and works without request context.
 

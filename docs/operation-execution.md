@@ -65,12 +65,12 @@ on a background worker without blocking delivery. The HTTP handler never applies
 
 The `simile run` command compiles a local contract path or an in-memory `--spec-url` response and
 invokes this runtime boundary once. Callers select the operation using either its stable
-`METHOD /path` key or its exact contract `operationId`. The selectors are mutually exclusive.
+`METHOD /path` key or its exact contract operation ID. The selectors are mutually exclusive.
 
 If the caller supplies `--request`, Simile reads an inline JSON request object, a bare file path
 (`@file` remains supported), or standard input when passed `-`. The object contains a `headers`
 object and an optional `body`. Header names are matched case-insensitively. `Content-Type` selects
-the OpenAPI media type used to validate a provided body; the remaining headers are retained in the
+the contract media type used to validate a provided body; the remaining headers are retained in the
 execution report but are not interpreted as runtime policy. Supplying two case variants of
 `Content-Type` is an error. A present JSON `null` body is distinct from an omitted body.
 
@@ -133,8 +133,8 @@ process-owned, not a durable outbox; crash recovery and retry leases remain an e
 6. translate the result or runtime error into an HTTP response; and
 7. dispatch named post-response work.
 
-It matches literal and parameterized OpenAPI paths, applies an 8 MiB body limit, validates the four
-OpenAPI parameter locations, extracts `Content-Type` and `Idempotency-Key`, and preserves GET replay
+It matches literal and parameterized compiled paths, applies an 8 MiB body limit, validates path,
+query, header, and cookie parameters, extracts `Content-Type` and `Idempotency-Key`, and preserves GET replay
 by full URI. Authentication behavior and form/multipart codecs remain later adapter slices; they are
 not silently treated as implemented.
 

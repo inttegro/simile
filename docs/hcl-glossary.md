@@ -24,7 +24,7 @@ does not attach it to an HTTP operation or execute it.
 
 ### Behavior
 
-An HCL overlay for one exact OpenAPI `operationId`. A behavior may prefer a response status and
+An HCL overlay for one exact contract operation ID. A behavior may prefer a response status and
 attach named outcomes or reusable error sets. It cannot add or redefine an HTTP operation.
 
 ### Behavior module
@@ -35,8 +35,9 @@ namespace.
 
 ### Binding
 
-An executable OpenAPI extension that relates a response field to request data, such as
-`x-simile-from-request`. Bindings belong to the OpenAPI schema rather than HCL. See
+An executable relationship that relates a response field to request data. OpenAPI authors use
+`x-simile-from-request`; Smithy and semantic TypeScript provide native source forms that lower to
+the same compiled relation. Bindings belong to the contract rather than HCL. See
 [request–response relations](/request-response-relations).
 
 ## C
@@ -48,24 +49,25 @@ A complete, provider-neutral environmental fault included with Simile and import
 
 ### Compilation
 
-The phase that merges parsed HCL modules with OpenAPI, resolves names, checks cross-source
+The phase that merges parsed HCL modules with the selected contract source, resolves names, checks cross-source
 invariants, validates exact outcome bodies, and produces a deterministic service model.
 
 ### Compiled service
 
-The normalized in-memory result of compilation: OpenAPI operations plus resolved behavior,
+The normalized in-memory result of compilation: contract operations plus resolved behavior,
 outcomes, scenarios, faults, abstract resources, and async declarations.
 
 ### Configuration
 
-The HCL composition root containing exactly one `service` block, its listener, one OpenAPI source,
+The HCL composition root containing exactly one `service` block, its listener, one contract source,
 and optional inline or imported behavior declarations.
 
 ### Constraint
 
-An executable `x-simile-constraints` clause on an OpenAPI schema. Constraints prove relationships
-within a payload; they are distinct from HCL behavior. See the
-[constraint reference](/x-simile-constraints).
+An executable cross-field relationship on a contract object. OpenAPI authors use
+`x-simile-constraints`; Smithy and semantic TypeScript provide native source forms that lower to
+the same compiled constraints. Constraints prove relationships within a payload and are distinct
+from HCL behavior. See [payload soundness](/payload-soundness).
 
 ## D
 
@@ -142,21 +144,23 @@ body, and optional request predicates. A scenario or CLI invocation can select i
 
 ## O
 
-### OpenAPI authority
+### Contract authority
 
-The rule that OpenAPI owns the HTTP contract. HCL references and narrows that contract but cannot
-invent routes, schemas, or response statuses.
+The rule that the selected OpenAPI, Smithy, or semantic TypeScript source owns the HTTP contract.
+HCL references and narrows that contract but cannot invent routes, schemas, or response statuses.
 
 ### Operation ID
 
-The exact OpenAPI `operationId` used by HCL `behavior`, scenario `select` and `inject`, and fault
-profile operation scopes. It is not the `METHOD /path` operation key.
+The exact stable operation identifier declared by the contract and used by HCL `behavior`,
+scenario `select` and `inject`, and fault-profile operation scopes. It is not the `METHOD /path`
+operation key.
 
 ### Outcome provenance
 
-The origin recorded for a response candidate: OpenAPI-derived, provider-authored,
-recorded-and-reviewed, or schema-synthesized. Provenance indicates how much authority the body has;
-it does not by itself prove request-to-response reachability.
+The origin recorded for a response candidate: contract-derived, provider-authored,
+recorded-and-reviewed, or schema-synthesized. The serialized `open_api_derived` name is retained for
+artifact compatibility and applies to all contract frontends. Provenance indicates how much
+authority the body has; it does not by itself prove request-to-response reachability.
 
 ## P
 
@@ -169,7 +173,7 @@ request body and its `equals` value must match exactly. Every predicate on an ou
 
 A failure discovered at the HTTP/runtime boundary before normal operation execution, mapped through
 a provider-neutral cause such as `invalid_body` or `unsupported_media_type` into a response the
-OpenAPI operation declares.
+contract operation declares.
 
 ## R
 
@@ -193,11 +197,11 @@ The canonical `KIND.NAME` identifier for an abstract resource, such as `queue.or
 ### Scenario
 
 An opaque, named deterministic test control. It selects public outcomes and/or injects environmental
-faults for specific OpenAPI operation IDs without exposing the provider's private decision tree.
+faults for specific contract operation IDs without exposing the provider's private decision tree.
 
 ### Schema-valid
 
-Conforming to one compiled OpenAPI schema in isolation. Schema validity is necessary but weaker than
+Conforming to one compiled contract schema in isolation. Schema validity is necessary but weaker than
 payload soundness or operation reachability.
 
 ### Service artifact
@@ -208,7 +212,7 @@ runtime authority for a registered service.
 ### Soundness
 
 The property that a payload satisfies both its field schemas and declared relationships among
-fields. Soundness clauses live in OpenAPI `x-simile-constraints`; HCL selects observable behavior.
+fields. Soundness clauses live in the selected contract source; HCL selects observable behavior.
 
 ### Stochastic fault
 
@@ -220,7 +224,7 @@ Stochastic selection never chooses domain outcomes or parameter errors.
 ### Validated request
 
 A request body successfully decoded for the selected media type and accepted by the operation's
-compiled OpenAPI request schema. HCL outcome predicates evaluate only against this body.
+compiled contract request schema. HCL outcome predicates evaluate only against this body.
 
 Read the [language specification](/hcl-language-specification) for the complete syntax and
 compile-time rules.
