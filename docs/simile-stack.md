@@ -61,6 +61,12 @@ All components implement the same [versioned protocol](/stack-protocol), use the
 supervisor owns command identity and time, so individual resources cannot disagree about when an
 operation occurred.
 
+Every component process checkpoints each coherent transition into an embedded redb database under
+the Simile home directory and restores it before accepting traffic after a restart. No state-file
+configuration is required. The [persistence contract](/stack-persistence) defines path identity,
+commit visibility, rollback, file ownership, compatibility checks, and the distinction between a
+runtime checkpoint and a portable JSON snapshot.
+
 ## Execution boundary
 
 The Stack engines and component processes are implemented. HCL already retains `async`

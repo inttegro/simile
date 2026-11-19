@@ -41,6 +41,8 @@ service described by the long-term charter.
 - one logical-time model for cache TTLs, queue visibility, scheduled work, and timestamps
 - serializable snapshots, reset, stable resource errors, and a payload-free causal journal
 - separately runnable `simile-*` component processes with uniform lifecycle endpoints
+- automatic redb checkpoints under `SIMILE_HOME` that restore complete component state, time,
+  journal, counters, and replay records after restart
 
 ### HTTP server
 
@@ -61,9 +63,10 @@ is not emulated. Form URL-encoded, multipart, and other non-JSON body codecs are
 
 ### Stateful behavior
 
-The Stack engines can retain and snapshot resource state, but the operation runtime does not yet
-compile or dispatch provider-authored state actions. A POST served by `simile start` therefore does
-not implicitly create a resource for a later GET. Operation replay remains process-local.
+The Stack engines can retain, snapshot, and automatically persist resource state across component
+process restarts, but the operation runtime does not yet compile or dispatch provider-authored
+state actions. A POST served by `simile start` therefore does not implicitly create a resource for
+a later GET. Operation-server replay remains process-local.
 
 ### Effect execution
 

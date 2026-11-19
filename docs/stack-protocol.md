@@ -91,3 +91,17 @@ Each `simile-*` component process exposes the same lifecycle routes:
 
 The process writes one JSON readiness record to stdout. Diagnostics go to stderr, which makes the
 process safe to supervise and compose without parsing human log text.
+
+```json
+{
+  "protocolVersion": 1,
+  "kind": "queue",
+  "address": "127.0.0.1:9402",
+  "persistent": true
+}
+```
+
+Stack component processes are persistent by default, so `persistent` is true. Every state
+transition is checkpointed beneath `SIMILE_HOME` before its result is returned, including
+logical-time advances, resets, restores, and failed commands that append journal state. See
+[Persistence](/stack-persistence) for path, restart, and compatibility semantics.

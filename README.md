@@ -75,9 +75,10 @@ request predicates, opaque scenarios, and service-wide protocol-error mappings n
 named outcome catalog with fidelity provenance. Simile Stack now provides deterministic local
 engines and component processes for database, cache, queue, mail, object store, event bus,
 scheduler, and outbound HTTP capabilities. They share a versioned command protocol, logical clock,
-snapshots, reset, idempotent replay, and causal journal. The operation server does not yet compile
-provider-authored effects, attach async declarations to operations, or dispatch actions into those
-components.
+snapshots, reset, idempotent replay, and causal journal. Component processes automatically
+checkpoint their complete state under `SIMILE_HOME` using embedded redb and resume after restart. The
+operation server does not yet compile provider-authored effects, attach async declarations to
+operations, or dispatch actions into those components.
 
 The available foundation commands are:
 
@@ -152,7 +153,8 @@ The deliberately weaker generation-only inference boundary is documented in
 Named responses, protocol errors, scenarios, provenance, and the public export boundary are
 documented in [outcome fidelity](docs/outcome-fidelity.md).
 The local resource architecture and its explicit integration boundary are documented in
-[Simile Stack](docs/simile-stack.md).
+[Simile Stack](docs/simile-stack.md). Its durable process state is specified in
+[Stack persistence](docs/stack-persistence.md).
 
 ## Running a service
 

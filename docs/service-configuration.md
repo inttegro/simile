@@ -84,6 +84,10 @@ registration is an immutable runtime snapshot:
 │       │       ├── config.hcl
 │       │       └── service.similec
 │       └── state/
+├── state/
+│   └── stack/
+│       └── KIND/
+│           └── RESOURCE_FINGERPRINT.redb
 ├── locks/
 └── tmp/
 ```
@@ -99,8 +103,9 @@ the previous revision active. Existing revisions remain available for recovery, 
 the only mutable pointer. `register --force` remains an explicit replacement path, but normal
 refreshes should use `update`. `locks/` is reserved for cross-process coordination as registry
 operations expand; `tmp/` contains only same-filesystem staging directories used before an atomic
-revision install. `state/` is deliberately outside revisions so future emulated resource state can
-survive a service update.
+revision install. Stack component processes persist automatically under the root `state/stack/`
+directory. The per-service `state/` directory is deliberately outside revisions so orchestration
+can later bind those resources to a service without losing them during an update.
 
 ## Listener
 

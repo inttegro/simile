@@ -119,13 +119,19 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 │       │       ├── manifest.json
 │       │       └── service.similec
 │       └── state/
+├── state/
+│   └── stack/
+│       └── KIND/
+│           └── RESOURCE_FINGERPRINT.redb
 ├── locks/
 └── tmp/
 ```
 
-`state/` is reserved outside immutable revisions for future durable emulated state. The current
-runtime does not persist resources there. `locks/` is likewise reserved as cross-process registry
-coordination expands; installation currently relies on same-filesystem staging and atomic rename.
+Each Stack component automatically checkpoints its resource state under the root `state/stack/`
+directory. The `state/` directory inside a registered service remains reserved for the orchestration
+layer that will bind those components to that service. `locks/` is likewise reserved as
+cross-process registry coordination expands; installation currently relies on same-filesystem
+staging and atomic rename.
 
 See [Configuration](/service-configuration) for configuration rules and
 [Compiled artifact](/compiled-artifact) for what the installed runtime reads. The component
