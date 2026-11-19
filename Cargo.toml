@@ -11,6 +11,7 @@ members = [
     "crates/simile-schema",
     "crates/simile-server",
     "crates/simile-spec",
+    "crates/simile-stack",
 ]
 resolver = "2"
 
@@ -48,6 +49,7 @@ simile-runtime = { version = "=0.2.0", path = "crates/simile-runtime" }
 simile-schema = { version = "=0.2.0", path = "crates/simile-schema" }
 simile-server = { version = "=0.2.0", path = "crates/simile-server" }
 simile-spec = { version = "=0.2.0", path = "crates/simile-spec" }
+simile-stack = { version = "=0.2.0", path = "crates/simile-stack" }
 snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"
 time = { version = "0.3.44", features = ["formatting", "parsing"] }

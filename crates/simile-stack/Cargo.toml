@@ -1,0 +1,57 @@
+[package]
+name = "simile-stack"
+description = "Deterministic local resource processes for Simile services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+simile-spec.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "simile-db"
+path = "src/bin/simile-db.rs"
+
+[[bin]]
+name = "simile-cache"
+path = "src/bin/simile-cache.rs"
+
+[[bin]]
+name = "simile-queue"
+path = "src/bin/simile-queue.rs"
+
+[[bin]]
+name = "simile-mail"
+path = "src/bin/simile-mail.rs"
+
+[[bin]]
+name = "simile-object-store"
+path = "src/bin/simile-object-store.rs"
+
+[[bin]]
+name = "simile-event-bus"
+path = "src/bin/simile-event-bus.rs"
+
+[[bin]]
+name = "simile-scheduler"
+path = "src/bin/simile-scheduler.rs"
+
+[[bin]]
+name = "simile-http"
+path = "src/bin/simile-http.rs"
