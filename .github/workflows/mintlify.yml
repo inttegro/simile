@@ -14,4 +14,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npx mint@latest deploy --subdomain simile-c0d97389 --directory docs
+      - run: npx mint@latest deploy --subdomain true-sense-simile --directory docs
