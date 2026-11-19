@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{Map, Value, json};
 use simile_spec::{
-    ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
-    OperationKey, ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    ApiContract, HttpMethod, MediaTypeContract, Operation, OperationKey, ParameterContract,
+    ParameterLocation, RequestBodyContract, ResponseBodyContract, ResponseContract, ResponseStatus,
+    SchemaFeature, SchemaVersion, ServiceInfo,
 };
 use tree_sitter::{Node, Parser};
 
@@ -32,30 +32,36 @@ pub fn parse(source: &str) -> Result<ApiContract> {
     parser
         .set_language(tree_sitter_smithy::language())
         .map_err(|_| Error::ParserInitialization)?;
-    // OpenAPI extensions use JSON node values that exceed the upstream tree-sitter grammar's
-    // practical coverage. Parse those public extensions as JSON and blank only their source span;
-    // the actual Smithy shapes remain authoritative and receive the extensions after parsing.
-    let (without_extensions, extensions) = extract_openapi_extensions(source)?;
-    // `dataExamples` carries arbitrary Smithy node values. Parsing it independently prevents a
-    // limitation in the upstream tree-sitter grammar from recovering past, and silently omitting,
-    // otherwise valid shapes. Source spans are preserved so examples can be reattached exactly.
-    let (without_examples, mut located_traits) =
-        extract_located_traits(&without_extensions, "dataExamples", "dataExamples trait")?;
-    // Some valid regular-expression characters are rejected by the old tree-sitter Smithy
-    // grammar. Preserve the standard trait independently instead of weakening its validation.
-    let (without_patterns, patterns) =
-        extract_located_traits(&without_examples, "pattern", "pattern trait")?;
-    located_traits.extend(patterns);
+    let mut parser_view = source.to_owned();
+    let mut located_traits = Vec::new();
+    // Why: these traits intentionally carry arbitrary Smithy node values. Extracting only their
+    // source spans keeps the Smithy model authoritative while working around the old tree-sitter
+    // grammar's incomplete node-value and regular-expression coverage.
+    for (name, context) in [
+        ("dataExamples", "dataExamples trait"),
+        ("pattern", "pattern trait"),
+        ("simileConstraints", "simileConstraints trait"),
+        ("responseRelations", "responseRelations trait"),
+        ("httpSuccessResponses", "httpSuccessResponses trait"),
+        ("simileSchema", "simileSchema trait"),
+        ("availability", "availability trait"),
+        ("collectionVersion", "collectionVersion trait"),
+        ("contentType", "contentType trait"),
+    ] {
+        let (next, mut extracted) = extract_located_traits(&parser_view, name, context)?;
+        parser_view = next;
+        located_traits.append(&mut extracted);
+    }
     // Smithy permits optional commas in node arrays and trait structures. The upstream Smithy 2
     // tree-sitter grammar accepts them in objects but not arrays, so normalize separator commas to
     // spaces while preserving every byte offset used for diagnostics and source extraction.
-    let normalized = normalize_separator_commas(&without_patterns);
+    let normalized = normalize_separator_commas(&parser_view);
     // The grammar also mistakes `//` inside quoted strings for a line comment. Mask only the
     // parser's same-length view; model values are sliced from the unmodified semantic source.
     let parser_source = mask_comment_markers_in_strings(&normalized);
     let tree = parser.parse(&parser_source, None).ok_or(Error::Parse)?;
     let root = tree.root_node();
-    let mut model = Model::parse(root, without_patterns.as_bytes())?;
+    let mut model = Model::parse(root, parser_view.as_bytes())?;
     if root.has_error() {
         let error = first_error(root).unwrap_or(root);
         let position = error.start_position();
@@ -65,7 +71,6 @@ pub fn parse(source: &str) -> Result<ApiContract> {
         });
     }
     model.apply_located_traits(located_traits)?;
-    model.apply_openapi_extensions(extensions)?;
     contract(&model)
 }
 
@@ -135,42 +140,6 @@ fn extract_located_traits(
         })
 }
 
-fn extract_openapi_extensions(source: &str) -> Result<(String, BTreeMap<String, Value>)> {
-    const PREFIX: &str = "@openapiExtensions(";
-    let mut bytes = source.as_bytes().to_vec();
-    let mut extensions = BTreeMap::new();
-    let mut cursor = 0;
-    while let Some(relative_start) = source[cursor..].find(PREFIX) {
-        let start = cursor + relative_start;
-        let content_start = start + PREFIX.len();
-        let relative_end =
-            balanced_parenthesis_end(&source[content_start..]).ok_or_else(|| Error::Invalid {
-                context: "openapiExtensions trait",
-                detail: "unclosed trait value".to_owned(),
-            })?;
-        let end = content_start + relative_end;
-        let wrapped = format!("{{{}}}", &source[content_start..end]);
-        let mut value = node::parse(&wrapped)?;
-        let object = value.as_object_mut().ok_or_else(|| Error::Invalid {
-            context: "openapiExtensions trait",
-            detail: "trait value must be an object".to_owned(),
-        })?;
-        let shape_name = next_shape_name(&source[end + 1..]).ok_or_else(|| Error::Invalid {
-            context: "openapiExtensions trait",
-            detail: "trait is not followed by a shape".to_owned(),
-        })?;
-        extensions.insert(shape_name, Value::Object(object.clone()));
-        blank_preserving_lines(&mut bytes[start..=end]);
-        cursor = end + 1;
-    }
-    String::from_utf8(bytes)
-        .map(|source| (source, extensions))
-        .map_err(|error| Error::Invalid {
-            context: "source",
-            detail: error.to_string(),
-        })
-}
-
 fn blank_preserving_lines(bytes: &mut [u8]) {
     for byte in bytes {
         if *byte != b'\n' && *byte != b'\r' {
@@ -203,49 +172,6 @@ fn balanced_parenthesis_end(source: &str) -> Option<usize> {
                 index += 1;
             }
             _ => index += 1,
-        }
-    }
-    None
-}
-
-fn next_shape_name(source: &str) -> Option<String> {
-    const SHAPE_KEYWORDS: &[&str] = &[
-        "service",
-        "operation",
-        "structure",
-        "union",
-        "list",
-        "map",
-        "enum",
-        "intEnum",
-        "blob",
-        "boolean",
-        "string",
-        "byte",
-        "short",
-        "integer",
-        "long",
-        "float",
-        "double",
-        "bigInteger",
-        "bigDecimal",
-        "timestamp",
-        "document",
-    ];
-    for line in source.lines() {
-        let line = line.trim_start();
-        for keyword in SHAPE_KEYWORDS {
-            if let Some(rest) = line
-                .strip_prefix(keyword)
-                .and_then(|rest| rest.strip_prefix(' '))
-            {
-                let name = rest
-                    .split(|character: char| character.is_whitespace() || character == '{')
-                    .next()?;
-                if !name.is_empty() {
-                    return Some(name.to_owned());
-                }
-            }
         }
     }
     None
@@ -328,22 +254,20 @@ fn contract(model: &Model) -> Result<ApiContract> {
         operations.insert(operation.key.clone(), operation);
     }
 
-    Ok(ApiContract {
-        // Native Smithy shapes lower to schemas accepted by both dialects. A Smithy projection can
-        // also retain exact OpenAPI 3.0 fragments for composition rules with no Smithy equivalent,
-        // so the compiler must preserve 3.0 nullability and exclusive-bound semantics.
-        openapi: OpenApiVersion {
-            exact: "3.0.3-compatible Smithy 2.0".to_owned(),
-            feature: OpenApiFeature::V3_0,
+    Ok(ApiContract::from_schema(
+        // Native Smithy shapes and local semantic traits lower to JSON Schema 2020-12 values.
+        SchemaVersion {
+            exact: "JSON Schema 2020-12-compatible Smithy 2.0".to_owned(),
+            feature: SchemaFeature::V3_1,
         },
-        info: ServiceInfo {
+        ServiceInfo {
             title: service.name.clone(),
             version: version.clone(),
             description: documentation(&service.traits),
         },
         operations,
-        schemas: schema::components(model)?,
-    })
+        schema::components(model)?,
+    ))
 }
 
 fn operation(model: &Model, shape: &Shape) -> Result<Operation> {
@@ -580,9 +504,7 @@ fn payload(model: &Model, name: &str) -> Result<Option<RequestBodyContract>> {
 
 fn response_relations(traits: &Traits) -> Option<Map<String, Value>> {
     traits
-        .get("openapiExtensions")
-        .and_then(Value::as_object)
-        .and_then(|extensions| extensions.get("x-inttegro-simile-response-relations"))
+        .get("responseRelations")
         .and_then(Value::as_object)
         .cloned()
 }
@@ -670,25 +592,32 @@ mod tests {
             r##"$version: "2.0"
 namespace example.animals
 
+@trait(selector: "*")
+document simileSchema
+
+@trait(selector: "union")
+structure untagged {}
+
+@trait(selector: "member")
+string contentType
+
 structure Cat { @required name: String }
 structure Dog { @required name: String }
 
 @untagged
-@openapiExtensions(
-  "x-inttegro-openapi-source-schema": {
-    "discriminator": {
-      "propertyName": "type"
-      "mapping": {
-        "cat": "#/components/schemas/Cat"
-        "dog": "#/components/schemas/Dog"
-      }
+@simileSchema({
+  "discriminator": {
+    "propertyName": "type"
+    "mapping": {
+      "cat": "Cat"
+      "dog": "Dog"
     }
-    "oneOf": [
-      { "$ref": "#/components/schemas/Cat" }
-      { "$ref": "#/components/schemas/Dog" }
-    ]
   }
-)
+  "oneOf": [
+    { "shape": "Cat" }
+    { "shape": "Dog" }
+  ]
+})
 union Animal { Cat: Cat, Dog: Dog }
 
 structure GetAnimalInput {}
@@ -719,6 +648,9 @@ service Animals { version: "1.0.0", operations: [getAnimal] }
             contract.schemas["Animal"]["oneOf"][0]["$ref"],
             "#/components/schemas/Cat"
         );
+        assert!(!contract.schemas.contains_key("simileSchema"));
+        assert!(!contract.schemas.contains_key("untagged"));
+        assert!(!contract.schemas.contains_key("contentType"));
     }
 
     use super::*;
@@ -729,18 +661,25 @@ service Animals { version: "1.0.0", operations: [getAnimal] }
             r#"$version: "2.0"
 namespace example.weather
 
-@openapiExtensions(
-    "x-simile-constraints": [
-        {
-            "ordered": {
-                "paths": [
-                    "/created_at"
-                    "/updated_at"
-                ]
-            }
+@trait(selector: "*")
+document simileConstraints
+
+@trait(selector: "*")
+document dataExamples
+
+@trait(selector: "member")
+string contentType
+
+@simileConstraints([
+    {
+        "ordered": {
+            "paths": [
+                "/created_at"
+                "/updated_at"
+            ]
         }
-    ]
-)
+    }
+])
 structure Weather {
     @dataExamples([{ json: "public, max-age=31536000, immutable" }])
     @required

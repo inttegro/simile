@@ -148,20 +148,6 @@ impl Model {
             .ok_or_else(|| Error::UnknownShape(name.to_owned()))
     }
 
-    pub(crate) fn apply_openapi_extensions(
-        &mut self,
-        extensions: BTreeMap<String, Value>,
-    ) -> Result<()> {
-        for (shape_name, value) in extensions {
-            let shape = self
-                .shapes
-                .get_mut(&shape_name)
-                .ok_or_else(|| Error::UnknownShape(shape_name.clone()))?;
-            shape.traits.insert("openapiExtensions", value);
-        }
-        Ok(())
-    }
-
     pub(crate) fn apply_located_traits(&mut self, traits: Vec<crate::LocatedTrait>) -> Result<()> {
         for located in traits {
             let mut target = None;
@@ -193,7 +179,7 @@ impl Model {
             }
             let Some((shape_name, member_name, _)) = target else {
                 return Err(Error::Invalid {
-                    context: "dataExamples trait",
+                    context: located.name,
                     detail: "trait is not followed by a shape or member".to_owned(),
                 });
             };
@@ -209,7 +195,7 @@ impl Model {
                     }
                     _ => {
                         return Err(Error::Invalid {
-                            context: "dataExamples trait",
+                            context: located.name,
                             detail: format!(
                                 "located member `{member_name}` belongs to a non-member shape"
                             ),
@@ -220,7 +206,7 @@ impl Model {
                     .iter_mut()
                     .find(|member| member.name == member_name)
                     .ok_or_else(|| Error::Invalid {
-                        context: "dataExamples trait",
+                        context: located.name,
                         detail: format!("located member `{member_name}` is no longer present"),
                     })?;
                 member.traits.insert(located.name, located.value);
@@ -283,7 +269,12 @@ fn parse_shape(node: Node<'_>, source: &[u8]) -> Result<Shape> {
         name,
         traits,
         kind,
-        start: node.start_byte(),
+        // Why: a shape node starts at its first trait. Use the declaration name so a
+        // separately extracted semantic trait still resolves to its owning shape when
+        // another ordinary Smithy trait appears before it.
+        start: body
+            .child_by_field_name("name")
+            .map_or_else(|| body.start_byte(), |name| name.start_byte()),
     })
 }
 
@@ -386,7 +377,11 @@ fn parse_member(node: Node<'_>, source: &[u8]) -> Result<Member> {
         name,
         target,
         traits,
-        start: node.start_byte(),
+        // Why: member nodes also start at their first trait. The member name is the
+        // stable boundary after every trait attached to that member.
+        start: node
+            .child_by_field_name("name")
+            .map_or_else(|| node.start_byte(), |name| name.start_byte()),
     })
 }
 
@@ -409,7 +404,11 @@ fn parse_collection_member(
         name: "member".to_owned(),
         target,
         traits: parse_traits(member, source)?,
-        start: member.start_byte(),
+        // Why: collection-member traits can be interleaved; the target type begins
+        // after all of them and therefore identifies the correct semantic owner.
+        start: member
+            .child_by_field_name(type_field)
+            .map_or_else(|| member.start_byte(), |target| target.start_byte()),
     })
 }
 

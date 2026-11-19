@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum OpenApiFeature {
+pub enum SchemaFeature {
     #[serde(rename = "3.0")]
     V3_0,
     #[serde(rename = "3.1")]
@@ -14,7 +14,7 @@ pub enum OpenApiFeature {
     V3_2,
 }
 
-impl fmt::Display for OpenApiFeature {
+impl fmt::Display for SchemaFeature {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::V3_0 => "3.0",
@@ -25,13 +25,18 @@ impl fmt::Display for OpenApiFeature {
     }
 }
 
-/// An exact OpenAPI release and the feature line that determines its semantics.
+/// An exact source-contract release and the schema feature line that determines its semantics.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenApiVersion {
+pub struct SchemaVersion {
     pub exact: String,
-    pub feature: OpenApiFeature,
+    pub feature: SchemaFeature,
 }
+
+// Why: existing OpenAPI consumers retain their public type names while other frontends can use
+// format-neutral schema terminology and remain independent of the OpenAPI adapter.
+pub type OpenApiFeature = SchemaFeature;
+pub type OpenApiVersion = SchemaVersion;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ServiceInfo {
@@ -225,7 +230,7 @@ impl Operation {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiContract {
-    pub openapi: OpenApiVersion,
+    pub openapi: SchemaVersion,
     pub info: ServiceInfo,
     pub operations: BTreeMap<OperationKey, Operation>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -233,6 +238,21 @@ pub struct ApiContract {
 }
 
 impl ApiContract {
+    #[must_use]
+    pub fn from_schema(
+        schema: SchemaVersion,
+        info: ServiceInfo,
+        operations: BTreeMap<OperationKey, Operation>,
+        schemas: BTreeMap<String, Value>,
+    ) -> Self {
+        Self {
+            openapi: schema,
+            info,
+            operations,
+            schemas,
+        }
+    }
+
     #[must_use]
     pub fn operation_by_id(&self, operation_id: &str) -> Option<&Operation> {
         self.operations

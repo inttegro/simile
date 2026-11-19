@@ -14,6 +14,6 @@ pub use behavior::{
 pub use contract::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
     OperationKey, ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    ResponseContract, ResponseStatus, SchemaFeature, SchemaVersion, ServiceInfo,
 };
 pub use effect::{Effect, EffectAction, EffectActionKind, EffectOrigin, EffectValue};

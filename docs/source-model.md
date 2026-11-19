@@ -58,11 +58,13 @@ not need an `operationId`. HCL does, because it needs a published name that surv
 
 ## Smithy frontend
 
-`simile-smithy` parses Smithy 2.0 IDL and lowers HTTP traits, structures, unions, mixins, examples,
-and public OpenAPI-extension traits into the same canonical contract. Smithy mixins are flattened
-according to Smithy member-copy semantics before closed JSON objects are compiled. Published
-projection fragments retained for OpenAPI-only composition rules are compiled with OpenAPI 3.0
-schema semantics instead of being discarded or approximated.
+`simile-smithy` parses a standalone Smithy 2.0 IDL model and lowers HTTP traits, structures,
+unions, mixins, examples, and locally declared semantic traits into the same canonical contract.
+Smithy mixins are flattened according to Smithy member-copy semantics before closed JSON objects
+are compiled. A model can use local `simileSchema`, `simileConstraints`, `responseRelations`, and
+`httpSuccessResponses` traits for public relationships that Smithy's base shape algebra cannot
+state directly; the Smithy frontend consumes those traits without consulting another contract
+format.
 
 ## Semantic TypeScript frontend
 

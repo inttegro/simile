@@ -13,7 +13,7 @@ pub(crate) fn components(model: &Model) -> Result<std::collections::BTreeMap<Str
             !matches!(
                 shape.kind,
                 ShapeKind::Service { .. } | ShapeKind::Operation { .. }
-            )
+            ) && !shape.traits.contains("trait")
         })
         .map(|(name, shape)| Ok((name.clone(), shape_schema(model, shape)?)))
         .collect::<Result<BTreeMap<_, _>>>()?;
@@ -176,15 +176,10 @@ fn prelude_schema(name: &str) -> Value {
 }
 
 fn apply_traits(schema: &mut Value, traits: &Traits) -> Result<()> {
-    if let Some(source_schema) = traits
-        .get("openapiExtensions")
-        .and_then(Value::as_object)
-        .and_then(|extensions| extensions.get("x-inttegro-openapi-source-schema"))
-    {
-        // Why: Smithy cannot represent every OpenAPI composition/nullability rule. The published
-        // projection deliberately carries the exact public fragment so adapters do not silently
-        // widen the contract or make request-to-response relations impossible to prove.
-        *schema = source_schema.clone();
+    if let Some(refinement) = traits.get("simileSchema") {
+        // Why: a local Smithy trait preserves refinements that the base shape algebra cannot state
+        // without making the standalone model depend on a different contract language.
+        *schema = canonical_schema(refinement);
     }
     let object = ensure_object(schema);
     if let Some(pattern) = traits.get("pattern").and_then(Value::as_str) {
@@ -208,15 +203,60 @@ fn apply_traits(schema: &mut Value, traits: &Traits) -> Result<()> {
     if !values.is_empty() {
         object.insert("examples".to_owned(), Value::Array(values));
     }
-    if let Some(extensions) = traits.get("openapiExtensions").and_then(Value::as_object) {
-        for (name, value) in extensions {
-            if name == "x-inttegro-openapi-source-schema" {
-                continue;
-            }
-            object.insert(name.clone(), value.clone());
-        }
+    if let Some(constraints) = traits.get("simileConstraints") {
+        object.insert("x-simile-constraints".to_owned(), constraints.clone());
     }
     Ok(())
+}
+
+fn canonical_schema(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_schema).collect()),
+        Value::Object(object) => {
+            let mut canonical = Map::new();
+            for (name, value) in object {
+                match name.as_str() {
+                    "shape" => {
+                        if let Some(shape) = value.as_str() {
+                            canonical.insert(
+                                "$ref".to_owned(),
+                                Value::String(format!("#/components/schemas/{shape}")),
+                            );
+                        }
+                    }
+                    "simileConstraints" => {
+                        canonical
+                            .insert("x-simile-constraints".to_owned(), canonical_schema(value));
+                    }
+                    "mapping" => {
+                        let mappings = value.as_object().map(|mappings| {
+                            mappings
+                                .iter()
+                                .map(|(key, shape)| {
+                                    let shape = shape.as_str().map_or_else(
+                                        || canonical_schema(shape),
+                                        |shape| {
+                                            Value::String(format!("#/components/schemas/{shape}"))
+                                        },
+                                    );
+                                    (key.clone(), shape)
+                                })
+                                .collect()
+                        });
+                        canonical.insert(
+                            name.clone(),
+                            mappings.map_or_else(|| canonical_schema(value), Value::Object),
+                        );
+                    }
+                    _ => {
+                        canonical.insert(name.clone(), canonical_schema(value));
+                    }
+                }
+            }
+            Value::Object(canonical)
+        }
+        _ => value.clone(),
+    }
 }
 
 fn materialize_discriminator_members(schemas: &mut BTreeMap<String, Value>) -> Result<()> {
