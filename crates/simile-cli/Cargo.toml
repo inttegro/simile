@@ -25,6 +25,7 @@ serde_json.workspace = true
 simile-core.workspace = true
 simile-heuristics.workspace = true
 simile-server.workspace = true
+simile-spec.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -122,12 +122,20 @@ pub enum Command {
     Register(RegisterArgs),
     /// Permanently remove a registered service and its local data.
     Remove(RemoveArgs),
+    /// Set up one consumer profile for a registered service.
+    Setup(SetupArgs),
+    /// List every profile configured for a registered service.
+    Profiles(ProfilesArgs),
+    /// Inspect one service profile without revealing its credentials.
+    Profile(ProfileArgs),
     /// Start a configured service emulator.
     Start(StartArgs),
     /// Inspect persisted resources and causal history.
     State(StateArgs),
     /// Reload and recompile a registered service.
     Update(UpdateArgs),
+    /// Select the default profile for CLI-originated work.
+    Use(UseArgs),
     /// Print detailed build information.
     Version,
 }
@@ -353,6 +361,53 @@ pub struct RegisterArgs {
     /// Replace the current registration when the service already exists.
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Principal to provision. Optional when the service declares one principal setup.
+    #[arg(long, value_name = "NAME")]
+    pub principal: Option<String>,
+
+    /// Durable profile name. Simile generates one when omitted.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+
+    /// Supply one collected setup value as `NAME=VALUE`. Repeat as needed.
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub values: Vec<String>,
+
+    /// Select this profile as the default after setup.
+    #[arg(long = "use")]
+    pub select: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfilesArgs {
+    /// Registered service name.
+    pub service: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Profile name.
+    pub profile: String,
+}
+
+#[derive(Debug, Args)]
+pub struct UseArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Profile to use by default.
+    #[arg(long, value_name = "NAME")]
+    pub profile: String,
 }
 
 #[derive(Debug, Args)]

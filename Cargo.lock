@@ -1449,6 +1449,7 @@ dependencies = [
  "simile-core",
  "simile-heuristics",
  "simile-server",
+ "simile-spec",
  "snapbox",
  "thiserror",
  "tokio",
@@ -1482,6 +1483,7 @@ dependencies = [
  "simile-hcl",
  "simile-heuristics",
  "simile-runtime",
+ "simile-service",
  "simile-spec",
  "simile-stack",
  "simile-typescript",
@@ -1580,6 +1582,7 @@ dependencies = [
 name = "simile-service"
 version = "0.2.0"
 dependencies = [
+ "rand",
  "serde",
  "serde_json",
  "simile-artifact",

@@ -312,6 +312,161 @@ fn describes_a_transient_service_from_the_compiled_artifact() {
         report["backends"][0]["description"],
         "Carries accepted orders to background processors."
     );
+    assert_eq!(report["principalSetups"][0]["principal"], "merchant");
+    assert_eq!(report["principalSetups"][0]["operationId"], "createOrder");
+    assert_eq!(
+        report["principalSetups"][0]["collects"][0]["name"],
+        "product"
+    );
+    assert_eq!(report["principalSetups"][0]["issues"][0]["sensitive"], true);
+}
+
+#[test]
+fn setup_generates_a_readable_profile_name_for_one_principal() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "payments",
+            "--config",
+            &fixture("setup-service.hcl"),
+        ])
+        .assert()
+        .success();
+
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "setup",
+            "payments",
+            "--set",
+            "name=Generated integration",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
+    let name = report["profile"]["name"]
+        .as_str()
+        .unwrap_or_else(|| panic!("generated profile has a name"));
+    let (adjective, second) = name
+        .split_once('-')
+        .unwrap_or_else(|| panic!("generated profile name has two words"));
+
+    assert!(!adjective.is_empty());
+    assert!(!second.is_empty());
+    assert!(
+        name.chars()
+            .all(|character| character.is_ascii_lowercase() || character == '-')
+    );
+    assert_eq!(report["profile"]["principal"], "application");
+    assert_eq!(report["profile"]["current"], true);
+    assert!(home.join(format!("profiles/payments/{name}.env")).is_file());
+
+    let second_output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "setup",
+            "payments",
+            "--set",
+            "name=Another integration",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        second_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let second_report: serde_json::Value =
+        serde_json::from_slice(&second_output.stdout).unwrap_or_else(|error| panic!("{error}"));
+    let second_name = second_report["profile"]["name"]
+        .as_str()
+        .unwrap_or_else(|| panic!("second generated profile has a name"));
+
+    assert_ne!(name, second_name);
+    assert!(
+        home.join(format!("profiles/payments/{second_name}.env"))
+            .is_file()
+    );
+
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn sets_up_and_selects_named_service_profiles_without_printing_secrets() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "payments",
+            "--config",
+            &fixture("setup-service.hcl"),
+        ])
+        .assert()
+        .success();
+
+    let setup = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "setup",
+            "payments",
+            "--profile",
+            "local",
+            "--set",
+            "name=Local integration",
+            "--set",
+            "webhook_url=https://example.test/hooks",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let stdout = String::from_utf8(setup.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert!(!stdout.contains("sk_simile_"));
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(report["profile"]["name"], "local");
+    assert_eq!(report["profile"]["principal"], "application");
+    assert_eq!(report["profile"]["current"], true);
+    assert_eq!(report["profile"]["webhookTargetConfigured"], true);
+    assert_eq!(report["profile"]["credentialSchemes"][0], "apiKey");
+
+    let credentials = home.join("profiles/payments/local.env");
+    let contents = fs::read_to_string(&credentials).unwrap_or_else(|error| panic!("{error}"));
+    assert!(contents.contains("API_KEY=\"sk_simile_"));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["profiles", "payments"])
+        .assert()
+        .success()
+        .stdout_eq(concat!(
+            "Profiles payments · 1 configured\n",
+            "active local · application · current\n"
+        ));
+
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
@@ -525,7 +680,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "webhooks 0 contracts · 0 emissions\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 18 · [..] bytes\n",
+                "artifact {} · format 20 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -537,7 +692,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 18,\n",
+            "  \"formatVersion\": 20,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -590,7 +745,9 @@ fn writes_and_inspects_a_compiled_artifact() {
             "    \"concurrency\": 8\n",
             "  },\n",
             "  \"securitySchemes\": 0,\n",
-            "  \"principals\": 0\n",
+            "  \"principals\": 0,\n",
+            "  \"profiles\": 0,\n",
+            "  \"principalSetups\": 0\n",
             "}\n"
         ));
 

@@ -151,6 +151,8 @@ impl Compiler {
             webhooks,
             webhook_policy: behaviors.webhook_policy,
             principals: behaviors.principals,
+            profiles: behaviors.profiles,
+            principal_setups: behaviors.principal_setups,
         })
     }
 }

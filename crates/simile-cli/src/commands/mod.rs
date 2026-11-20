@@ -4,13 +4,17 @@ mod conformance;
 mod describe;
 mod doctor;
 mod inspect;
+mod profile;
+mod profiles;
 mod register;
 mod remove;
 mod replay;
 mod run;
+mod setup;
 mod start;
 mod state;
 mod update;
+mod use_profile;
 mod version;
 
 use simile_core::Context;
@@ -33,13 +37,17 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Describe(arguments) => describe::execute(arguments, ctx, terminal),
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
+        Command::Profile(arguments) => profile::execute(arguments, ctx, terminal),
+        Command::Profiles(arguments) => profiles::execute(arguments, ctx, terminal),
         Command::Register(arguments) => register::execute(arguments, ctx, terminal),
         Command::Replay(arguments) => replay::execute(arguments, terminal),
         Command::Remove(arguments) => remove::execute(arguments, ctx, terminal),
         Command::Run(arguments) => run::execute(arguments, terminal),
+        Command::Setup(arguments) => setup::execute(arguments, ctx, terminal),
         Command::Start(arguments) => start::execute(arguments, ctx, terminal),
         Command::State(arguments) => state::execute(arguments, ctx, terminal),
         Command::Update(arguments) => update::execute(arguments, ctx, terminal),
+        Command::Use(arguments) => use_profile::execute(arguments, ctx, terminal),
         Command::Version => version::execute(ctx, terminal),
     }
 }

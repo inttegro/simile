@@ -1,0 +1,54 @@
+openapi: 3.1.2
+info:
+  title: Payments
+  version: 1.0.0
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+paths:
+  /applications:
+    post:
+      operationId: createApplication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                webhook_url:
+                  type: string
+                  format: uri
+      responses:
+        "201":
+          description: Application created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [app]
+                properties:
+                  app:
+                    type: object
+                    additionalProperties: false
+                    required: [id, name]
+                    properties:
+                      id:
+                        type: string
+                        pattern: '^app_[A-Za-z0-9]+$'
+                      name:
+                        type: string
+                        x-simile-from-request: /name
+  /health:
+    get:
+      responses:
+        "204":
+          description: Healthy

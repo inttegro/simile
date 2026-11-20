@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
@@ -29,32 +29,4 @@ pub enum SecurityScheme {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct SecurityRequirement {
     pub schemes: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrincipalStatus {
-    #[default]
-    Active,
-    Revoked,
-    Expired,
-}
-
-/// A test identity accepted by the emulator.
-///
-/// Credentials are local fixtures embedded in the compiled service. They must
-/// never contain a provider's production secret.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum PrincipalCredential {
-    Secret { value: String },
-    Basic { username: String, password: String },
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct Principal {
-    pub name: String,
-    pub status: PrincipalStatus,
-    pub credentials: BTreeMap<String, PrincipalCredential>,
-    pub grants: BTreeSet<String>,
 }

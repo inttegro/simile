@@ -1,7 +1,7 @@
 use serde_json::Value;
 use simile_spec::{
     EffectActionKind, EffectValue, FaultAction, FaultPhase, OutcomeCondition, ResourceKind,
-    ResourceRef,
+    ResourceRef, SetupBinding, SetupValueType,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -176,15 +176,28 @@ pub struct WebhookPolicyDeclaration {
 pub struct PrincipalDeclaration {
     pub name: String,
     pub description: Option<String>,
-    pub status: simile_spec::PrincipalStatus,
     pub credentials: Vec<PrincipalCredentialDeclaration>,
-    pub grants: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrincipalCredentialDeclaration {
     pub scheme: String,
-    pub credential: simile_spec::PrincipalCredential,
+    pub grants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProfileDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub principal: String,
+    pub status: simile_spec::ProfileStatus,
+    pub credentials: Vec<ProfileCredentialDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProfileCredentialDeclaration {
+    pub scheme: String,
+    pub credential: simile_spec::ProfileCredential,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,12 +217,44 @@ pub struct Module {
     pub webhooks: Vec<WebhookDeclaration>,
     pub webhook_policies: Vec<WebhookPolicyDeclaration>,
     pub principals: Vec<PrincipalDeclaration>,
+    pub profiles: Vec<ProfileDeclaration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceDocument {
     pub service: ServiceDeclaration,
+    pub principal_setups: Vec<PrincipalSetupDeclaration>,
     pub inline_behavior: Module,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrincipalSetupDeclaration {
+    pub principal: String,
+    pub description: Option<String>,
+    pub operation_id: String,
+    pub collects: Vec<SetupCollectDeclaration>,
+    pub issues: Vec<SetupIssueDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetupCollectDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub required: bool,
+    pub value_type: SetupValueType,
+    pub request_pointer: String,
+    pub binding: Option<SetupBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetupIssueDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub response_pointer: Option<String>,
+    pub token_prefix: Option<String>,
+    pub credential: Option<String>,
+    pub sensitive: bool,
+    pub binding: Option<SetupBinding>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

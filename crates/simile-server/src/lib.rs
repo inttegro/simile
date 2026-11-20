@@ -22,7 +22,7 @@ use serde_json::json;
 use simile_artifact::Artifact;
 use simile_runtime::{
     ExecutionOptions, IncomingParameters, OperationCall, OperationExecution, ReplayIdentity,
-    Runtime, TransportPlan, authenticate, validate_parameters,
+    Runtime, TransportPlan, validate_parameters,
 };
 use simile_service::Service;
 use thiserror::Error;
@@ -451,14 +451,25 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         }
     };
     let parameters = incoming_parameters(&request, path_parameters);
-    if let Err(error) = authenticate(state.service.artifact(), &operation, &parameters) {
-        return operation_error(
-            state.service.runtime(),
-            &operation,
-            error,
-            method == Method::HEAD,
-        );
-    }
+    let authentication = match state.service.authenticate(&operation, &parameters) {
+        Ok(authentication) => authentication,
+        Err(simile_service::Error::Runtime(error)) => {
+            return operation_error(
+                state.service.runtime(),
+                &operation,
+                error,
+                method == Method::HEAD,
+            );
+        }
+        Err(error) => {
+            tracing::error!(target: "simile::auth", %operation, %error, "could not read service profiles");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "profile_state_unavailable",
+                "service profile state is unavailable",
+            );
+        }
+    };
     let parameters = match validate_parameters(state.service.artifact(), &operation, &parameters) {
         Ok(parameters) => parameters,
         Err(error) => {
@@ -495,7 +506,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         .or_else(|| {
             (method == Method::GET).then_some(ReplayIdentity::Resource(&resource_identity))
         });
-    let outcome = state.service.execute_with_options(
+    let outcome = state.service.execute_for_profile_with_options(
         OperationCall {
             operation: &operation,
             content_type: content_type.as_deref(),
@@ -508,6 +519,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             fault_profile: state.fault_profile.as_deref(),
             ..ExecutionOptions::default()
         },
+        authentication.profile(),
     );
     match outcome {
         Ok(execution) => operation_execution_response(execution, method == Method::HEAD).await,
@@ -1007,6 +1019,11 @@ components:
 "#,
             r#"
 principal "merchant" {
+  credential "merchantKey" {}
+}
+
+profile "merchant" {
+  principal = principal.merchant
   credential "merchantKey" { value = "sim_test_merchant" }
 }
 "#,

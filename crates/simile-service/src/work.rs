@@ -33,6 +33,8 @@ pub enum DeferredWork {
         method: String,
         content_type: Option<String>,
         target: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
         body: Value,
         after: Vec<String>,
         #[serde(default)]
@@ -156,6 +158,8 @@ pub(crate) struct WorkEnvelope {
 pub(crate) fn planned(
     execution: &OperationExecution,
     correlation_id: &str,
+    profile: Option<&str>,
+    webhook_target: Option<&str>,
 ) -> Result<Vec<WorkEnvelope>> {
     let mut work = execution
         .effects()
@@ -183,8 +187,16 @@ pub(crate) fn planned(
             .effects()
             .webhooks()
             .iter()
-            .filter_map(|webhook| webhook.target().map(|_| webhook))
-            .map(|webhook| webhook_work(execution.operation(), correlation_id, webhook))
+            .filter(|webhook| webhook.target().or(webhook_target).is_some())
+            .map(|webhook| {
+                webhook_work(
+                    execution.operation(),
+                    correlation_id,
+                    webhook,
+                    profile,
+                    webhook_target,
+                )
+            })
             .collect::<Vec<_>>(),
     );
     Ok(work)
@@ -197,7 +209,13 @@ fn deferred_command(action: &PlannedAction) -> Result<DeferredCommand> {
     })
 }
 
-fn webhook_work(operation: &str, correlation_id: &str, webhook: &PlannedWebhook) -> WorkEnvelope {
+fn webhook_work(
+    operation: &str,
+    correlation_id: &str,
+    webhook: &PlannedWebhook,
+    profile: Option<&str>,
+    webhook_target: Option<&str>,
+) -> WorkEnvelope {
     WorkEnvelope {
         work: DeferredWork::Webhook {
             name: webhook.name().to_owned(),
@@ -205,7 +223,12 @@ fn webhook_work(operation: &str, correlation_id: &str, webhook: &PlannedWebhook)
             correlation_id: correlation_id.to_owned(),
             method: webhook.method().to_owned(),
             content_type: webhook.content_type().map(str::to_owned),
-            target: webhook.target().unwrap_or_default().to_owned(),
+            target: webhook
+                .target()
+                .or(webhook_target)
+                .unwrap_or_default()
+                .to_owned(),
+            profile: profile.map(str::to_owned),
             body: webhook.body().clone(),
             after: webhook.after().to_vec(),
             failures: 0,

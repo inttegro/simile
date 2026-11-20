@@ -4,6 +4,7 @@ mod conformance;
 mod describe;
 mod doctor;
 mod inspect;
+mod profile;
 mod register;
 mod remove;
 mod reproduce;
@@ -19,10 +20,15 @@ pub use conformance::{ConformanceCase, ConformanceReport, ConformanceRequest, ve
 pub use describe::{
     DescribeServiceReport, DescribeServiceRequest, DescribedAsyncOperation, DescribedBackend,
     DescribedFault, DescribedFaultProfile, DescribedObject, DescribedOperation, DescribedOutcome,
-    DescribedProtocolError, DescribedScenario, describe_service,
+    DescribedProtocolError, DescribedScenario, DescribedSetup, DescribedSetupCollect,
+    DescribedSetupIssue, describe_service,
 };
 pub use doctor::{Check, CheckStatus, DoctorReport, doctor};
 pub use inspect::{InspectRequest, inspect};
+pub use profile::{
+    ProfileReport, ProfilesReport, SetupProfileReport, SetupProfileRequest, profile, profiles,
+    setup_contract, setup_profile, use_profile,
+};
 pub use register::{RegisterRequest, RegistrationReport, register};
 pub use remove::{RemoveReport, RemoveRequest, remove};
 pub use reproduce::{ReplayReport, ReplayRequest, replay};

@@ -6,6 +6,8 @@
 //! then applies synchronous consequences transactionally, checkpoints the
 //! complete Stack, and exposes asynchronous work for post-response dispatch.
 
+mod profile;
+mod profile_name;
 mod state;
 mod work;
 
@@ -16,7 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use simile_artifact::Artifact;
 use simile_runtime::{
-    ExecutionOptions, OperationCall, OperationExecution, OperationValueCall, Runtime,
+    AuthenticatedProfile, ExecutionOptions, IncomingParameters, OperationCall, OperationExecution,
+    OperationValueCall, Runtime, authenticate_with_profiles,
 };
 use simile_spec::ResourceKind;
 use simile_stack::{
@@ -26,6 +29,11 @@ use simile_stack::{
 };
 use thiserror::Error;
 
+pub use profile::{
+    ProfileFieldSummary, ProfileValue, ServiceProfile, ServiceProfileSummary, SetupProfileResult,
+    validate_profile_name,
+};
+pub use simile_spec::ProfileStatus;
 use work::{DEAD_LETTERS, DEFAULT_VISIBILITY_TIMEOUT_MS, OUTBOX, WORK_STATE};
 pub use work::{DeadLetter, DeferredCommand, DeferredWork, WorkLease};
 
@@ -44,6 +52,25 @@ pub struct Service {
     runtime: Runtime,
     stack: Mutex<Stack>,
     store: Arc<dyn StateStore>,
+}
+
+/// Authentication result enriched with the durable profile that supplied it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceAuthentication {
+    principal: Option<String>,
+    profile: Option<String>,
+}
+
+impl ServiceAuthentication {
+    #[must_use]
+    pub fn principal(&self) -> Option<&str> {
+        self.principal.as_deref()
+    }
+
+    #[must_use]
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
 }
 
 impl Service {
@@ -72,6 +99,10 @@ impl Service {
         resources.push(ResourceAddress::new(ResourceKind::Queue, OUTBOX)?);
         resources.push(ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?);
         resources.push(ResourceAddress::new(ResourceKind::Db, WORK_STATE)?);
+        resources.push(ResourceAddress::new(
+            ResourceKind::Db,
+            profile::PROFILE_STATE,
+        )?);
         let initial = Stack::realtime(now()).resources(resources)?.build()?;
         let stack = match store.load()? {
             Some(snapshot) => {
@@ -79,6 +110,10 @@ impl Service {
                 restored.ensure_resource(ResourceAddress::new(ResourceKind::Queue, OUTBOX)?);
                 restored.ensure_resource(ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?);
                 restored.ensure_resource(ResourceAddress::new(ResourceKind::Db, WORK_STATE)?);
+                restored.ensure_resource(ResourceAddress::new(
+                    ResourceKind::Db,
+                    profile::PROFILE_STATE,
+                )?);
                 if restored.resources() != initial.resources() {
                     return Err(Error::ResourceSetChanged);
                 }
@@ -105,6 +140,36 @@ impl Service {
         call: OperationCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
+        self.execute_for_profile_with_options(call, options, None)
+    }
+
+    /// Authenticate against static fixtures and every active service profile.
+    pub fn authenticate(
+        &self,
+        operation: &str,
+        incoming: &IncomingParameters,
+    ) -> Result<ServiceAuthentication> {
+        let profiles = self
+            .profile_records()?
+            .iter()
+            .map(ServiceProfile::credential_profile)
+            .collect::<Vec<_>>();
+        let authenticated =
+            authenticate_with_profiles(self.artifact(), operation, incoming, &profiles)?;
+        Ok(service_authentication(authenticated))
+    }
+
+    /// Execute one call in the tenant context established by authentication.
+    pub fn execute_for_profile_with_options(
+        &self,
+        call: OperationCall<'_>,
+        options: ExecutionOptions<'_>,
+        profile: Option<&str>,
+    ) -> Result<OperationExecution> {
+        let profile = profile
+            .map(|name| self.profile(name))
+            .transpose()?
+            .flatten();
         let state = state::resolve(self, call.operation, options.parameters)?;
         let response_body = match &state {
             state::StateResolution::Found(value) => Some(value),
@@ -129,7 +194,7 @@ impl Service {
                 ..options
             },
         )?;
-        self.commit(&execution, options.parameters)?;
+        self.commit(&execution, options.parameters, profile.as_ref())?;
         Ok(execution)
     }
 
@@ -166,7 +231,7 @@ impl Service {
                 ..options
             },
         )?;
-        self.commit(&execution, options.parameters)?;
+        self.commit(&execution, options.parameters, None)?;
         Ok(execution)
     }
 
@@ -391,65 +456,82 @@ impl Service {
         &self,
         execution: &OperationExecution,
         parameters: Option<&simile_runtime::ValidatedParameters>,
+        profile: Option<&ServiceProfile>,
     ) -> Result<()> {
         let mut stack = lock(&self.stack)?;
         let before = stack.snapshot()?;
-        let result = (|| {
-            for action in execution.effects().synchronous() {
-                let resource = action.resource().as_str().parse::<ResourceAddress>()?;
-                let command = StackCommand::from_effect(action.kind(), action.arguments())?;
-                stack.execute(
-                    resource,
-                    CommandMetadata {
-                        operation_id: Some(execution.operation().to_owned()),
-                        ..CommandMetadata::default()
-                    },
-                    command,
-                )?;
-            }
-            let correlation_id = format!(
-                "work-{}",
-                stack
-                    .journal()
-                    .entries()
-                    .last()
-                    .map_or(1, |entry| entry.sequence.saturating_add(1))
-            );
-            for envelope in work::planned(execution, &correlation_id)? {
-                let command = QueueCommand::Publish {
-                    body: work::encode(&envelope.work)?,
-                    attributes: work::attributes(&envelope.work),
-                    delay_ms: envelope.delay_milliseconds,
-                };
-                stack.execute(
-                    ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
-                    CommandMetadata {
-                        operation_id: Some(execution.operation().to_owned()),
-                        correlation_id: Some(correlation_id.clone()),
-                        ..CommandMetadata::default()
-                    },
-                    StackCommand::Queue(command),
-                )?;
-            }
-            if let Some((resource, command)) =
-                state::delete_command(self.artifact(), execution.operation(), parameters)
-            {
-                stack.execute(
-                    resource,
-                    CommandMetadata {
-                        operation_id: Some(execution.operation().to_owned()),
-                        ..CommandMetadata::default()
-                    },
-                    command,
-                )?;
-            }
-            Ok::<(), Error>(())
-        })();
+        let result = self.apply_commit(&mut stack, execution, parameters, profile);
         if let Err(error) = result {
             *stack = Stack::from_snapshot(before);
             return Err(error);
         }
         self.checkpoint(&mut stack, before)
+    }
+
+    fn apply_commit(
+        &self,
+        stack: &mut Stack,
+        execution: &OperationExecution,
+        parameters: Option<&simile_runtime::ValidatedParameters>,
+        profile: Option<&ServiceProfile>,
+    ) -> Result<()> {
+        for action in execution.effects().synchronous() {
+            let resource = action.resource().as_str().parse::<ResourceAddress>()?;
+            let command = StackCommand::from_effect(action.kind(), action.arguments())?;
+            stack.execute(
+                resource,
+                CommandMetadata {
+                    operation_id: Some(execution.operation().to_owned()),
+                    ..CommandMetadata::default()
+                },
+                command,
+            )?;
+        }
+        let correlation_id = format!(
+            "work-{}",
+            stack
+                .journal()
+                .entries()
+                .last()
+                .map_or(1, |entry| entry.sequence.saturating_add(1))
+        );
+        for envelope in work::planned(
+            execution,
+            &correlation_id,
+            profile.map(|profile| profile.name.as_str()),
+            profile.and_then(|profile| profile.webhook_target.as_deref()),
+        )? {
+            let command = QueueCommand::Publish {
+                body: work::encode(&envelope.work)?,
+                attributes: work::attributes(&envelope.work),
+                delay_ms: envelope.delay_milliseconds,
+            };
+            stack.execute(
+                ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+                CommandMetadata {
+                    operation_id: Some(execution.operation().to_owned()),
+                    correlation_id: Some(correlation_id.clone()),
+                    ..CommandMetadata::default()
+                },
+                StackCommand::Queue(command),
+            )?;
+        }
+        if let Some((resource, command)) =
+            state::delete_command(self.artifact(), execution.operation(), parameters)
+        {
+            stack.execute(
+                resource,
+                CommandMetadata {
+                    operation_id: Some(execution.operation().to_owned()),
+                    ..CommandMetadata::default()
+                },
+                command,
+            )?;
+        }
+        if let Some(profile) = profile {
+            profile::put_profile(stack, profile)?;
+        }
+        Ok(())
     }
 
     fn execute_stack(
@@ -553,6 +635,15 @@ impl Service {
     }
 }
 
+fn service_authentication(authenticated: Option<AuthenticatedProfile>) -> ServiceAuthentication {
+    let profile = authenticated
+        .as_ref()
+        .filter(|profile| profile.is_dynamic())
+        .map(|profile| profile.name().to_owned());
+    let principal = authenticated.map(|profile| profile.principal().to_owned());
+    ServiceAuthentication { principal, profile }
+}
+
 enum LeaseDisposition {
     Acknowledge,
     Retry(u64),
@@ -627,4 +718,51 @@ pub enum Error {
     StateResponseUnavailable,
     #[error("state read returned an unexpected result for {0}")]
     InvalidStateRead(&'static str),
+    #[error(
+        "this service does not declare principal setup; add a `principal_setup` block to its configuration"
+    )]
+    SetupNotDeclared,
+    #[error("principal `{principal}` does not declare principal setup")]
+    PrincipalSetupNotDeclared { principal: String },
+    #[error(
+        "this service declares setup for more than one principal ({principals:?}); select one explicitly"
+    )]
+    PrincipalSetupAmbiguous { principals: Vec<String> },
+    #[error("setup operationId `{0}` is missing from the compiled artifact")]
+    SetupOperationMissing(String),
+    #[error("setup operation `{operation}` has no request body for its collected values")]
+    SetupRequestBodyMissing { operation: String },
+    #[error("setup requires value `{name}`")]
+    MissingSetupValue { name: String },
+    #[error("setup does not collect a value named `{name}`")]
+    UnknownSetupValue { name: String },
+    #[error("setup value `{name}` must be {expected}")]
+    InvalidSetupValue {
+        name: String,
+        expected: &'static str,
+    },
+    #[error("setup request pointer `{pointer}` cannot be applied to the request body")]
+    InvalidSetupPointer { pointer: String },
+    #[error("setup response does not contain `{pointer}` required by issued value `{issue}`")]
+    SetupResponseValueMissing { issue: String, pointer: String },
+    #[error("setup issued credential `{issue}` is not a string")]
+    SetupCredentialNotString { issue: String },
+    #[error("invalid profile name `{profile}`; use lowercase letters, digits, `.`, `_`, or `-`")]
+    InvalidProfileName { profile: String },
+    #[error("every generated profile name is already in use; pass --profile with a unique name")]
+    ProfileNameSpaceExhausted,
+    #[error("profile `{profile}` does not exist")]
+    ProfileNotFound { profile: String },
+    #[error(
+        "profile `{profile}` belongs to principal `{expected}` and cannot be reconfigured as `{actual}`"
+    )]
+    ProfilePrincipalMismatch {
+        profile: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("persisted profile state is invalid")]
+    InvalidProfileState,
+    #[error("persisted profile could not be encoded or decoded: {0}")]
+    ProfileEncoding(String),
 }

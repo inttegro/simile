@@ -1,26 +1,157 @@
 use simile_hcl::Source;
-use simile_spec::{PrincipalCredential, PrincipalStatus, ResourceKind, ResourceRef};
+use simile_spec::{ProfileCredential, ProfileStatus, ResourceKind, ResourceRef};
+
+#[test]
+fn compiles_service_setup_into_a_profile_contract() {
+    let document = simile_hcl::parse_service(Source::new(
+        "service.hcl",
+        r#"
+service "orders" {
+  listen { port = 4242 }
+  openapi { path = "./orders.yaml" }
+}
+
+principal "application" {
+  credential "merchantOAuth" {
+    grants = ["orders:write"]
+  }
+}
+
+principal_setup "application" {
+  description = "Create one application."
+  operation   = "createOrder"
+
+  collect "name" {
+    required = true
+    to       = request.name
+  }
+
+  issue "access_token" {
+    generate  = "token"
+    prefix    = "tok_"
+    credential = "merchantOAuth"
+    sensitive = true
+  }
+}
+"#,
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    let principals = simile_hcl::compile(
+        [module(
+            r#"
+principal "application" {
+  credential "merchantOAuth" {
+    grants = ["orders:write"]
+  }
+}
+"#,
+        )],
+        &secured_contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .principals;
+    let setups = simile_hcl::compile_principal_setups(
+        document.principal_setups,
+        &secured_contract(),
+        &principals,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let setup = &setups["application"];
+
+    assert_eq!(setup.principal, "application");
+    assert_eq!(setup.operation_id, "createOrder");
+    assert_eq!(setup.collects["name"].request_pointer, "/name");
+    assert_eq!(
+        setup.issues["access_token"].credential.as_deref(),
+        Some("merchantOAuth")
+    );
+}
+
+#[test]
+fn compiles_setup_workflows_for_multiple_principal_kinds() {
+    let document = simile_hcl::parse_service(Source::new(
+        "service.hcl",
+        r#"
+service "orders" {
+  listen { port = 4242 }
+  openapi { path = "./orders.yaml" }
+}
+
+principal "application" {
+  credential "merchantOAuth" {}
+}
+
+principal "operator" {
+  credential "merchantKey" {}
+}
+
+principal_setup "application" {
+  operation = "createOrder"
+  issue "access_token" {
+    generate   = "token"
+    credential = "merchantOAuth"
+  }
+}
+
+principal_setup "operator" {
+  operation = "createOrder"
+  issue "api_key" {
+    generate   = "token"
+    credential = "merchantKey"
+  }
+}
+"#,
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    let principal_source = module(
+        r#"
+principal "application" {
+  credential "merchantOAuth" {}
+}
+
+principal "operator" {
+  credential "merchantKey" {}
+}
+"#,
+    );
+    let principals = simile_hcl::compile([principal_source], &secured_contract())
+        .unwrap_or_else(|error| panic!("{error}"))
+        .principals;
+    let setups = simile_hcl::compile_principal_setups(
+        document.principal_setups,
+        &secured_contract(),
+        &principals,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(setups.len(), 2);
+    assert_eq!(setups["application"].principal, "application");
+    assert_eq!(setups["operator"].principal, "operator");
+}
 
 #[test]
 fn compiles_local_test_principals_against_openapi_security_schemes() {
     let compiled = simile_hcl::compile(
         [module(
             r#"
-principal "merchant_app" {
+principal "application" {
   description = "A merchant integration with order write access."
-  grants      = ["orders:write"]
-
   credential "merchantOAuth" {
-    value = "sim_test_merchant"
+    grants = ["orders:write"]
+  }
+  credential "merchantKey" {
   }
 }
 
-principal "revoked_key" {
-  status = "revoked"
+profile "merchant_app" {
+  principal = principal.application
+  credential "merchantOAuth" { value = "sim_test_merchant" }
+}
 
-  credential "merchantKey" {
-    value = "revoked_test_key"
-  }
+profile "revoked_key" {
+  principal = principal.application
+  status = "revoked"
+  credential "merchantKey" { value = "revoked_test_key" }
 }
 "#,
         )],
@@ -28,19 +159,24 @@ principal "revoked_key" {
     )
     .unwrap_or_else(|error| panic!("{error}"));
 
-    let merchant = &compiled.principals["merchant_app"];
-    assert_eq!(merchant.status, PrincipalStatus::Active);
-    assert_eq!(merchant.grants.len(), 1);
-    assert!(merchant.grants.contains("orders:write"));
+    let application = &compiled.principals["application"];
+    assert!(
+        application.credentials["merchantOAuth"]
+            .grants
+            .contains("orders:write")
+    );
+    let merchant = &compiled.profiles["merchant_app"];
+    assert_eq!(merchant.status, ProfileStatus::Active);
+    assert_eq!(merchant.principal, "application");
     assert_eq!(
         merchant.credentials["merchantOAuth"],
-        PrincipalCredential::Secret {
+        ProfileCredential::Secret {
             value: "sim_test_merchant".to_owned()
         }
     );
     assert_eq!(
-        compiled.principals["revoked_key"].status,
-        PrincipalStatus::Revoked
+        compiled.profiles["revoked_key"].status,
+        ProfileStatus::Revoked
     );
 }
 

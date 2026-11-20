@@ -1,10 +1,13 @@
+use std::collections::BTreeMap;
+
 use serde_json::json;
 use simile_artifact::{Artifact, decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
     Error, ExecutionOptions, IncomingParameters, OperationCall, OperationValueCall, ReplayIdentity,
-    Runtime, TransportPlan, authenticate,
+    Runtime, TransportPlan, authenticate, authenticate_with_profiles,
 };
+use simile_spec::{Profile, ProfileCredential, ProfileStatus};
 
 #[test]
 fn runs_an_operation_through_validation_and_response_synthesis() {
@@ -491,6 +494,7 @@ fn authenticates_test_principals_and_enforces_oauth_scopes() {
         .unwrap_or_else(|error| panic!("{error}"))
         .unwrap_or_else(|| panic!("principal missing"));
     assert_eq!(principal.name(), "merchant_app");
+    assert!(!principal.is_dynamic());
 
     incoming.headers.insert(
         "authorization".to_owned(),
@@ -500,6 +504,40 @@ fn authenticates_test_principals_and_enforces_oauth_scopes() {
         authenticate(&artifact, "GET /orders", &incoming),
         Err(Error::PermissionDenied { .. })
     ));
+}
+
+#[test]
+fn authenticates_runtime_issued_profile_principals_without_a_naming_convention() {
+    let artifact = authentication_artifact();
+    let profile = Profile {
+        name: "production-like".to_owned(),
+        principal: "merchant_application".to_owned(),
+        status: ProfileStatus::Active,
+        credentials: BTreeMap::from([(
+            "merchantOAuth".to_owned(),
+            ProfileCredential::Secret {
+                value: "sk_profile_issued".to_owned(),
+            },
+        )]),
+    };
+    let mut incoming = IncomingParameters::default();
+    incoming.headers.insert(
+        "authorization".to_owned(),
+        vec!["Bearer sk_profile_issued".to_owned()],
+    );
+
+    let principal = authenticate_with_profiles(
+        &artifact,
+        "GET /orders",
+        &incoming,
+        std::slice::from_ref(&profile),
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("principal missing"));
+
+    assert_eq!(principal.name(), "production-like");
+    assert_eq!(principal.principal(), "merchant_application");
+    assert!(principal.is_dynamic());
 }
 
 #[test]
@@ -554,19 +592,28 @@ paths:
         "200": { description: Public or authenticated }
 "#;
     let behavior = r#"
-principal "merchant_app" {
+principal "merchant_application" {
   description = "A merchant application with order access."
-  grants = ["orders:read"]
+  credential "merchantOAuth" { grants = ["orders:read"] }
+}
+
+principal "readonly_application" {
+  credential "merchantOAuth" {}
+}
+
+profile "merchant_app" {
+  principal = principal.merchant_application
   credential "merchantOAuth" { value = "sk_test_merchant" }
 }
 
-principal "readonly_app" {
+profile "readonly_app" {
+  principal = principal.readonly_application
   credential "merchantOAuth" { value = "sk_test_readonly" }
 }
 
-principal "revoked_app" {
+profile "revoked_app" {
+  principal = principal.merchant_application
   status = "revoked"
-  grants = ["orders:read"]
   credential "merchantOAuth" { value = "sk_test_revoked" }
 }
 "#;

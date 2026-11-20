@@ -3,7 +3,8 @@ use std::net::SocketAddr;
 use serde::Serialize;
 use simile_artifact::Artifact;
 use simile_spec::{
-    BehaviorOrigin, DescriptionKind, FaultAction, FaultPhase, PrincipalStatus, WebhookOrigin,
+    BehaviorOrigin, DescriptionKind, FaultAction, FaultPhase, ProfileStatus, SetupBinding,
+    SetupIssueSource, SetupValueType, WebhookOrigin,
 };
 
 use super::start::prepare_loaded_service;
@@ -42,6 +43,46 @@ pub struct DescribeServiceReport {
     pub webhook_contracts: Vec<DescribedWebhook>,
     pub authoring_objects: Vec<DescribedObject>,
     pub principals: Vec<DescribedPrincipal>,
+    pub profiles: Vec<DescribedProfile>,
+    pub principal_setups: Vec<DescribedSetup>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedSetup {
+    pub principal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub operation_id: String,
+    pub collects: Vec<DescribedSetupCollect>,
+    pub issues: Vec<DescribedSetupIssue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedSetupCollect {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub required: bool,
+    pub value_type: String,
+    pub request_pointer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedSetupIssue {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    pub sensitive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -166,9 +207,19 @@ pub struct DescribedPrincipal {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub status: String,
     pub security_schemes: Vec<String>,
     pub grants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedProfile {
+    pub name: String,
+    pub principal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub status: String,
+    pub security_schemes: Vec<String>,
 }
 
 pub fn describe_service(
@@ -368,14 +419,63 @@ fn report(
         .map(|principal| DescribedPrincipal {
             name: principal.name().to_owned(),
             description: description(artifact, DescriptionKind::Principal, principal.name()),
-            status: match principal.status() {
-                PrincipalStatus::Active => "active",
-                PrincipalStatus::Revoked => "revoked",
-                PrincipalStatus::Expired => "expired",
-            }
-            .to_owned(),
             security_schemes: principal.credential_schemes().map(str::to_owned).collect(),
             grants: principal.granted_scopes().map(str::to_owned).collect(),
+        })
+        .collect();
+    let profiles = artifact
+        .profiles()
+        .map(|profile| DescribedProfile {
+            name: profile.name().to_owned(),
+            principal: profile.principal().to_owned(),
+            description: description(artifact, DescriptionKind::Profile, profile.name()),
+            status: match profile.status() {
+                ProfileStatus::Active => "active",
+                ProfileStatus::Revoked => "revoked",
+                ProfileStatus::Expired => "expired",
+            }
+            .to_owned(),
+            security_schemes: profile.credential_schemes().map(str::to_owned).collect(),
+        })
+        .collect();
+    let principal_setups = artifact
+        .principal_setups()
+        .map(|setup| DescribedSetup {
+            principal: setup.principal,
+            description: setup.description,
+            operation_id: setup.operation_id,
+            collects: setup
+                .collects
+                .into_values()
+                .map(|collect| DescribedSetupCollect {
+                    name: collect.name,
+                    description: collect.description,
+                    required: collect.required,
+                    value_type: setup_value_type_name(collect.value_type).to_owned(),
+                    request_pointer: collect.request_pointer,
+                    binding: collect.binding.map(setup_binding_name).map(str::to_owned),
+                })
+                .collect(),
+            issues: setup
+                .issues
+                .into_values()
+                .map(|issue| DescribedSetupIssue {
+                    name: issue.name,
+                    description: issue.description,
+                    source: match issue.source {
+                        SetupIssueSource::Response { pointer } => format!("response{pointer}"),
+                        SetupIssueSource::Token { prefix } if prefix.is_empty() => {
+                            "generated token".to_owned()
+                        }
+                        SetupIssueSource::Token { prefix } => {
+                            format!("generated token with prefix {prefix}")
+                        }
+                    },
+                    credential: issue.credential,
+                    sensitive: issue.sensitive,
+                    binding: issue.binding.map(setup_binding_name).map(str::to_owned),
+                })
+                .collect(),
         })
         .collect();
 
@@ -412,6 +512,25 @@ fn report(
         webhook_contracts,
         authoring_objects,
         principals,
+        profiles,
+        principal_setups,
+    }
+}
+
+const fn setup_value_type_name(value_type: SetupValueType) -> &'static str {
+    match value_type {
+        SetupValueType::String => "string",
+        SetupValueType::Url => "url",
+        SetupValueType::Boolean => "boolean",
+        SetupValueType::Integer => "integer",
+        SetupValueType::Json => "json",
+    }
+}
+
+const fn setup_binding_name(binding: SetupBinding) -> &'static str {
+    match binding {
+        SetupBinding::WebhookTarget => "webhook.target",
+        SetupBinding::WebhookSigningSecret => "webhook.signing_secret",
     }
 }
 
@@ -434,5 +553,7 @@ const fn kind_name(kind: DescriptionKind) -> &'static str {
         DescriptionKind::Effect => "effect",
         DescriptionKind::Webhook => "webhook",
         DescriptionKind::Principal => "principal",
+        DescriptionKind::Profile => "profile",
+        DescriptionKind::PrincipalSetup => "principal_setup",
     }
 }

@@ -1,32 +1,56 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use simile_artifact::{Artifact, ArtifactCredential, ArtifactPrincipal};
-use simile_spec::{ParameterLocation, PrincipalStatus, SecurityScheme};
+use simile_artifact::{Artifact, ArtifactCredential, ArtifactProfile};
+use simile_spec::{ParameterLocation, Profile, ProfileCredential, ProfileStatus, SecurityScheme};
 
 use crate::{Error, IncomingParameters, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AuthenticatedPrincipal {
+pub struct AuthenticatedProfile {
     name: String,
+    principal: String,
+    dynamic: bool,
 }
 
-impl AuthenticatedPrincipal {
+impl AuthenticatedProfile {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    #[must_use]
+    pub fn principal(&self) -> &str {
+        &self.principal
+    }
+
+    /// Whether this profile was supplied by the running service rather than
+    /// compiled as a static contract fixture.
+    #[must_use]
+    pub const fn is_dynamic(&self) -> bool {
+        self.dynamic
     }
 }
 
 /// Authenticate one operation using its effective OpenAPI security requirements.
 ///
 /// Each requirement is an alternative. Schemes inside a requirement must be
-/// satisfied by one active test principal, which keeps multi-scheme identities
+/// satisfied by one active profile, which keeps multi-scheme identities
 /// coherent and makes scope checks predictable.
 pub fn authenticate(
     artifact: &Artifact,
     operation: &str,
     incoming: &IncomingParameters,
-) -> Result<Option<AuthenticatedPrincipal>> {
+) -> Result<Option<AuthenticatedProfile>> {
+    authenticate_with_profiles(artifact, operation, incoming, &[])
+}
+
+/// Authenticate against compiled fixtures plus runtime-issued service profiles.
+pub fn authenticate_with_profiles(
+    artifact: &Artifact,
+    operation: &str,
+    incoming: &IncomingParameters,
+    dynamic_profiles: &[Profile],
+) -> Result<Option<AuthenticatedProfile>> {
     let operation = artifact
         .operation(operation)
         .ok_or_else(|| Error::UnknownOperation {
@@ -37,7 +61,7 @@ pub fn authenticate(
         return Ok(None);
     }
 
-    let principals = artifact.principals().collect::<Vec<_>>();
+    let profiles = artifact.profiles().collect::<Vec<_>>();
     let mut permission_denied = false;
     for requirement in requirements {
         let schemes = requirement
@@ -62,20 +86,57 @@ pub fn authenticate(
             continue;
         };
 
-        for principal in &principals {
-            if !principal_matches(principal, &schemes, &presented) {
+        for profile in &profiles {
+            if !profile_matches(profile, &schemes, &presented) {
                 continue;
             }
-            if principal.status() != PrincipalStatus::Active {
+            if profile.status() != ProfileStatus::Active {
                 continue;
             }
-            let grants = schemes
-                .iter()
-                .flat_map(|(_, _, scopes)| scopes)
-                .all(|scope| principal.grants(scope));
+            let principal = artifact.principal(profile.principal()).ok_or_else(|| {
+                Error::AuthenticationConfiguration {
+                    message: format!(
+                        "profile `{}` references unknown principal `{}`",
+                        profile.name(),
+                        profile.principal()
+                    ),
+                }
+            })?;
+            let grants = schemes.iter().all(|(scheme, _, scopes)| {
+                scopes.iter().all(|scope| principal.grants(scheme, scope))
+            });
             if grants {
-                return Ok(Some(AuthenticatedPrincipal {
-                    name: principal.name().to_owned(),
+                return Ok(Some(AuthenticatedProfile {
+                    name: profile.name().to_owned(),
+                    principal: profile.principal().to_owned(),
+                    dynamic: false,
+                }));
+            }
+            permission_denied = true;
+        }
+        for profile in dynamic_profiles {
+            if !dynamic_profile_matches(profile, &schemes, &presented) {
+                continue;
+            }
+            if profile.status != ProfileStatus::Active {
+                continue;
+            }
+            let principal = artifact.principal(&profile.principal).ok_or_else(|| {
+                Error::AuthenticationConfiguration {
+                    message: format!(
+                        "profile `{}` references unknown principal `{}`",
+                        profile.name, profile.principal
+                    ),
+                }
+            })?;
+            let grants = schemes.iter().all(|(scheme, _, scopes)| {
+                scopes.iter().all(|scope| principal.grants(scheme, scope))
+            });
+            if grants {
+                return Ok(Some(AuthenticatedProfile {
+                    name: profile.name.clone(),
+                    principal: profile.principal.clone(),
+                    dynamic: true,
                 }));
             }
             permission_denied = true;
@@ -91,6 +152,37 @@ pub fn authenticate(
             operation: operation.key().to_owned(),
         })
     }
+}
+
+fn dynamic_profile_matches(
+    profile: &Profile,
+    schemes: &[(&str, SecurityScheme, Vec<&str>)],
+    presented: &[PresentedCredential],
+) -> bool {
+    schemes
+        .iter()
+        .zip(presented)
+        .all(|((name, _, _), presented)| {
+            let Some(expected) = profile.credentials.get(*name) else {
+                return false;
+            };
+            match (expected, presented) {
+                (ProfileCredential::Secret { value }, PresentedCredential::Secret(actual)) => {
+                    equal(value.as_bytes(), actual.as_bytes())
+                }
+                (
+                    ProfileCredential::Basic { username, password },
+                    PresentedCredential::Basic {
+                        username: actual_username,
+                        password: actual_password,
+                    },
+                ) => {
+                    equal(username.as_bytes(), actual_username.as_bytes())
+                        && equal(password.as_bytes(), actual_password.as_bytes())
+                }
+                _ => false,
+            }
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -138,8 +230,8 @@ fn authorization<'a>(incoming: &'a IncomingParameters, scheme: &str) -> Option<&
         .filter(|credential| !credential.is_empty())
 }
 
-fn principal_matches(
-    principal: &ArtifactPrincipal<'_>,
+fn profile_matches(
+    profile: &ArtifactProfile<'_>,
     schemes: &[(&str, SecurityScheme, Vec<&str>)],
     presented: &[PresentedCredential],
 ) -> bool {
@@ -147,7 +239,7 @@ fn principal_matches(
         .iter()
         .zip(presented)
         .all(|((name, _, _), presented)| {
-            let Some(expected) = principal.credential(name) else {
+            let Some(expected) = profile.credential(name) else {
                 return false;
             };
             match (expected, presented) {

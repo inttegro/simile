@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 
 mod ast;
-mod auth;
 mod compile;
 mod error;
 mod parse;
+mod principal;
+mod profile;
 mod service;
+mod setup;
 mod webhook;
 
 pub use ast::{
@@ -13,11 +15,13 @@ pub use ast::{
     ContractDeclaration, EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
     FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
     OutcomeDeclaration, PrincipalCredentialDeclaration, PrincipalDeclaration,
+    PrincipalSetupDeclaration, ProfileCredentialDeclaration, ProfileDeclaration,
     ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
-    ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, Source, SourceDeclaration,
-    WebhookDeclaration, WebhookEmissionDeclaration, WebhookPolicyDeclaration,
+    ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, SetupCollectDeclaration,
+    SetupIssueDeclaration, Source, SourceDeclaration, WebhookDeclaration,
+    WebhookEmissionDeclaration, WebhookPolicyDeclaration,
 };
-pub use compile::compile;
+pub use compile::{compile, compile_principal_setups};
 pub use error::{Error, Result};
 pub use parse::parse;
 pub use service::parse_service;

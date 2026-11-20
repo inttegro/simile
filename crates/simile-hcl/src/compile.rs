@@ -3,12 +3,117 @@ use std::collections::{BTreeMap, BTreeSet};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind, Effect,
     EffectAction, EffectOrigin, ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase,
-    FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, Principal, PrincipalCredential,
-    ProtocolError, RequestBodyContract, Resource, Scenario, SecurityScheme, WebhookContract,
-    WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
+    FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, Principal, ProtocolError,
+    RequestBodyContract, Resource, Scenario, SecurityScheme, WebhookContract, WebhookEmission,
+    WebhookOrdering, WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Module, Result};
+
+pub fn compile_principal_setups(
+    declarations: impl IntoIterator<Item = crate::PrincipalSetupDeclaration>,
+    api: &ApiContract,
+    principals: &BTreeMap<String, Principal>,
+) -> Result<BTreeMap<String, simile_spec::PrincipalSetup>> {
+    let mut setups = BTreeMap::new();
+    for declaration in declarations {
+        let principal =
+            principals
+                .get(&declaration.principal)
+                .ok_or_else(|| Error::UnknownSetupPrincipal {
+                    principal: declaration.principal.clone(),
+                })?;
+        if api.operation_by_id(&declaration.operation_id).is_none() {
+            return Err(Error::UnknownSetupOperation {
+                principal: declaration.principal,
+                operation_id: declaration.operation_id,
+            });
+        }
+        let mut collects = BTreeMap::new();
+        for collect in declaration.collects {
+            let name = collect.name.clone();
+            let value = simile_spec::SetupCollect {
+                name: name.clone(),
+                description: collect.description,
+                required: collect.required,
+                value_type: collect.value_type,
+                request_pointer: collect.request_pointer,
+                binding: collect.binding,
+            };
+            if collects.insert(name.clone(), value).is_some() {
+                return Err(Error::DuplicateSetupCollect {
+                    principal: principal.name.clone(),
+                    name,
+                });
+            }
+        }
+        let mut issues = BTreeMap::new();
+        for issue in declaration.issues {
+            if let Some(credential) = &issue.credential {
+                if !principal.credentials.contains_key(credential) {
+                    return Err(Error::UnknownSetupCredential {
+                        principal: principal.name.clone(),
+                        issue: issue.name,
+                        credential: credential.clone(),
+                    });
+                }
+                let scheme = api.security_schemes.get(credential).ok_or_else(|| {
+                    Error::UnknownPrincipalSecurityScheme {
+                        principal: principal.name.clone(),
+                        scheme: credential.clone(),
+                    }
+                })?;
+                let supported = match scheme {
+                    SecurityScheme::ApiKey { .. }
+                    | SecurityScheme::OAuth2
+                    | SecurityScheme::OpenIdConnect => true,
+                    SecurityScheme::Http { scheme, .. } => !scheme.eq_ignore_ascii_case("basic"),
+                    _ => false,
+                };
+                if !supported {
+                    return Err(Error::InvalidSetupCredential {
+                        principal: principal.name.clone(),
+                        issue: issue.name,
+                        credential: credential.clone(),
+                    });
+                }
+            }
+            let source = match (issue.response_pointer, issue.token_prefix) {
+                (Some(pointer), None) => simile_spec::SetupIssueSource::Response { pointer },
+                (None, Some(prefix)) => simile_spec::SetupIssueSource::Token { prefix },
+                _ => unreachable!("the principal_setup parser enforces one issue source"),
+            };
+            let name = issue.name.clone();
+            let value = simile_spec::SetupIssue {
+                name: name.clone(),
+                description: issue.description,
+                source,
+                credential: issue.credential,
+                sensitive: issue.sensitive,
+                binding: issue.binding,
+            };
+            if issues.insert(name.clone(), value).is_some() {
+                return Err(Error::DuplicateSetupIssue {
+                    principal: principal.name.clone(),
+                    name,
+                });
+            }
+        }
+        let setup = simile_spec::PrincipalSetup {
+            principal: principal.name.clone(),
+            description: declaration.description,
+            operation_id: declaration.operation_id,
+            collects,
+            issues,
+        };
+        if setups.insert(principal.name.clone(), setup).is_some() {
+            return Err(Error::DuplicatePrincipalSetup {
+                principal: principal.name.clone(),
+            });
+        }
+    }
+    Ok(setups)
+}
 
 pub fn compile(
     modules: impl IntoIterator<Item = Module>,
@@ -17,6 +122,8 @@ pub fn compile(
     let mut spec = BehaviorSpec::default();
     let mut fault_uses = Vec::new();
     let mut webhook_policy = None;
+    let mut principal_declarations = Vec::new();
+    let mut profile_declarations = Vec::new();
     install_builtin_protocol_errors(&mut spec);
 
     for module in modules {
@@ -33,8 +140,12 @@ pub fn compile(
         collect_fault_profiles(&mut spec, module.fault_profiles)?;
         collect_scenarios(&mut spec, module.scenarios)?;
         collect_webhook_policy(&mut webhook_policy, module.webhook_policies)?;
-        collect_principals(&mut spec, module.principals, api)?;
+        principal_declarations.extend(module.principals);
+        profile_declarations.extend(module.profiles);
     }
+
+    crate::principal::compile(&mut spec, principal_declarations, api)?;
+    crate::profile::compile(&mut spec, profile_declarations, api)?;
 
     if let Some(policy) = webhook_policy {
         spec.webhook_policy = policy;
@@ -48,77 +159,6 @@ pub fn compile(
     validate_faults(&spec, api)?;
     validate_scenarios(&spec, api)?;
     Ok(spec)
-}
-
-fn collect_principals(
-    spec: &mut BehaviorSpec,
-    declarations: impl IntoIterator<Item = crate::PrincipalDeclaration>,
-    api: &ApiContract,
-) -> Result<()> {
-    for declaration in declarations {
-        let mut credentials = BTreeMap::new();
-        for declared in declaration.credentials {
-            let Some(scheme) = api.security_schemes.get(&declared.scheme) else {
-                return Err(Error::UnknownPrincipalSecurityScheme {
-                    principal: declaration.name.clone(),
-                    scheme: declared.scheme,
-                });
-            };
-            let compatible = match (&declared.credential, scheme) {
-                (PrincipalCredential::Basic { .. }, SecurityScheme::Http { scheme, .. }) => {
-                    scheme.eq_ignore_ascii_case("basic")
-                }
-                (PrincipalCredential::Secret { .. }, SecurityScheme::Http { scheme, .. }) => {
-                    !scheme.eq_ignore_ascii_case("basic")
-                }
-                (
-                    PrincipalCredential::Secret { .. },
-                    SecurityScheme::ApiKey { .. }
-                    | SecurityScheme::OAuth2
-                    | SecurityScheme::OpenIdConnect,
-                ) => true,
-                _ => false,
-            };
-            if !compatible {
-                return Err(Error::InvalidPrincipalCredential {
-                    principal: declaration.name.clone(),
-                    scheme: declared.scheme,
-                });
-            }
-            if credentials
-                .insert(declared.scheme.clone(), declared.credential)
-                .is_some()
-            {
-                return Err(Error::DuplicatePrincipalCredential {
-                    principal: declaration.name.clone(),
-                    scheme: declared.scheme,
-                });
-            }
-        }
-        let principal = Principal {
-            name: declaration.name.clone(),
-            status: declaration.status,
-            credentials,
-            grants: declaration.grants.into_iter().collect(),
-        };
-        insert_description(
-            spec,
-            DescriptionKind::Principal,
-            None,
-            &declaration.name,
-            declaration.description,
-        );
-        if spec
-            .principals
-            .insert(declaration.name.clone(), principal)
-            .is_some()
-        {
-            return Err(Error::DuplicatePrincipal {
-                name: declaration.name,
-            });
-        }
-    }
-    Ok(())
 }
 
 fn collect_webhook_policy(

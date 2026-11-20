@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::Serialize;
-use simile_spec::{EffectOrigin, ParameterLocation, PrincipalStatus, SecurityScheme};
+use simile_spec::{EffectOrigin, ParameterLocation, ProfileStatus, SecurityScheme};
 
 use crate::{Error, Result};
 
@@ -67,7 +67,8 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         .iter()
         .flat_map(|effect| effect.operations().iter().cloned())
         .collect::<BTreeSet<_>>();
-    let principals = artifact.principals().collect::<Vec<_>>();
+    let principal_count = artifact.principals().count();
+    let profiles = artifact.profiles().collect::<Vec<_>>();
     let mut secured_operations = 0;
     for scheme in artifact.security_schemes() {
         if matches!(scheme.scheme(), SecurityScheme::MutualTls) {
@@ -92,10 +93,14 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
             let exercised = requirements.iter().any(|requirement| {
                 requirement.schemes().all(|(scheme, scopes)| {
                     let scopes = scopes.collect::<Vec<_>>();
-                    principals.iter().any(|principal| {
-                        principal.status() == PrincipalStatus::Active
-                            && principal.credential(scheme).is_some()
-                            && scopes.iter().all(|scope| principal.grants(scope))
+                    profiles.iter().any(|profile| {
+                        profile.status() == ProfileStatus::Active
+                            && profile.credential(scheme).is_some()
+                            && artifact
+                                .principal(profile.principal())
+                                .is_some_and(|principal| {
+                                    scopes.iter().all(|scope| principal.grants(scheme, scope))
+                                })
                     })
                 })
             });
@@ -104,8 +109,8 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
                     AuditSeverity::Warning,
                     "auth.unexercised",
                     operation.key(),
-                    "No active test principal can satisfy any declared security alternative.",
-                    "Declare a local principal with the required credential schemes and grants.",
+                    "No active test profile can satisfy any declared security alternative.",
+                    "Declare a principal contract with the required grants and a local profile carrying its credentials.",
                 ));
             }
         }
@@ -256,7 +261,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         provider_authored_effects: summary.provider_authored_effects,
         convention_inferred_effects: summary.convention_inferred_effects,
         secured_operations,
-        principals: principals.len(),
+        principals: principal_count,
         webhooks: webhook_count,
         signed_webhooks: webhook_policy.signing.is_some(),
         errors,

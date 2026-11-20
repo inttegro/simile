@@ -53,7 +53,6 @@ fn dispatch_batch(service: &Service) -> Result<DispatchReport, DeliveryError> {
         ..DispatchReport::default()
     };
     let agent = ureq::Agent::new_with_defaults();
-    let signing = service.artifact().webhook_policy().signing;
     for lease in leases {
         match service.dependency_readiness(&lease)? {
             DependencyReadiness::Ready => {}
@@ -74,7 +73,7 @@ fn dispatch_batch(service: &Service) -> Result<DispatchReport, DeliveryError> {
                 continue;
             }
         }
-        match dispatch(service, &agent, signing.as_ref(), &lease) {
+        match dispatch(service, &agent, &lease) {
             Ok(()) => {
                 service.acknowledge_work(&lease)?;
                 report.completed += 1;
@@ -175,7 +174,6 @@ fn webhook_identity(lease: &WorkLease) -> (&str, &str, &[String]) {
 fn dispatch(
     service: &Service,
     agent: &ureq::Agent,
-    signing: Option<&WebhookSigning>,
     lease: &WorkLease,
 ) -> Result<(), DeliveryError> {
     match lease.work() {
@@ -185,15 +183,19 @@ fn dispatch(
             content_type,
             target,
             body,
+            profile,
             ..
-        } => deliver_webhook(
-            agent,
-            signing,
-            method,
-            content_type.as_deref(),
-            target,
-            body,
-        ),
+        } => {
+            let signing = service.webhook_signing_for(profile.as_deref())?;
+            deliver_webhook(
+                agent,
+                signing.as_ref(),
+                method,
+                content_type.as_deref(),
+                target,
+                body,
+            )
+        }
     }
 }
 

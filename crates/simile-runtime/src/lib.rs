@@ -18,7 +18,7 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
-pub use auth::{AuthenticatedPrincipal, authenticate};
+pub use auth::{AuthenticatedProfile, authenticate, authenticate_with_profiles};
 pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation, PlannedWebhook};
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
@@ -515,6 +515,52 @@ pub fn synthesize_request_value(
     request: SynthesisRequest<'_>,
 ) -> Result<SynthesizedValue> {
     synthesize_request_value_with_seed(artifact, request, rand::random())
+}
+
+/// Synthesize the smallest valid transport-neutral request value.
+///
+/// Setup flows use this form so omitted optional inputs stay omitted. Fuzzed
+/// synthesis remains available to callers that are deliberately exploring the
+/// contract's wider input space.
+pub fn synthesize_minimal_request_value(
+    artifact: &Artifact,
+    request: SynthesisRequest<'_>,
+) -> Result<SynthesizedValue> {
+    let operation =
+        artifact
+            .operation(request.operation)
+            .ok_or_else(|| Error::UnknownOperation {
+                operation: request.operation.to_owned(),
+            })?;
+    let plan = operation
+        .request_body()
+        .ok_or_else(|| Error::BodyNotDeclared {
+            operation: request.operation.to_owned(),
+        })?;
+    let content_type = select_request_media_type(&plan, request.content_type).ok_or_else(|| {
+        Error::NoSynthesisMediaType {
+            operation: request.operation.to_owned(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        }
+    })?;
+    let selected = plan
+        .select(&content_type)
+        .ok_or_else(|| Error::UnsupportedMediaType {
+            operation: request.operation.to_owned(),
+            content_type: content_type.clone(),
+            expected: plan.media_types().map(str::to_owned).collect(),
+        })?;
+    let value = selected
+        .synthesize()
+        .map_err(|source| Error::Synthesis { source })?;
+    let issues = selected.validate(&value);
+    if !issues.is_empty() {
+        return Err(Error::InvalidBody { issues });
+    }
+    Ok(SynthesizedValue {
+        media_type: selected.requested().to_owned(),
+        value,
+    })
 }
 
 /// Synthesize a reproducible transport-neutral request value from the compiled schema.

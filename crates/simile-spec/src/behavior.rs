@@ -29,6 +29,8 @@ pub enum DescriptionKind {
     FaultProfile,
     Effect,
     Principal,
+    Profile,
+    PrincipalSetup,
 }
 
 /// One human-readable description retained in a compiled service artifact.
@@ -413,6 +415,8 @@ pub struct BehaviorSpec {
     pub webhooks: BTreeMap<String, crate::WebhookContract>,
     pub webhook_policy: WebhookPolicy,
     pub principals: BTreeMap<String, crate::Principal>,
+    pub profiles: BTreeMap<String, crate::Profile>,
+    pub principal_setups: BTreeMap<String, crate::PrincipalSetup>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -449,4 +453,6 @@ pub struct CompiledService {
     pub webhooks: BTreeMap<String, crate::WebhookContract>,
     pub webhook_policy: WebhookPolicy,
     pub principals: BTreeMap<String, crate::Principal>,
+    pub profiles: BTreeMap<String, crate::Profile>,
+    pub principal_setups: BTreeMap<String, crate::PrincipalSetup>,
 }

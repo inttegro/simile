@@ -18,6 +18,7 @@ simile-compiler.workspace = true
 simile-heuristics.workspace = true
 simile-hcl.workspace = true
 simile-runtime.workspace = true
+simile-service.workspace = true
 simile-spec.workspace = true
 simile-stack.workspace = true
 simile-typescript.workspace = true

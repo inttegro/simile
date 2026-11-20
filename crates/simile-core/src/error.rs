@@ -211,6 +211,34 @@ pub enum Error {
     Resource(#[from] simile_stack::ResourceError),
 
     #[error(transparent)]
+    Service(#[from] simile_service::Error),
+
+    #[error("service `{service}` does not declare principal setup")]
+    SetupNotDeclared { service: String },
+
+    #[error("service `{service}` does not declare principal setup for `{principal}`")]
+    PrincipalSetupNotDeclared { service: String, principal: String },
+
+    #[error(
+        "service `{service}` declares setup for multiple principals ({principals:?}); pass --principal"
+    )]
+    PrincipalSetupAmbiguous {
+        service: String,
+        principals: Vec<String>,
+    },
+
+    #[error("service `{service}` has no profile named `{profile}`")]
+    ProfileNotFound { service: String, profile: String },
+
+    #[error("could not {action} profile credentials `{path}`: {source}")]
+    ProfileCredentialsIo {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error(transparent)]
     Artifact(#[from] simile_artifact::Error),
 
     #[error(transparent)]

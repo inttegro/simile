@@ -463,5 +463,7 @@ fn example_service() -> CompiledService {
         webhooks: BTreeMap::new(),
         webhook_policy: simile_spec::WebhookPolicy::default(),
         principals: BTreeMap::new(),
+        profiles: BTreeMap::new(),
+        principal_setups: BTreeMap::new(),
     }
 }

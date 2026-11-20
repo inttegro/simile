@@ -5,12 +5,14 @@ use crate::ast::{
     ContractDeclaration, ListenDeclaration, Module, ServiceDeclaration, ServiceDocument, Source,
     SourceDeclaration,
 };
-use crate::auth::principal;
 use crate::parse::{
     apply_error_set, async_operation, attribute, backend, behavior, effect, error_set, fault,
     fault_profile, fault_uses, labels, optional_description, protocol_error, reject_attributes,
     reject_blocks, scenario, string_array,
 };
+use crate::principal::principal;
+use crate::profile::profile;
+use crate::setup::principal_setup;
 use crate::webhook::{webhook_contract, webhook_policy};
 use crate::{Error, Result};
 
@@ -23,6 +25,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         source: error,
     })?;
     let mut service = None;
+    let mut principal_setups = Vec::new();
     let mut inline_behavior = Module {
         source: source.name.to_owned(),
         backends: Vec::new(),
@@ -39,6 +42,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         webhooks: Vec::new(),
         webhook_policies: Vec::new(),
         principals: Vec::new(),
+        profiles: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -57,6 +61,9 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                         });
                     }
                     service = Some(parse_service_block(block, source.name)?);
+                }
+                "principal_setup" => {
+                    principal_setups.push(principal_setup(block, source.name)?);
                 }
                 "backend" => inline_behavior.backends.push(backend(block, source.name)?),
                 "behavior" => inline_behavior
@@ -94,6 +101,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "principal" => inline_behavior
                     .principals
                     .push(principal(block, source.name)?),
+                "profile" => inline_behavior.profiles.push(profile(block, source.name)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: source.name.to_owned(),
@@ -109,6 +117,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
     })?;
     Ok(ServiceDocument {
         service,
+        principal_setups,
         inline_behavior,
     })
 }

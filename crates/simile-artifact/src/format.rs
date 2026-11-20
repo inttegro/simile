@@ -14,13 +14,14 @@ use simile_schema::{
 use simile_spec::{
     BehaviorOrigin, CompiledService, DescriptionKind, EffectAction, EffectActionKind, EffectOrigin,
     EffectValue, FaultAction, FaultPhase, HttpMethod, OpenApiFeature, OutcomeProvenance,
-    ParameterLocation, PrincipalCredential, PrincipalStatus, ResourceKind, ResourceRef,
-    ResponseStatus, SecurityScheme, WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
+    ParameterLocation, PrincipalSetup, ProfileCredential, ProfileStatus, ResourceKind, ResourceRef,
+    ResponseStatus, SecurityScheme, SetupBinding, SetupCollect, SetupIssue, SetupIssueSource,
+    SetupValueType, WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 18;
+pub const FORMAT_VERSION: u16 = 20;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -72,6 +73,8 @@ pub struct ArtifactSummary {
     pub webhook_policy: WebhookPolicy,
     pub security_schemes: usize,
     pub principals: usize,
+    pub profiles: usize,
+    pub principal_setups: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -132,6 +135,12 @@ pub struct ArtifactSecurityScheme<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct ArtifactPrincipal<'a> {
     record: &'a PrincipalRecord,
+    strings: &'a [String],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactProfile<'a> {
+    record: &'a ProfileRecord,
     strings: &'a [String],
 }
 
@@ -410,14 +419,56 @@ impl<'a> ArtifactPrincipal<'a> {
     }
 
     #[must_use]
-    pub fn status(&self) -> PrincipalStatus {
-        decode_principal_status(self.record.1)
+    pub fn grants(&self, scheme: &str, scope: &str) -> bool {
+        self.record
+            .1
+            .iter()
+            .find(|credential| self.strings[credential.0 as usize] == scheme)
+            .is_some_and(|credential| {
+                credential
+                    .1
+                    .iter()
+                    .any(|grant| self.strings[*grant as usize] == scope)
+            })
+    }
+
+    pub fn credential_schemes(&self) -> impl Iterator<Item = &'a str> + 'a {
+        self.record
+            .1
+            .iter()
+            .map(|credential| self.strings[credential.0 as usize].as_str())
+    }
+
+    pub fn granted_scopes(&self) -> impl Iterator<Item = &'a str> + 'a {
+        self.record.1.iter().flat_map(|credential| {
+            credential
+                .1
+                .iter()
+                .map(|grant| self.strings[*grant as usize].as_str())
+        })
+    }
+}
+
+impl<'a> ArtifactProfile<'a> {
+    #[must_use]
+    pub fn name(&self) -> &'a str {
+        &self.strings[self.record.0 as usize]
+    }
+
+    #[must_use]
+    pub fn principal(&self) -> &'a str {
+        &self.strings[self.record.1 as usize]
+    }
+
+    #[must_use]
+    pub fn status(&self) -> ProfileStatus {
+        decode_profile_status(self.record.2)
     }
 
     #[must_use]
     pub fn credential(&self, scheme: &str) -> Option<ArtifactCredential<'a>> {
         self.record
-            .2
+            .3
             .iter()
             .find(|credential| self.strings[credential.0 as usize] == scheme)
             .map(|credential| match credential.1 {
@@ -435,26 +486,11 @@ impl<'a> ArtifactPrincipal<'a> {
             })
     }
 
-    #[must_use]
-    pub fn grants(&self, scope: &str) -> bool {
-        self.record
-            .3
-            .iter()
-            .any(|grant| self.strings[*grant as usize] == scope)
-    }
-
     pub fn credential_schemes(&self) -> impl Iterator<Item = &'a str> + 'a {
         self.record
-            .2
-            .iter()
-            .map(|credential| self.strings[credential.0 as usize].as_str())
-    }
-
-    pub fn granted_scopes(&self) -> impl Iterator<Item = &'a str> + 'a {
-        self.record
             .3
             .iter()
-            .map(|grant| self.strings[*grant as usize].as_str())
+            .map(|credential| self.strings[credential.0 as usize].as_str())
     }
 }
 
@@ -923,6 +959,8 @@ impl Artifact {
             webhook_policy: self.webhook_policy(),
             security_schemes: self.payload.10.len(),
             principals: self.payload.11.len(),
+            profiles: self.payload.12.len(),
+            principal_setups: self.payload.13.len(),
         }
     }
 
@@ -1008,6 +1046,94 @@ impl Artifact {
             record,
             strings: &self.payload.1,
         })
+    }
+
+    #[must_use]
+    pub fn principal(&self, name: &str) -> Option<ArtifactPrincipal<'_>> {
+        self.payload
+            .11
+            .binary_search_by(|record| self.string(record.0).cmp(name))
+            .ok()
+            .map(|index| ArtifactPrincipal {
+                record: &self.payload.11[index],
+                strings: &self.payload.1,
+            })
+    }
+
+    pub fn profiles(&self) -> impl Iterator<Item = ArtifactProfile<'_>> {
+        self.payload.12.iter().map(|record| ArtifactProfile {
+            record,
+            strings: &self.payload.1,
+        })
+    }
+
+    /// Return every provider-authored principal onboarding workflow.
+    pub fn principal_setups(&self) -> impl Iterator<Item = PrincipalSetup> + '_ {
+        self.payload
+            .13
+            .iter()
+            .map(|record| self.decode_setup(record))
+    }
+
+    /// Find the onboarding workflow for one principal.
+    #[must_use]
+    pub fn principal_setup(&self, principal: &str) -> Option<PrincipalSetup> {
+        self.payload
+            .13
+            .binary_search_by(|record| self.string(record.0).cmp(principal))
+            .ok()
+            .map(|index| self.decode_setup(&self.payload.13[index]))
+    }
+
+    fn decode_setup(&self, record: &SetupRecord) -> PrincipalSetup {
+        PrincipalSetup {
+            principal: self.string(record.0).to_owned(),
+            description: record.1.map(|id| self.string(id).to_owned()),
+            operation_id: self.string(record.2).to_owned(),
+            collects: record
+                .3
+                .iter()
+                .map(|collect| {
+                    let name = self.string(collect.0).to_owned();
+                    (
+                        name.clone(),
+                        SetupCollect {
+                            name,
+                            description: collect.1.map(|id| self.string(id).to_owned()),
+                            required: collect.2,
+                            value_type: decode_setup_value_type(collect.3),
+                            request_pointer: self.string(collect.4).to_owned(),
+                            binding: collect.5.map(decode_setup_binding),
+                        },
+                    )
+                })
+                .collect(),
+            issues: record
+                .4
+                .iter()
+                .map(|issue| {
+                    let name = self.string(issue.0).to_owned();
+                    let payload = self.string(issue.3).to_owned();
+                    (
+                        name.clone(),
+                        SetupIssue {
+                            name,
+                            description: issue.1.map(|id| self.string(id).to_owned()),
+                            source: match issue.2 {
+                                0 => SetupIssueSource::Response { pointer: payload },
+                                1 => SetupIssueSource::Token { prefix: payload },
+                                _ => {
+                                    unreachable!("artifact validation rejects setup issue sources")
+                                }
+                            },
+                            credential: issue.4.map(|id| self.string(id).to_owned()),
+                            sensitive: issue.5,
+                            binding: issue.6.map(decode_setup_binding),
+                        },
+                    )
+                })
+                .collect(),
+        }
     }
 
     /// Return the compiled mapping for a transport/runtime failure cause.
@@ -1473,6 +1599,31 @@ struct Payload(
     Vec<WebhookRecord>,
     Vec<SecuritySchemeRecord>,
     Vec<PrincipalRecord>,
+    Vec<ProfileRecord>,
+    Vec<SetupRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SetupRecord(
+    StringId,
+    Option<StringId>,
+    StringId,
+    Vec<SetupCollectRecord>,
+    Vec<SetupIssueRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SetupCollectRecord(StringId, Option<StringId>, bool, u8, StringId, Option<u8>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SetupIssueRecord(
+    StringId,
+    Option<StringId>,
+    u8,
+    StringId,
+    Option<StringId>,
+    bool,
+    Option<u8>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1531,7 +1682,13 @@ struct SecuritySchemeRecord(
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct PrincipalRecord(StringId, u8, Vec<CredentialRecord>, Vec<StringId>);
+struct PrincipalRecord(StringId, Vec<PrincipalCredentialContractRecord>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct PrincipalCredentialContractRecord(StringId, Vec<StringId>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ProfileRecord(StringId, StringId, u8, Vec<CredentialRecord>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct CredentialRecord(StringId, u8, StringId, Option<StringId>);
@@ -2176,14 +2333,36 @@ impl Payload {
                 let credentials = principal
                     .credentials
                     .iter()
+                    .map(|(scheme, contract)| {
+                        Ok(PrincipalCredentialContractRecord(
+                            strings.id(scheme)?,
+                            contract
+                                .grants
+                                .iter()
+                                .map(|grant| strings.id(grant))
+                                .collect::<Result<Vec<_>>>()?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(PrincipalRecord(strings.id(&principal.name)?, credentials))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let profiles = service
+            .profiles
+            .values()
+            .map(|profile| {
+                let credentials = profile
+                    .credentials
+                    .iter()
                     .map(|(scheme, credential)| match credential {
-                        PrincipalCredential::Secret { value } => Ok(CredentialRecord(
+                        ProfileCredential::Secret { value } => Ok(CredentialRecord(
                             strings.id(scheme)?,
                             0,
                             strings.id(value)?,
                             None,
                         )),
-                        PrincipalCredential::Basic { username, password } => Ok(CredentialRecord(
+                        ProfileCredential::Basic { username, password } => Ok(CredentialRecord(
                             strings.id(scheme)?,
                             1,
                             strings.id(username)?,
@@ -2191,15 +2370,58 @@ impl Payload {
                         )),
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(PrincipalRecord(
-                    strings.id(&principal.name)?,
-                    encode_principal_status(principal.status),
+                Ok(ProfileRecord(
+                    strings.id(&profile.name)?,
+                    strings.id(&profile.principal)?,
+                    encode_profile_status(profile.status),
                     credentials,
-                    principal
-                        .grants
-                        .iter()
-                        .map(|grant| strings.id(grant))
-                        .collect::<Result<Vec<_>>>()?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let setups = service
+            .principal_setups
+            .values()
+            .map(|setup| {
+                let collects = setup
+                    .collects
+                    .values()
+                    .map(|collect| {
+                        Ok(SetupCollectRecord(
+                            strings.id(&collect.name)?,
+                            strings.optional(collect.description.as_deref())?,
+                            collect.required,
+                            encode_setup_value_type(collect.value_type),
+                            strings.id(&collect.request_pointer)?,
+                            collect.binding.map(encode_setup_binding),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let issues = setup
+                    .issues
+                    .values()
+                    .map(|issue| {
+                        let (kind, payload) = match &issue.source {
+                            SetupIssueSource::Response { pointer } => (0, pointer.as_str()),
+                            SetupIssueSource::Token { prefix } => (1, prefix.as_str()),
+                        };
+                        Ok(SetupIssueRecord(
+                            strings.id(&issue.name)?,
+                            strings.optional(issue.description.as_deref())?,
+                            kind,
+                            strings.id(payload)?,
+                            strings.optional(issue.credential.as_deref())?,
+                            issue.sensitive,
+                            issue.binding.map(encode_setup_binding),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok::<SetupRecord, Error>(SetupRecord(
+                    strings.id(&setup.principal)?,
+                    strings.optional(setup.description.as_deref())?,
+                    strings.id(&setup.operation_id)?,
+                    collects,
+                    issues,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -2220,6 +2442,8 @@ impl Payload {
             webhooks,
             security_schemes,
             principals,
+            profiles,
+            setups,
         ))
     }
 
@@ -2242,6 +2466,11 @@ impl Payload {
             .10
             .iter()
             .map(|scheme| scheme.0)
+            .collect::<BTreeSet<_>>();
+        let operation_ids = self
+            .3
+            .iter()
+            .filter_map(|operation| operation.4)
             .collect::<BTreeSet<_>>();
         validate_index(self.0, strings, "compiler version")?;
         validate_index(self.2.0, strings, "service title")?;
@@ -2321,12 +2550,52 @@ impl Payload {
             }
         }
         for description in &self.2.10 {
-            if description.0 > 12 {
+            if description.0 > 14 {
                 return Err(Error::Invalid("description kind"));
             }
             validate_optional_index(description.1, strings, "description parent")?;
             validate_index(description.2, strings, "description name")?;
             validate_index(description.3, strings, "description text")?;
+        }
+
+        for setup in &self.13 {
+            validate_index(setup.0, strings, "principal setup principal")?;
+            validate_optional_index(setup.1, strings, "setup description")?;
+            validate_index(setup.2, strings, "setup operation")?;
+            if !operation_ids.contains(&setup.2) {
+                return Err(Error::Invalid("setup operation reference"));
+            }
+            let mut collect_names = BTreeSet::new();
+            for collect in &setup.3 {
+                validate_index(collect.0, strings, "setup collect name")?;
+                if !collect_names.insert(collect.0) {
+                    return Err(Error::Invalid("setup collect ordering"));
+                }
+                validate_optional_index(collect.1, strings, "setup collect description")?;
+                if collect.3 > 4 || collect.5.is_some_and(|binding| binding > 1) {
+                    return Err(Error::Invalid("setup collect type or binding"));
+                }
+                validate_index(collect.4, strings, "setup collect request pointer")?;
+            }
+            let mut issue_names = BTreeSet::new();
+            for issue in &setup.4 {
+                validate_index(issue.0, strings, "setup issue name")?;
+                if !issue_names.insert(issue.0) {
+                    return Err(Error::Invalid("setup issue ordering"));
+                }
+                validate_optional_index(issue.1, strings, "setup issue description")?;
+                if issue.2 > 1 || issue.6.is_some_and(|binding| binding > 1) {
+                    return Err(Error::Invalid("setup issue source or binding"));
+                }
+                validate_index(issue.3, strings, "setup issue source")?;
+                validate_optional_index(issue.4, strings, "setup issue credential")?;
+                if issue
+                    .4
+                    .is_some_and(|credential| !security_scheme_names.contains(&credential))
+                {
+                    return Err(Error::Invalid("setup issue credential reference"));
+                }
+            }
         }
         if self.2.11 > 1 {
             return Err(Error::Invalid("webhook ordering policy"));
@@ -2585,31 +2854,80 @@ impl Payload {
                 return Err(Error::Invalid("security scheme ordering"));
             }
         }
+        let mut principal_names = BTreeSet::new();
         for principal in &self.11 {
             validate_index(principal.0, strings, "principal name")?;
-            if principal.1 > 2 || principal.2.is_empty() {
-                return Err(Error::Invalid("principal"));
-            }
-            for credential in &principal.2 {
+            principal_names.insert(principal.0);
+            for credential in &principal.1 {
                 validate_index(credential.0, strings, "principal credential scheme")?;
-                if !security_scheme_names.contains(&credential.0) || credential.1 > 1 {
+                if !security_scheme_names.contains(&credential.0) {
                     return Err(Error::Invalid("principal credential"));
                 }
-                validate_index(credential.2, strings, "principal credential value")?;
-                validate_optional_index(credential.3, strings, "principal credential password")?;
-                if (credential.1 == 0 && credential.3.is_some())
-                    || (credential.1 == 1 && credential.3.is_none())
-                {
-                    return Err(Error::Invalid("principal credential payload"));
+                for grant in &credential.1 {
+                    validate_index(*grant, strings, "principal credential grant")?;
                 }
-            }
-            for grant in &principal.3 {
-                validate_index(*grant, strings, "principal grant")?;
             }
         }
         for principals in self.11.windows(2) {
             if self.1[principals[0].0 as usize] >= self.1[principals[1].0 as usize] {
                 return Err(Error::Invalid("principal ordering"));
+            }
+        }
+        for profile in &self.12 {
+            validate_index(profile.0, strings, "profile name")?;
+            validate_index(profile.1, strings, "profile principal")?;
+            if !principal_names.contains(&profile.1) || profile.2 > 2 {
+                return Err(Error::Invalid("profile"));
+            }
+            let principal = self
+                .11
+                .iter()
+                .find(|principal| principal.0 == profile.1)
+                .ok_or(Error::Invalid("profile principal"))?;
+            for credential in &profile.3 {
+                validate_index(credential.0, strings, "profile credential scheme")?;
+                if !principal
+                    .1
+                    .iter()
+                    .any(|contract| contract.0 == credential.0)
+                    || credential.1 > 1
+                {
+                    return Err(Error::Invalid("profile credential"));
+                }
+                validate_index(credential.2, strings, "profile credential value")?;
+                validate_optional_index(credential.3, strings, "profile credential password")?;
+                if (credential.1 == 0 && credential.3.is_some())
+                    || (credential.1 == 1 && credential.3.is_none())
+                {
+                    return Err(Error::Invalid("profile credential payload"));
+                }
+            }
+        }
+        for profiles in self.12.windows(2) {
+            if self.1[profiles[0].0 as usize] >= self.1[profiles[1].0 as usize] {
+                return Err(Error::Invalid("profile ordering"));
+            }
+        }
+        for setups in self.13.windows(2) {
+            if self.1[setups[0].0 as usize] >= self.1[setups[1].0 as usize] {
+                return Err(Error::Invalid("principal setup ordering"));
+            }
+        }
+        for setup in &self.13 {
+            if !principal_names.contains(&setup.0) {
+                return Err(Error::Invalid("principal setup principal"));
+            }
+            let principal = self
+                .11
+                .iter()
+                .find(|principal| principal.0 == setup.0)
+                .ok_or(Error::Invalid("principal setup principal"))?;
+            for issue in &setup.4 {
+                if issue.4.is_some_and(|credential| {
+                    !principal.1.iter().any(|contract| contract.0 == credential)
+                }) {
+                    return Err(Error::Invalid("principal setup credential"));
+                }
             }
         }
         Ok(())
@@ -2962,16 +3280,46 @@ impl StringTable {
         }
         for principal in service.principals.values() {
             values.insert(principal.name.clone());
-            values.extend(principal.grants.iter().cloned());
-            for (scheme, credential) in &principal.credentials {
+            for (scheme, contract) in &principal.credentials {
+                values.insert(scheme.clone());
+                values.extend(contract.grants.iter().cloned());
+            }
+        }
+        for profile in service.profiles.values() {
+            values.insert(profile.name.clone());
+            values.insert(profile.principal.clone());
+            for (scheme, credential) in &profile.credentials {
                 values.insert(scheme.clone());
                 match credential {
-                    PrincipalCredential::Secret { value } => {
+                    ProfileCredential::Secret { value } => {
                         values.insert(value.clone());
                     }
-                    PrincipalCredential::Basic { username, password } => {
+                    ProfileCredential::Basic { username, password } => {
                         values.insert(username.clone());
                         values.insert(password.clone());
+                    }
+                }
+            }
+        }
+        for setup in service.principal_setups.values() {
+            values.insert(setup.principal.clone());
+            values.insert(setup.operation_id.clone());
+            values.extend(setup.description.iter().cloned());
+            for collect in setup.collects.values() {
+                values.insert(collect.name.clone());
+                values.insert(collect.request_pointer.clone());
+                values.extend(collect.description.iter().cloned());
+            }
+            for issue in setup.issues.values() {
+                values.insert(issue.name.clone());
+                values.extend(issue.description.iter().cloned());
+                values.extend(issue.credential.iter().cloned());
+                match &issue.source {
+                    SetupIssueSource::Response { pointer } => {
+                        values.insert(pointer.clone());
+                    }
+                    SetupIssueSource::Token { prefix } => {
+                        values.insert(prefix.clone());
                     }
                 }
             }
@@ -3405,6 +3753,8 @@ const fn encode_description_kind(kind: DescriptionKind) -> u8 {
         DescriptionKind::Effect => 10,
         DescriptionKind::Webhook => 11,
         DescriptionKind::Principal => 12,
+        DescriptionKind::Profile => 13,
+        DescriptionKind::PrincipalSetup => 14,
     }
 }
 
@@ -3423,7 +3773,45 @@ fn decode_description_kind(kind: u8) -> DescriptionKind {
         10 => DescriptionKind::Effect,
         11 => DescriptionKind::Webhook,
         12 => DescriptionKind::Principal,
+        13 => DescriptionKind::Profile,
+        14 => DescriptionKind::PrincipalSetup,
         _ => unreachable!("artifact validation rejects unknown description kinds"),
+    }
+}
+
+const fn encode_setup_value_type(value_type: SetupValueType) -> u8 {
+    match value_type {
+        SetupValueType::String => 0,
+        SetupValueType::Url => 1,
+        SetupValueType::Boolean => 2,
+        SetupValueType::Integer => 3,
+        SetupValueType::Json => 4,
+    }
+}
+
+fn decode_setup_value_type(value_type: u8) -> SetupValueType {
+    match value_type {
+        0 => SetupValueType::String,
+        1 => SetupValueType::Url,
+        2 => SetupValueType::Boolean,
+        3 => SetupValueType::Integer,
+        4 => SetupValueType::Json,
+        _ => unreachable!("artifact validation rejects setup value types"),
+    }
+}
+
+const fn encode_setup_binding(binding: SetupBinding) -> u8 {
+    match binding {
+        SetupBinding::WebhookTarget => 0,
+        SetupBinding::WebhookSigningSecret => 1,
+    }
+}
+
+fn decode_setup_binding(binding: u8) -> SetupBinding {
+    match binding {
+        0 => SetupBinding::WebhookTarget,
+        1 => SetupBinding::WebhookSigningSecret,
+        _ => unreachable!("artifact validation rejects setup bindings"),
     }
 }
 
@@ -3612,20 +4000,20 @@ fn decode_security_scheme(record: &SecuritySchemeRecord, strings: &[String]) -> 
     }
 }
 
-const fn encode_principal_status(status: PrincipalStatus) -> u8 {
+const fn encode_profile_status(status: ProfileStatus) -> u8 {
     match status {
-        PrincipalStatus::Active => 0,
-        PrincipalStatus::Revoked => 1,
-        PrincipalStatus::Expired => 2,
+        ProfileStatus::Active => 0,
+        ProfileStatus::Revoked => 1,
+        ProfileStatus::Expired => 2,
     }
 }
 
-fn decode_principal_status(status: u8) -> PrincipalStatus {
+fn decode_profile_status(status: u8) -> ProfileStatus {
     match status {
-        0 => PrincipalStatus::Active,
-        1 => PrincipalStatus::Revoked,
-        2 => PrincipalStatus::Expired,
-        _ => unreachable!("artifact validation rejects unknown principal statuses"),
+        0 => ProfileStatus::Active,
+        1 => ProfileStatus::Revoked,
+        2 => ProfileStatus::Expired,
+        _ => unreachable!("artifact validation rejects unknown profile statuses"),
     }
 }
 
@@ -3701,6 +4089,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
         );
 
         assert!(matches!(
@@ -3745,6 +4135,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),

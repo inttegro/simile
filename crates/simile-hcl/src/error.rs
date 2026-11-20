@@ -24,6 +24,42 @@ pub enum Error {
     #[error("{file}: service configuration contains more than one `service` block")]
     DuplicateService { file: String },
 
+    #[error("principal_setup `{principal}` references unknown operationId `{operation_id}`")]
+    UnknownSetupOperation {
+        principal: String,
+        operation_id: String,
+    },
+
+    #[error("principal_setup `{principal}` collect value `{name}` is declared more than once")]
+    DuplicateSetupCollect { principal: String, name: String },
+
+    #[error("principal_setup `{principal}` issued value `{name}` is declared more than once")]
+    DuplicateSetupIssue { principal: String, name: String },
+
+    #[error("principal_setup is declared more than once for principal `{principal}`")]
+    DuplicatePrincipalSetup { principal: String },
+
+    #[error("principal_setup references unknown principal `{principal}`")]
+    UnknownSetupPrincipal { principal: String },
+
+    #[error(
+        "principal_setup `{principal}` issued value `{issue}` references unknown credential `{credential}`"
+    )]
+    UnknownSetupCredential {
+        principal: String,
+        issue: String,
+        credential: String,
+    },
+
+    #[error(
+        "principal_setup `{principal}` cannot issue credential `{credential}` from `{issue}` as one string"
+    )]
+    InvalidSetupCredential {
+        principal: String,
+        issue: String,
+        credential: String,
+    },
+
     #[error("{file}: {block} block requires {expected} label(s), found {actual}")]
     Labels {
         file: String,
@@ -158,6 +194,29 @@ pub enum Error {
         "principal `{principal}` credential `{scheme}` does not match its OpenAPI security scheme"
     )]
     InvalidPrincipalCredential { principal: String, scheme: String },
+
+    #[error("profile `{name}` is declared more than once")]
+    DuplicateProfile { name: String },
+
+    #[error("profile `{profile}` references unknown principal `{principal}`")]
+    UnknownProfilePrincipal { profile: String, principal: String },
+
+    #[error(
+        "profile `{profile}` references credential `{credential}` absent from principal `{principal}`"
+    )]
+    UnknownProfileCredential {
+        profile: String,
+        principal: String,
+        credential: String,
+    },
+
+    #[error("profile `{profile}` declares credential `{credential}` more than once")]
+    DuplicateProfileCredential { profile: String, credential: String },
+
+    #[error(
+        "profile `{profile}` credential `{credential}` does not match its OpenAPI security scheme"
+    )]
+    InvalidProfileCredential { profile: String, credential: String },
 
     #[error("fault profile `{profile}` lists fault `{fault}` more than once")]
     DuplicateFaultProfileFault { profile: String, fault: String },

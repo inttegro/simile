@@ -11,6 +11,25 @@ service "orders" {
   }
 }
 
+principal "merchant" {}
+
+principal_setup "merchant" {
+  description = "Create one merchant profile for order testing."
+  operation   = "createOrder"
+
+  collect "product" { required = true }
+  collect "quantity" {
+    required = true
+    type     = "integer"
+  }
+
+  issue "local_token" {
+    generate  = "token"
+    prefix    = "sim_"
+    sensitive = true
+  }
+}
+
 backend "queue" "orders" {
   description = "Carries accepted orders to background processors."
 }

@@ -74,14 +74,62 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
     }
 
     if !report.principals.is_empty() {
-        terminal.line(format_args!("{HEADING}Test principals{HEADING:#}"))?;
+        terminal.line(format_args!("{HEADING}Principals{HEADING:#}"))?;
         for principal in &report.principals {
             terminal.line(format_args!(
-                "{LABEL}{}{LABEL:#} · {} · {}{}",
+                "{LABEL}{}{LABEL:#} · {}{}",
                 principal.name,
-                principal.status,
                 principal.security_schemes.join(", "),
                 suffix(principal.description.as_deref())
+            ))?;
+        }
+    }
+
+    if !report.profiles.is_empty() {
+        terminal.line(format_args!("{HEADING}Fixture profiles{HEADING:#}"))?;
+        for profile in &report.profiles {
+            terminal.line(format_args!(
+                "{LABEL}{}{LABEL:#} · {} · {} · {}{}",
+                profile.name,
+                profile.principal,
+                profile.status,
+                profile.security_schemes.join(", "),
+                suffix(profile.description.as_deref())
+            ))?;
+        }
+    }
+
+    if !report.principal_setups.is_empty() {
+        terminal.line(format_args!("{HEADING}Principal setup{HEADING:#}"))?;
+    }
+    for setup in &report.principal_setups {
+        terminal.line(format_args!(
+            "{LABEL}{}{LABEL:#} · runs {}{}",
+            setup.principal,
+            setup.operation_id,
+            suffix(setup.description.as_deref())
+        ))?;
+        for collect in &setup.collects {
+            terminal.line(format_args!(
+                "  {MUTED}collect{MUTED:#} {} · {}{}{}",
+                collect.name,
+                collect.value_type,
+                if collect.required { " · required" } else { "" },
+                suffix(collect.description.as_deref())
+            ))?;
+        }
+        for issue in &setup.issues {
+            terminal.line(format_args!(
+                "  {MUTED}issue{MUTED:#} {} · {}{}{}",
+                issue.name,
+                issue.source,
+                issue
+                    .credential
+                    .as_deref()
+                    .map_or(String::new(), |credential| format!(
+                        " · authenticates {credential}"
+                    )),
+                if issue.sensitive { " · sensitive" } else { "" }
             ))?;
         }
     }

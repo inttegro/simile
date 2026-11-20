@@ -119,6 +119,11 @@ pub(crate) fn prepare_loaded_service(
         behaviors,
         heuristic_policy: Policy::Standard,
     })?;
+    compiled.principal_setups = simile_hcl::compile_principal_setups(
+        document.principal_setups,
+        &compiled.contract,
+        &compiled.principals,
+    )?;
     if let Some(description) = &document.service.description {
         compiled.descriptions.insert(DescriptionEntry {
             kind: DescriptionKind::Service,
@@ -208,11 +213,15 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
         && module.error_set_applications.is_empty()
         && module.protocol_errors.is_empty()
         && module.scenarios.is_empty()
+        && module.fault_uses.is_empty()
         && module.faults.is_empty()
         && module.fault_profiles.is_empty()
         && module.async_operations.is_empty()
         && module.effects.is_empty()
+        && module.webhooks.is_empty()
         && module.webhook_policies.is_empty()
+        && module.principals.is_empty()
+        && module.profiles.is_empty()
 }
 
 #[cfg(test)]
