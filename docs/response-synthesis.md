@@ -32,10 +32,15 @@ type or payload.
 
 ## Body generation
 
-For a response with content, Simile selects a declared JSON media type unless the caller asks for
+For a response with content, Simile prefers a declared JSON media type unless the caller asks for
 one explicitly. Fresh synthesis varies unconstrained values instead of pinning every call to a
 published example or default. Constants remain fixed and enums stay within their declared values.
 The candidate is always validated again before it is encoded.
+
+Generation is minimal by default. Simile includes required properties, properties needed by the
+chosen union branch, request-preserved values, and fields demanded by compiled constraints or the
+selected outcome. It leaves unrelated optional properties absent. A response with a discriminator
+therefore contains one coherent branch instead of every individually constructible branch.
 
 That final validation includes compiled cross-field relationships. A response is returned only when
 the complete candidate is sound under both the supported compiled schema rules and every
@@ -53,8 +58,9 @@ This spec-only path is the baseline and works without request context.
 
 ## Request-aware proof
 
-When the caller supplies a body already returned by `validate_request_body`, response synthesis may
-project values from it. The baseline projection is deliberately structural:
+When the caller supplies values already returned by request validation, response synthesis may
+project values from the body and compiled parameters. The baseline body projection is deliberately
+structural:
 
 - only fields declared at the same path in the response are considered;
 - a value is copied only when the response field schema accepts it;
@@ -74,16 +80,24 @@ request-only secret marked `writeOnly` never enters the response graph.
 Structural projection improves a response but does not prove that it is an operationally reachable
 result. A provider establishes that stronger claim by declaring `x-simile-from-request` on the
 response media type. The compiled relation can bind differently nested fields, derive totals,
-apply request-controlled lifecycle rules, and exclude optional data that cannot appear in that
-flow. Simile applies the relation after synthesis, repairs response-local constraints, reapplies the
-authoritative request values, validates the complete response, and finally proves the relation.
+apply request-controlled lifecycle rules, read path, query, header, and cookie parameters, and
+exclude optional data that cannot appear in that flow. Simile applies the relation after synthesis,
+repairs response-local constraints, reapplies the authoritative request values, validates the
+complete response, and finally proves the relation. A candidate that cannot satisfy every layer is
+reported as an emulation failure; the runtime does not replace it with an unrelated success.
 
 The runtime exposes the distinction as `ResponseSoundness::SchemaOnly` or
 `ResponseSoundness::RequestConstrained`. Read
 [`x-simile-from-request`](/request-response-relations) for the authoring language.
 
-Form, multipart, and non-JSON response encoders are outside the current slice. Declared non-JSON
-content produces an explicit unsupported-encoder error rather than unverified bytes.
+The response encoder supports JSON and `+json`, text media types, form URL encoding, multipart
+form data, and `application/octet-stream`. Text and octet-stream schemas synthesize a string whose
+UTF-8 bytes become the response body. A declared media type without a codec produces an explicit
+unsupported-encoder error.
+
+Declared response headers are compiled and synthesized from their schemas or public examples.
+This includes bodyless redirect responses whose `Location` header is part of the OpenAPI response.
+The HTTP adapter validates every generated header name and value before writing it to the wire.
 
 Read [Outcome fidelity](/outcome-fidelity) for named exact results and
 [Payload soundness](/payload-soundness) for the final proof gate.

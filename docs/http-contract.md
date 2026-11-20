@@ -38,6 +38,10 @@ fidelity audit reports styles that are valid OpenAPI but not executable by the c
 Request bodies support JSON and structured JSON media types, form URL encoding, multipart form
 data, and text media types. See [Request encoding](/request-encoding) for the complete wire mapping.
 
+Responses use the same compiled boundary. The adapter emits JSON, text, form URL-encoded,
+multipart, and octet-stream bodies, plus declared response headers. A bodyless redirect can
+therefore carry its schema-checked `Location` header directly from the compiled contract.
+
 ## Authentication boundary
 
 Route matching resolves the operation before authentication runs. The adapter then evaluates the

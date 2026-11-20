@@ -30,10 +30,13 @@ emulator.
 - operation lookup by stable key or `operationId`
 - JSON, form URL-encoded, multipart form-data, and text request decoding with compiled-schema validation
 - request synthesis when `simile run` receives no request
-- response selection and schema-valid synthesis
+- response selection with minimal schema-valid synthesis
 - structural request-to-response value projection
-- provider-declared request-to-response bindings, derived totals, reachable lifecycle rules, and
-  optional-data eligibility proofs
+- provider-declared body, path, query, header, and cookie bindings; derived values; reachable
+  lifecycle rules; and optional-data eligibility proofs
+- request-derived concatenation, substring, masking, and conditional-default transformations
+- JSON, text, form URL-encoded, multipart, and octet-stream response encoding
+- compiled response-header synthesis, including bodyless redirects with a declared `Location`
 - provider-declared protocol-error rendering, with Simile diagnostics as a fallback
 - process-local replay by idempotency key and GET URI
 - deterministic scenario faults and bounded, seeded stochastic fault profiles
@@ -127,8 +130,10 @@ You can confidently test:
 - whether a supported JSON, form, multipart, or text request satisfies the published schema;
 - whether supported path, query, header, and cookie values satisfy their schemas;
 - how your integration handles declared success and error bodies;
+- how your integration handles declared binary bodies and redirects;
 - public scenarios published by the provider;
 - same-path values returned from a request-aware response;
+- values related from body, path, query, header, and cookie request locations;
 - request-constrained results when the provider publishes `x-simile-from-request`;
 - idempotency conflict handling and stable process-local replay;
 - how an integration handles declared latency or a lost response after commit; and

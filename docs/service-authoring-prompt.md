@@ -89,6 +89,11 @@ When Contract format is `openapi`:
 - Use `x-simile-constraints` only for public relationships involving several values.
 - Use `x-simile-from-request` on a response media type for public request-to-response bindings,
   conditions, omissions, defaults, and derived values.
+- Bind body values with JSON Pointers and bind path, query, header, or cookie values by their public
+  parameter names. Use `concat`, `substring`, `mask`, and `coalesce` for public string derivations
+  that the operation promises.
+- Declare response headers with schemas or public examples. A redirect must declare its `Location`
+  header, and binary responses must declare their actual media type and string/binary schema.
 - Ensure every JSON Pointer is RFC 6901 and relative to the object or operation edge carrying it.
 - Do not place private rules, database details, or provider infrastructure in extensions.
 

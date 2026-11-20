@@ -62,9 +62,9 @@ This declaration proves five different facts about the result:
 
 ## Bindings
 
-A binding with `from` copies a request value into a response target. Both paths are absolute JSON
-Pointer selectors. Request selectors may contain `*` to traverse arrays. The response target must
-name one concrete property.
+A binding with `from` copies a validated request value into a response target. A plain string is an
+absolute JSON Pointer into the request body. Body selectors may contain `*` to traverse arrays. The
+response target must name one concrete property.
 
 ```yaml
 - from: /line_items
@@ -76,6 +76,30 @@ by the response schema, rejects incompatible values, and proves after constructi
 still contains the submitted request value. A binding can declare `default` when omission has a
 publicly specified meaning.
 
+### Request locations
+
+Relations can also read path, query, header, and cookie parameters. Parameter sources name the
+OpenAPI parameter rather than a JSON Pointer:
+
+```yaml
+x-simile-from-request:
+  bindings:
+    - from: { path: payout_id }
+      to: /payout/id
+    - from: { query: page_number }
+      to: /page/number
+    - from: { header: X-Trace-Id }
+      to: /trace_id
+    - from: { cookie: session }
+      to: /session
+```
+
+Header names are matched case-insensitively. An explicit body source can use
+`from: { body: /customer_id }`; it is equivalent to `from: /customer_id`. Simile compiles each
+source against the request body or parameter schema and reads only the value returned by request
+validation. A relation can combine body and parameter sources, including a multipart body with a
+query or header parameter.
+
 ## Derived values
 
 A binding with `value` computes its target. Supported expressions are:
@@ -84,7 +108,34 @@ A binding with `value` computes its target. Supported expressions are:
 - `path` for a selector relative to the current item inside `sum`;
 - `literal` for a fixed JSON value;
 - `add` and `multiply` for finite numeric expressions; and
-- `sum` for a value derived from every item selected by `each`.
+- `sum` for a value derived from every item selected by `each`;
+- `concat` for joining string expressions;
+- `substring` for selecting a Unicode character range, with negative indexes counted from the
+  end;
+- `mask` for replacing all but the last `reveal` characters; and
+- `coalesce` for selecting the first expression that resolves to a value.
+
+For example, a public tokenization contract can derive the fields that callers use for display:
+
+```yaml
+bindings:
+  - to: /last_four
+    value:
+      substring:
+        value: { request: /account_number }
+        start: -4
+  - to: /masked
+    value:
+      mask:
+        value: { request: /account_number }
+        reveal: 4
+        character: "*"
+  - to: /label
+    value:
+      concat:
+        - { literal: "acct-" }
+        - { substring: { value: { request: /account_number }, start: -4 } }
+```
 
 Integer inputs remain integer-shaped when the result fits the JSON integer range. Compilation
 rejects unresolved selectors, malformed expressions, and response targets not declared by the
@@ -100,10 +151,11 @@ cannot exist in the selected flow. Compilation rejects attempts to omit required
 
 ## Proof levels
 
-Every emitted response is validated against its standalone response schema. When a validated
-request and a compiled relation are both present, Simile additionally applies and proves the
-relation, and reports the response as `RequestConstrained`. Without that relation, the result is
-reported as `SchemaOnly` even if same-path structural projection improved it.
+Every emitted response is validated against its standalone response schema. When validated request
+values and a compiled relation are both present, Simile additionally applies and proves the
+relation, and reports the response as `RequestConstrained`. The proof uses the request body and any
+compiled path, query, header, or cookie sources referenced by the relation. Without that relation,
+the result is reported as `SchemaOnly` even if same-path structural projection improved it.
 
 That distinction is deliberate: Simile does not claim an operationally reachable result unless it
 has executable public proof material for the relationship.

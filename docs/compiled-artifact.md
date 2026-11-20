@@ -30,7 +30,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 17
+## Envelope version 21
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -38,7 +38,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 17 |
+| 10 | 2 | unsigned big-endian flags; zero in version 21 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -49,7 +49,7 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 17 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 21 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
@@ -86,9 +86,11 @@ parts per million, linked fault indexes, linked operation indexes, repetition bo
 optional seed. The runtime never reparses HCL or resolves profile names through source documents.
 
 Each operation embeds compact parameter records, a request-body plan, and a body plan for every
-response that declares content. Parameter records retain location, requiredness, style,
-explosion/reserved flags, and an optional compiled schema root. Body plans contain declared media
-types, schema root identifiers, and optional declared media
+response that declares content. Response records also retain declared header names, compiled
+header schemas, and public examples so an HTTP adapter can construct redirects and other header-led
+responses without reopening the source contract. Parameter records retain location, requiredness,
+style, explosion/reserved flags, and an optional compiled schema root. Body plans contain declared
+media types, schema root identifiers, and optional declared media
 examples. Those roots point into the shared catalog, where reusable schemas are compiled once per
 request/response direction and recursive references remain graph edges. Direction matters:
 `readOnly` properties are omitted from request graphs and `writeOnly` properties are omitted from
@@ -106,16 +108,19 @@ audit is a guardrail; the provider remains responsible for reviewing all publish
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 17 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 21 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their source constraint syntax.
 
 Response media plans may additionally carry a compiled `x-simile-from-request` relation. Its
-bindings, derivations, guarded lifecycle rules, and omission rules reference the shared request and
-response schema graph by validated identifiers. This is the proof material that distinguishes a
-merely schema-valid response from one proven reachable from the submitted request.
+bindings, derivations, guarded lifecycle rules, and omission rules reference the shared request,
+parameter, and response schema graphs by validated identifiers. Sources can read the body or a
+compiled path, query, header, or cookie parameter. Derived expressions include numeric operations,
+collection sums, concatenation, substring selection, masking, and conditional defaults. This is
+the proof material that distinguishes a merely schema-valid response from one proven reachable
+from the submitted request.
 
-Version 17 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 21 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

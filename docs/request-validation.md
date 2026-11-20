@@ -1,6 +1,6 @@
 ---
 title: Request validation
-description: How Simile selects, decodes, and proves an incoming JSON request body.
+description: How Simile selects, decodes, and proves an incoming request body.
 ---
 
 Simile validates a request from the compiled `.similec` artifact. The selected OpenAPI, Smithy, or
@@ -19,7 +19,7 @@ Content-Type header, and body bytes. It evaluates the request in this order:
 2. determine whether the operation declares or requires a body;
 3. select the declared media type, ignoring Content-Type parameters and honoring `type/*` and
    `*/*` declarations;
-4. decode JSON for `application/json` and `+json` media types; and
+4. decode the selected JSON, text, form URL-encoded, or multipart representation; and
 5. validate the decoded value against the compiled schema graph.
 
 These stages return separate errors. A missing required body is not a malformed body; an
@@ -69,16 +69,16 @@ Synthesis is bounded, reports when it cannot find a valid finite value, and alwa
 candidate through the normal request validator before returning bytes to a caller. A caller can
 supply a seed when it needs to reproduce the same generated value.
 
-Form URL encoding, multipart bodies, and non-JSON codecs are not decoded yet. If their media type
-is declared, the runtime reports an unsupported decoder rather than claiming that the body was
-validated.
+Request decoding supports JSON and `+json`, text media types, form URL encoding, and multipart form
+data. File parts are represented as base64 strings before schema validation. A declared media type
+without a codec produces an explicit unsupported-decoder error.
 
-JSON synthesis selects a declared JSON media type unless the caller requests one explicitly.
+Request synthesis prefers a declared JSON media type unless the caller requests one explicitly.
 
 ```mermaid
 flowchart LR
   Bytes[Body bytes] --> Media[Select declared media type]
-  Media --> Decode[Decode JSON]
+  Media --> Decode[Decode request representation]
   Decode --> Schema[Validate schema graph]
   Schema --> Relations[Prove cross-field constraints]
   Relations --> Validated[Validated value]
