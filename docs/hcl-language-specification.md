@@ -71,6 +71,7 @@ local service configuration.
 | --- | --- | --- | --- |
 | [`service`](#service) | exactly one | not allowed | Compose the listener, contract source, and imported modules. |
 | [`backend`](#backend) | optional | optional | Name an emulated backing system. |
+| [`principal`](#principal) | optional | optional | Declare a local test identity for contract authentication. |
 | [`async`](#async) | optional | optional | Declare planned follow-up work. |
 | [`behavior`](#behavior) | optional | optional | Refine one contract operation. |
 | [`error_set`](#error_set) | optional | optional | Define reusable named outcomes. |
@@ -113,7 +114,7 @@ expression that evaluates without external variables or functions and converts t
 
 ### Public descriptions
 
-Named semantic blocks accept an optional `description` attribute: `service`, `backend`, `async`,
+Named semantic blocks accept an optional `description` attribute: `service`, `backend`, `principal`, `async`,
 `effect`, `behavior`, `outcome`, `error_set`, `protocol_error`, `scenario`, custom `fault`,
 `fault_profile`, and provider-authored `webhook`. Its value must be a non-empty string. Descriptions are presentation metadata
 retained in the compiled artifact and displayed by `simile describe service`; they never influence
@@ -241,6 +242,10 @@ webhooks {
   out_of_order_probability = 0.10
   reorder_window           = "5s"
   concurrency              = 8
+
+  signing {
+    secret = "whsec_simile_local"
+  }
 }
 ```
 
@@ -254,6 +259,26 @@ inline configuration and every imported behavior module.
 | `out_of_order_probability` | no | number from `0` through `1` | `0.10` for best effort; `0` for strict | Probability that one eligible later delivery overtakes an earlier delivery. |
 | `reorder_window` | no | duration from `1ms` through `24h` | `"5s"` for best effort; disabled for strict | Maximum scheduled-time separation within which reordering may occur. |
 | `concurrency` | no | positive integer through `65535` | `8` | Maximum concurrent delivery workers represented by the policy. |
+
+### `signing`
+
+```hcl
+signing {
+  secret           = "whsec_simile_local"
+  header           = "X-Simile-Signature"
+  timestamp_header = "X-Simile-Timestamp"
+}
+```
+
+| Attribute | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `secret` | yes | non-empty string | — | Local test key used to sign the timestamp and exact request body with HMAC-SHA256. |
+| `header` | no | non-empty string | `"X-Simile-Signature"` | Header carrying `t=TIMESTAMP,v1=HEX_DIGEST`. |
+| `timestamp_header` | no | non-empty string | `"X-Simile-Timestamp"` | Header carrying the Unix timestamp included in the signature. |
+
+The signing key becomes part of the local compiled artifact so that restarts reproduce the same
+delivery behavior. Use a dedicated test value. Production credentials do not belong in a Simile
+configuration.
 
 `best_effort` is deliberately the default. Concurrent webhook infrastructure rarely guarantees
 global ordering, and retries can naturally arrive after newer occurrences. Simile samples only
@@ -299,6 +324,48 @@ The supported kinds are:
 The canonical backend reference is `KIND.NAME`, for example `queue.orders`. Backend kinds are
 provider-neutral. Names such as `postgres`, `redis`, or `s3` are rejected.
 
+### `principal`
+
+```hcl
+principal "checkout_test" {
+  description = "A checkout client with permission to create orders."
+  status      = "active"
+  grants      = ["orders:write"]
+
+  credential "merchant_key" {
+    value = "sk_simile_checkout"
+  }
+
+  credential "operator_login" {
+    username = "checkout"
+    password = "simile"
+  }
+}
+```
+
+A principal is a local test identity. Each credential label names a security scheme from the
+selected contract. One principal may satisfy several schemes, which lets a test exercise
+alternative authentication methods without duplicating identity metadata.
+
+| Member | Required | Type or multiplicity | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | non-empty string | — | Stable identity name shown by `simile describe service`. |
+| `description` | no | non-empty string | — | Public purpose of the test identity. |
+| `status` | no | `"active"`, `"revoked"`, or `"expired"` | `"active"` | Authentication state returned for every credential on the identity. |
+| `grants` | no | array of strings | `[]` | OAuth2 and OpenID scopes granted to the identity. |
+| `credential` | yes | one or more blocks | — | Test credential for a contract security scheme. |
+
+A `credential` accepts either `value`, or the pair `username` and `password`. API-key, bearer,
+OAuth2, and OpenID schemes use `value`; HTTP Basic uses the username/password pair. The compiler
+checks that each shape agrees with the referenced contract scheme. Credential values are retained
+in the local artifact for matching and are deliberately omitted from descriptions and audit
+output. Use synthetic credentials created solely for emulation.
+
+OpenAPI security requirements preserve their native composition. Schemes inside one requirement
+are all required; separate requirements are alternatives. An operation with an empty security
+requirement remains public. Simile returns the operation's declared authentication or permission
+response when a credential is absent, invalid, revoked, expired, or lacks a required grant.
+
 ### `async`
 
 ```hcl
@@ -320,8 +387,10 @@ async "NAME" {
 
 Every reference must resolve to a declared backend. Action backends are added to `uses`
 automatically. An async declaration is inert until an `effect.async` attribute names it; once
-attached, the service supervisor dispatches its actions on a background worker without making
-response delivery wait for them.
+attached, the service writes the planned work into its durable outbox in the same commit as the
+operation. A background worker leases and dispatches the actions after the response-critical work
+has committed. Restarting a persistent service preserves pending work, lease expiry makes an
+interrupted item eligible again, and exhausted attempts move the item to the dead-letter queue.
 
 ### `effect`
 
@@ -359,7 +428,7 @@ effect "NAME" {
 | --- | --- | --- | --- |
 | `description` | no | non-empty string | Public explanation of the consequence. |
 | `operations` | yes | non-empty array | Exact contract `operationId` values that commit the effect. |
-| `async` | no | array | Named async units dispatched outside the response-critical path. |
+| `async` | no | array | Named async units committed to the durable outbox and dispatched in the background. |
 | `action` | no | zero or more blocks | Synchronous typed commands committed before delivery. |
 | `emit` | no | object | Webhook name to request/response-derived payload. |
 | `after` | no | object | Emitted webhook name to hard prerequisites from the same effect. |

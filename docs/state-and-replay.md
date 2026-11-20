@@ -34,12 +34,13 @@ The file is bound to the registered service identity and artifact digest. Simile
 for a different or incompatible compiled service. `simile remove NAME --confirm NAME` deletes both
 the registry entry and this durable state, but refuses while another process owns the state lock.
 
-## Convention-inferred writes
+## Convention-inferred state
 
-When the public contract proves one ordinary write—one database, stable operation ID, one
-identifiable successful entity—Simile infers a `db.put` effect for `POST`, `PUT`, and `PATCH`.
-Ambiguous transitions remain provider-authored. Simile does not infer that every route-shaped GET
-is a database read or that every DELETE removes one collection record.
+When the public contract proves one database, one entity, and one stable identity, Simile infers
+ordinary create, read, list, and delete behavior. `POST`, `PUT`, and `PATCH` can commit the successful
+response entity; addressed `GET` can retrieve it; collection `GET` can list it; and addressed
+`DELETE` can remove it. Ambiguous projections, custom lookup keys, multi-entity results, and
+provider-specific transitions remain provider-authored.
 
 ## Exact reproductions
 

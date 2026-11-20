@@ -35,7 +35,7 @@ The runtime performs one ordered run:
 
 1. resolve the operation from the loaded artifact;
 2. decode and validate the request body;
-3. synthesize the immediate response, using the validated request as context; and
+3. synthesize the immediate response, using the validated request as context;
 4. render the typed synchronous, asynchronous, and webhook occurrence plans attached to that
    committed result; and
 5. cache the completed outcome when the adapter supplied a replay identity.
@@ -60,8 +60,9 @@ The result owns the validated request body, synthesized response, transport plan
 effect plan. A webhook occurrence includes its schema-checked payload, resolved destination when
 available, hard dependencies, and delay. `simile-service` composes that result with Stack:
 synchronous actions execute as one rollback-capable transition and checkpoint before delivery;
-named asynchronous units dispatch
-on a background worker without blocking delivery. The HTTP handler never applies resource commands itself.
+named asynchronous units enter the durable work outbox without blocking delivery. Background
+workers lease and execute that work after the public response has committed. The HTTP handler never
+applies backend commands itself.
 
 ## One-shot CLI execution
 
@@ -119,14 +120,18 @@ synchronous consequences: the supervisor snapshots Stack, applies every command,
 new snapshot, and restores the prior snapshot on command or storage failure. A replayed public
 operation does not repeat those actions.
 
-Named `async` units contain their own typed backend actions. The supervisor dispatches them outside the
-response-critical path so they do not add immediate response latency. This dispatcher is currently
-process-owned, not a durable outbox; crash recovery and retry leases remain an explicit boundary.
+Named `async` units contain their own typed backend actions. The supervisor records them in the
+durable outbox within the same checkpoint as synchronous state. Workers lease each item, execute it
+outside the response-critical path, acknowledge success, and retry failure within its declared
+budget. A restart restores pending work and expired leases from redb; exhausted work moves to the
+dead-letter queue.
 
 Webhook emissions are rendered from the same committed request and response. Their payload schemas,
 callback body-pointer destinations, explicit destination overrides, delays, and causal edges are
-therefore proven before the adapter receives the execution. Network delivery remains a later
-outbox layer; a planned occurrence does not claim that a receiver accepted it.
+therefore proven before commit. Occurrences enter the same durable outbox as async work. The
+delivery worker sends the configured HTTP request, applies optional HMAC-SHA256 signing, records
+causal completion, and retries unsuccessful delivery. A planned occurrence remains distinct from a
+receiver acknowledgement.
 
 ## HTTP adapter
 
@@ -135,15 +140,17 @@ outbox layer; a planned occurrence does not claim that a receiver accepted it.
 1. listen on the configured local port;
 2. match the incoming method and path to a compiled operation key;
 3. apply transport limits and gather the request values;
-4. validate compiled path, query, header, cookie, and body schemas;
-5. ask the service supervisor to execute the operation and synchronous effects;
-6. translate the result or runtime error into an HTTP response; and
-7. dispatch named post-response work.
+4. authenticate the request against the operation's compiled security alternatives;
+5. decode and validate compiled path, query, header, cookie, and body schemas;
+6. ask the service supervisor to execute the operation and synchronous effects;
+7. translate the result or runtime error into an HTTP response; and
+8. let the background dispatcher lease named post-response work.
 
 It matches literal and parameterized compiled paths, applies an 8 MiB body limit, validates path,
 query, header, and cookie parameters, extracts `Content-Type` and `Idempotency-Key`, and preserves GET replay
-by full URI. Authentication behavior and form/multipart codecs remain later adapter slices; they are
-not silently treated as implemented.
+by full URI. JSON, form URL-encoded, multipart form-data, and text bodies share the same compiled
+schema validation boundary. OpenAPI API key, Basic, Bearer, OAuth 2.0, and OpenID Connect schemes
+resolve local HCL principals before operation execution.
 
 For CLI usage rather than runtime internals, read [Run one operation](/run-operation). For the
 current persistence model, read [State, identity, and replay](/state-and-replay). For routing,

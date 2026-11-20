@@ -26,7 +26,8 @@ flowchart LR
   Contract["1. Contract<br/>What can be sent?"] --> Occurrence["2. Occurrence<br/>What caused this message?"]
   Effect["Committed effect"] --> Occurrence
   Occurrence --> Policy["3. Delivery policy<br/>May independent messages overtake?"]
-  Policy --> Plan["Inspectable delivery plan"]
+  Policy --> Outbox["Durable outbox"]
+  Outbox --> Worker["Signed HTTP delivery"]
 
   OpenAPI["OpenAPI callback or webhook"] --> Contract
   HCL["HCL fallback"] -. "only when absent" .-> Contract
@@ -37,7 +38,7 @@ flowchart LR
    omission.
 2. **The webhook occurrence** records that a committed effect caused one instance of that contract.
    It supplies the payload, destination, causal dependencies, and any explicit delay.
-3. **The delivery policy** defines service-wide ordering semantics for independent occurrences.
+3. **The delivery policy** defines service-wide ordering, signing, concurrency, and retry semantics.
    It never overrides a hard causal dependency.
 
 Each layer adds distinct meaning. A contract makes a message available; an effect establishes that
@@ -223,6 +224,12 @@ webhooks {
   ordering                 = "best_effort"
   out_of_order_probability = 0.10
   reorder_window           = "5s"
+
+  signing {
+    secret           = "whsec_simile_local"
+    header           = "X-Simile-Signature"
+    timestamp_header = "X-Simile-Timestamp"
+  }
 }
 ```
 
@@ -239,6 +246,21 @@ and pairs outside the reorder window all retain their original order. For an eli
 derives a sample from the compiled artifact fingerprint, correlation ID, and both delivery IDs.
 Given those same inputs, Simile produces the same decision after restart. This is stochastic enough
 to exercise realistic orderings while remaining reproducible in CI.
+
+### Sign delivery attempts
+
+The optional `signing` block applies one service-wide HMAC-SHA256 policy. Simile serializes the JSON
+body, signs `TIMESTAMP.BODY`, and sends:
+
+```text
+X-Simile-Timestamp: 1735689600
+X-Simile-Signature: t=1735689600,v1=HEX_DIGEST
+```
+
+Header names can be changed without altering the signing message. Consumers can use the timestamp
+for replay-window checks and compare the digest in constant time. Use a dedicated local fixture
+secret. The compiled service needs the fixture to sign deliveries, while `simile describe service`
+reveals only whether signing is configured and which signature header is used.
 
 Use strict ordering only when the emulated provider guarantees it:
 
@@ -273,21 +295,27 @@ destination when available, delay, and hard prerequisites:
 $ simile run ./commerce.yml --operation-id completePayment --behavior ./payments.hcl --verbose
 ```
 
-### Current delivery boundary
+## Delivery lifecycle
 
-Today Simile compiles webhook contracts, stores them in the versioned artifact, plans occurrences
-from effects, validates OpenAPI-authored payloads, resolves supported destinations, retains delays
-and hard dependencies, and makes reproducible ordering decisions.
+An operation commit writes every applicable occurrence to the service outbox alongside synchronous
+Stack state. The worker leases a bounded batch, restores hard `after` dependencies, applies the
+service ordering policy to independent occurrences, and sends each HTTP request. Any 2xx response
+acknowledges the item.
 
-The current implementation ends at the delivery plan. Durable outbox persistence, outbound HTTP
-requests, signing, leases, retries, and redelivery belong to the future delivery layer. A planned
-occurrence proves that a committed operation caused a schema-checked message. Network-attempt and
-receiver-acceptance evidence will arrive with the delivery worker. The `webhooks` block currently
-models delivery semantics.
+Transport failures and non-2xx responses release the item with an exponential delay. A process
+restart restores the outbox and retry count from redb. Exhausted deliveries move to dead-letter
+storage. Hard dependencies use durable completion markers, so a later occurrence cannot cross its
+prerequisite after a retry or restart. Waiting for that marker consumes no delivery attempt.
+Dead letters can be returned to the outbox through the service redelivery API. A dedicated
+operator-facing dead-letter CLI remains to be designed.
+
+Local delivery proves the behavior of the compiled emulator. Production throughput, provider retry
+windows, private signing rotation, and receiver acceptance remain separate evidence.
 
 ## Related resources
 
 - [HCL language specification](/hcl-language-specification#webhook) - Exact `webhook`, `webhooks`, and `effect` syntax
 - [Dependencies and effects](/dependencies-and-effects) - How operation consequences enter an effect plan
+- [Durable work](/durable-work) - Checkpoint, lease, retry, and crash-recovery semantics
 - [Describe a service](/describe-service) - Inspect the public meaning of a compiled service
 - [Current boundaries](/current-boundaries#webhook-delivery) - Implemented webhook behavior and explicit future layers

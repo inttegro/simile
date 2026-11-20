@@ -15,8 +15,9 @@ flowchart LR
   Result --> Sync[Synchronous actions]
   Sync --> Checkpoint[(Atomic checkpoint)]
   Checkpoint --> Response[Deliver response]
-  Checkpoint --> Async[Background asynchronous work]
-  Checkpoint --> Webhooks[Webhook occurrences]
+  Checkpoint --> Outbox[(Durable work outbox)]
+  Outbox --> Async[Background asynchronous work]
+  Outbox --> Webhooks[Webhook HTTP delivery]
   Sync --> Stack[Simile Stack]
   Async --> Stack
 ```
@@ -81,8 +82,8 @@ lowers them into typed artifact records. At runtime the service supervisor:
 1. validates the request and commits one public outcome;
 2. renders synchronous action arguments from that committed request and response;
 3. applies the synchronous unit transactionally and checkpoints durable Stack state;
-4. plans schema-checked webhook occurrences and schedules named asynchronous units; and
-5. allows HTTP response delivery to proceed without waiting for that work.
+4. publishes schema-checked webhook occurrences and named asynchronous units to the durable outbox; and
+5. allows HTTP response delivery to proceed while workers lease, retry, and acknowledge that work.
 
 If a synchronous action or checkpoint fails, the Stack rolls back to its prior snapshot and the
 response is not delivered as though the effect succeeded. Idempotent operation replay does not
@@ -116,4 +117,5 @@ correlation identifier, resource, action, time, and outcome. Stored values are n
 the default journal view. Operators must explicitly opt in with `simile state SERVICE --values`.
 
 See [State inspection](/state-inspection), [Simile Stack](/simile-stack), and the
-[HCL language specification](/hcl-language-specification) for the complete forms.
+[HCL language specification](/hcl-language-specification) for the complete forms. Read
+[Durable work](/durable-work) for checkpoint, lease, retry, and restart semantics.

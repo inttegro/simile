@@ -68,15 +68,16 @@ runtime checkpoint and a portable JSON snapshot.
 
 ## Execution boundary
 
-The Stack engines and component processes are implemented. HCL already retains `async`
-declarations and their backend dependencies for discovery. The next integration layer
-must attach provider-authored effects to operations, compile their actions into protocol commands,
-and dispatch them after a successful operation.
+HCL effects compile into typed Stack commands. Synchronous commands, inferred state transitions,
+the Stack checkpoint, and deferred-work publication share one service commit. Named `async` units
+and webhook occurrences enter a durable outbox, where background workers lease and execute them
+after the public response has committed.
 
-Until that action language and dispatcher are connected, `simile start` does not automatically
-launch Stack processes or turn `uses = ["queue.orders"]` into an invented queue message. The
-declaration identifies authority and dependency; it does not contain enough information to infer a
-command safely. See [Dependencies and effects](/dependencies-and-effects) for this boundary.
+A backend declaration grants the service a capability; it never invents a provider-specific
+command. Simile can infer conservative database CRUD when the contract proves a single entity and
+identity. Queue messages, mail, schedules, events, objects, and ambiguous database transitions use
+provider-authored effects. See [Dependencies and effects](/dependencies-and-effects) for the action
+language and [Durable work](/durable-work) for dispatch semantics.
 
 ## Composition rules
 

@@ -27,18 +27,19 @@ flowchart LR
   Response --> Plan[Plan declared\nfollow-up work]
 ```
 
-The current runtime implements validation, immediate response production, replay, and effect
-planning. Durable state actions and effect execution are explicit later layers; Simile does not
-claim they already run. See [Current boundaries](/current-boundaries).
+The runtime validates input, produces a request-aware immediate response, commits synchronous state,
+and publishes declared follow-up work durably. Background workers lease async actions and webhooks,
+retry failure, and preserve causal ordering across restarts. See
+[Current boundaries](/current-boundaries) for the precise fidelity of each layer.
 
 ## Who owns the truth
 
 The provider owns what its service means. Simile owns the portable compiler and runtime. The
 developer owns the machine or CI environment where that runtime executes.
 
-This boundary matters because route names are not semantics. Simile cannot safely infer that
-`POST /orders` writes a database record, that `GET /orders/{id}` returns it, or that a particular
-card number should be declined. Those behaviors must come from a public contract or an explicit,
+This boundary matters because route names alone carry weak semantics. Simile infers ordinary CRUD
+only when the public contract proves one entity, one identity, and one database authority. Custom
+transitions and deterministic declines come from a public contract or an explicit,
 provider-authored overlay.
 
 ## Why the definition is public
@@ -86,12 +87,10 @@ approximations.
 
 ## Deliberate tradeoffs
 
-Simile does not promise production latency, scale, undocumented behavior, infrastructure, or
-private decision making. It is not a transparent proxy, record-and-replay system, production
-fallback, or substitute for final conformance testing against the real service.
-
-The goal is narrower and more useful: let an integration exercise the provider's published
-contract and observable scenarios locally, with enough honesty to know where approximation begins.
+Production latency, scale, undocumented behavior, infrastructure, and private decision making sit
+outside the published evidence available to an emulator. Final conformance still belongs against
+the real service. Simile focuses on the provider's published contract and observable scenarios,
+and reports the provenance of each approximation so the user can see where evidence ends.
 
 Continue with the [Quickstart](/quickstart), or read
 [Contract sources and HCL](/contract-sources-and-hcl) for the definition model.

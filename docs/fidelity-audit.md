@@ -21,7 +21,15 @@ Current checks include:
 - untyped or unsupported HTTP parameter styles;
 - inferred effects, so reviewers can distinguish convention from authorship;
 - backends that no action uses; and
+- protected operations with no matching local principal;
+- contract mechanisms, such as mutual TLS, that the listener cannot exercise;
+- unsigned webhook delivery; and
 - public protocol failures without provider error mappings.
+
+The summary also counts secured operations, principals, webhook contracts, and signed webhook
+policies. Operation details identify whether behavior came from the contract, provider-authored
+HCL, or an inference. This provenance lets a reviewer focus on the places where Simile had to fill
+in meaning.
 
 `--strict` also treats warnings as failure, which is useful after a provider has established its
 acceptable baseline. Without it, only audit errors fail the command. Machine-readable output is

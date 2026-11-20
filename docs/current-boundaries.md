@@ -3,9 +3,10 @@ title: Current boundaries
 description: Know which parts of service emulation are implemented and which remain explicit future layers.
 ---
 
-Simile is useful only when its fidelity is stated honestly. The current implementation can compile
-and run a body-oriented HTTP contract, but it is not yet the complete stateful and asynchronous
-service described by the long-term charter.
+Simile earns trust by stating the authority behind each result. The current implementation runs
+stateful HTTP services with durable consequences, contract authentication, and outbound webhooks.
+Several production behaviors still require explicit provider authorship or remain outside the
+emulator.
 
 ## Implemented now
 
@@ -27,7 +28,7 @@ service described by the long-term charter.
 ### Operation runtime
 
 - operation lookup by stable key or `operationId`
-- JSON request body decoding and compiled-schema validation
+- JSON, form URL-encoded, multipart form-data, and text request decoding with compiled-schema validation
 - request synthesis when `simile run` receives no request
 - response selection and schema-valid synthesis
 - structural request-to-response value projection
@@ -42,7 +43,11 @@ service described by the long-term charter.
 - response delay before delivery and disconnect after commit
 - resolved planning of HCL-declared async work
 - transactional synchronous effect execution with durable Stack checkpoints
-- background dispatch of named asynchronous units without response-path waiting
+- a durable work outbox committed atomically with operation state
+- leased background dispatch with bounded retries, crash recovery, and dead-letter storage
+- signed outbound webhook delivery over HTTP with retry and redelivery primitives
+- API key, Basic, Bearer, OAuth 2.0, and OpenID Connect test-principal authentication
+- conservative database-backed create, read, list, and delete behavior when one entity is unambiguous
 - deterministic reproduction bundles and batch conformance replay
 
 ### Stack backend layer
@@ -63,33 +68,34 @@ service described by the long-term charter.
 - `404` and `405` transport responses
 - an 8 MiB body limit
 - request body content-type handling
-- compiled-schema validation for path, query, header, and cookie parameters
+- OpenAPI serialization for simple, label, matrix, form, space-delimited, pipe-delimited, and
+  deep-object parameters where their locations permit them
 - one process-wide opaque scenario selection
 - one optional process-wide stochastic fault profile
 - one-line safe access logs and graceful Ctrl-C shutdown
 
-## Not implemented yet
+## Deliberate boundaries
 
 ### Request surface
 
-Authentication behavior is not emulated. Form URL-encoded, multipart, and other non-JSON body
-codecs are not decoded. Less common OpenAPI serialization styles that the adapter cannot execute
-are reported by `simile audit` rather than silently approximated.
+OpenAPI security requirements are enforced with local HCL test principals. Mutual TLS still needs
+a TLS-aware listener capable of exposing verified client identity to the runtime. Unsupported
+parameter styles remain audit errors, and media types without a codec fail explicitly.
 
 ### Stateful behavior
 
-The service supervisor persists provider-authored effects and conservatively inferred ordinary
-database writes. It does not yet infer a full CRUD algebra from route names: a later GET is not
-automatically served from the record written by a POST, and ambiguous DELETE or projection
-semantics still require provider authorship. Operation-response replay remains process-local.
+The service supervisor infers ordinary create, read, list, and delete behavior only when the
+contract identifies one database, one entity, and one stable identity. Ambiguous projections,
+multi-entity responses, custom lookup keys, and provider-specific transitions still require an
+authored effect. Operation-response replay remains process-local, while Stack state and deferred
+work survive restarts.
 
 ### Effect execution
 
-Synchronous effects are transactional and named asynchronous units dispatch outside the response
-critical path. The current background dispatcher is process-owned: it does not yet provide a durable
-outbox, lease, retry policy, or crash recovery for work that was committed immediately before the
-process stopped. Providers should not use completion of async actions as evidence of a production
-delivery guarantee.
+Synchronous effects, the outbox publication, and the Stack checkpoint share one commit boundary.
+Workers lease deferred work, retry failures, and move exhausted items to durable dead-letter
+storage. The service library exposes inspection and redelivery primitives. Dead-letter operations
+currently use that library API; a dedicated operator CLI is a future interface.
 
 ### Webhook delivery
 
@@ -99,23 +105,26 @@ pointer callback targets, explicit destination overrides, delays, and hard causa
 The service-wide policy can then make bounded, reproducible ordering decisions for independent
 occurrences.
 
-The current server does not yet place those occurrences in a durable outbox, deliver signed HTTP
-requests, persist retry attempts, or expose redelivery commands. A planned occurrence is therefore
-proof of what the operation caused, not evidence that a receiver accepted it. The `webhooks` block
-configures delivery semantics but does not by itself send a request.
+Committed occurrences enter the durable outbox. The worker applies hard dependencies and the
+service ordering policy, sends HTTP requests, attaches configured HMAC-SHA256 signatures, and
+acknowledges only successful responses. Retry exhaustion moves the occurrence to dead-letter
+storage. Delivery logs and durable state show emulator activity; they do not establish behavior of
+the provider's production webhook infrastructure.
 
 ### Production equivalence
 
-Simile does not infer provider latency, capacity, private risk decisions, undocumented behavior,
-or infrastructure. It can apply explicitly authored delays and disconnect-after-commit faults, but
-those controls are test scenarios—not measurements of production behavior. Schema-synthesized
-outcomes are contract-valid approximations, not evidence of exact production bodies.
+Provider latency, capacity, private risk decisions, undocumented behavior, and infrastructure need
+explicit public evidence before Simile can reproduce them. Explicit delays and
+disconnect-after-commit faults are testing controls rather than measurements. Schema-synthesized
+outcomes carry contract-derived provenance. Authored outcomes and effects carry provider-authored
+provenance. Convention-derived state behavior remains visibly inferred in `simile audit` and
+`simile describe service --verbose`.
 
 ## How to write tests today
 
 You can confidently test:
 
-- whether your JSON request body satisfies the published supported schema;
+- whether a supported JSON, form, multipart, or text request satisfies the published schema;
 - whether supported path, query, header, and cookie values satisfy their schemas;
 - how your integration handles declared success and error bodies;
 - public scenarios published by the provider;
@@ -123,13 +132,14 @@ You can confidently test:
 - request-constrained results when the provider publishes `x-simile-from-request`;
 - idempotency conflict handling and stable process-local replay;
 - how an integration handles declared latency or a lost response after commit; and
-- whether synchronous backend consequences commit atomically; and
-- which named post-response actions a definition dispatches; and
-- which webhook occurrences a committed effect plans, with schema-valid payloads and causal edges.
+- whether declared credentials and grants produce `401`, `403`, or operation execution;
+- whether inferred and authored database consequences survive restart;
+- whether synchronous backend consequences and deferred-work publication commit atomically;
+- whether named post-response actions retry and recover after restart; and
+- whether webhook occurrences deliver schema-valid, optionally signed payloads with causal edges.
 
-Do not yet assert that ordinary GET/DELETE semantics were inferred from route shape, post-response
-work survived a process crash, or a planned webhook was accepted by a network receiver. Those are
-still explicit boundaries rather than plausible claims.
+Do not treat convention inference as provider authorship, a successful local webhook as production
+acceptance, or a synthesized payload as evidence of an undocumented provider decision.
 
 Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
 [Fault injection](/fault-injection) for the environmental failure model, or

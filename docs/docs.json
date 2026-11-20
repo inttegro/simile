@@ -31,6 +31,7 @@
 							"smithy-contracts",
 							"typescript-contracts",
 							"service-configuration",
+							"authentication-emulation",
 							"describe-service",
 							"fidelity-audit",
 							"service-authoring-prompt",
@@ -58,6 +59,7 @@
 						"pages": [
 							"run-operation",
 							"http-contract",
+							"request-encoding",
 							"request-validation",
 							"response-synthesis",
 							"reproduction-bundles",
@@ -74,7 +76,9 @@
 							},
 							"state-and-replay",
 							"state-inspection",
+							"stateful-services",
 							"dependencies-and-effects",
+							"durable-work",
 							"webhook-delivery"
 						]
 					},

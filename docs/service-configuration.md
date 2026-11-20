@@ -39,12 +39,17 @@ webhooks {
   out_of_order_probability = 0.10
   reorder_window           = "5s"
   concurrency              = 8
+
+  signing {
+    secret = "whsec_simile_local"
+  }
 }
 ```
 
 The optional `webhooks` block controls service-wide delivery infrastructure. Its default models
 bounded, reproducible out-of-order delivery instead of promising global ordering that real webhook
-systems rarely provide. See [Webhook delivery](/webhook-delivery).
+systems rarely provide. The nested signing block uses a dedicated local fixture; never place a
+production webhook secret in a Simile definition. See [Webhook delivery](/webhook-delivery).
 
 The document must contain exactly one `service` block. Its label is the service name passed to the
 CLI:
@@ -164,7 +169,7 @@ remote configuration are rejected rather than resolved against the process worki
 
 `behaviors` is an optional list of HCL module paths. Relative paths resolve from the configuration
 directory. The service document may also contain `backend`, `async`, `effect`, `behavior`,
-`scenario`, `faults`, `fault`, `fault_profile`, `webhook`, and `webhooks` blocks after the
+`scenario`, `faults`, `fault`, `fault_profile`, `principal`, `webhook`, and `webhooks` blocks after the
 `service` block:
 
 ```hcl
@@ -186,6 +191,15 @@ effect "commit_order" {
 
 webhook "order.created" {
   description = "Sent after an order has committed."
+}
+
+principal "merchant_app" {
+  description = "A local merchant integration with order write access."
+  grants      = ["orders:write"]
+
+  credential "merchantOAuth" {
+    value = "sim_test_merchant"
+  }
 }
 
 behavior "createOrder" {
@@ -222,10 +236,11 @@ The server compiles contract routes into a route table and delegates matched ope
 protocol-neutral runtime. It currently provides:
 
 - literal and `{parameter}` path-template matching, with literal routes taking precedence;
-- compiled-schema validation for path, query, header, and cookie parameters;
+- OpenAPI-aware decoding and compiled-schema validation for path, query, header, and cookie parameters;
 - `404 Not Found` and `405 Method Not Allowed` responses at the transport boundary;
 - an 8 MiB request-body limit;
-- JSON request-body decoding and compiled-schema validation through the runtime;
+- JSON, form URL-encoded, multipart form-data, and text request-body decoding through the runtime;
+- OpenAPI security enforcement through local test principals and declared grants;
 - generated contract response status, media type, and body;
 - named contract and HCL outcomes, including an optional process-wide `--scenario NAME`;
 - deterministic scenario fault injection and an optional bounded stochastic
@@ -235,8 +250,9 @@ protocol-neutral runtime. It currently provides:
 - service-declared protocol-error mappings for malformed or contract-invalid requests, with a
   Simile diagnostic only when the operation has no suitable error response;
 - process-local replay for `Idempotency-Key` and for the full URI of GET requests; and
-- transactional synchronous effects with durable Stack checkpoints and background async
-  dispatch;
+- transactional synchronous effects, durable Stack checkpoints, and a crash-safe deferred-work outbox;
+- leased async and webhook delivery with retries and dead-letter storage;
+- optional HMAC-SHA256 webhook signatures; and
 - one-line access logs containing method, path, status, TCP peer IP, user agent, request content type
   and size, response content type and size, and elapsed microseconds; and
 - graceful shutdown on Ctrl-C.
@@ -247,10 +263,9 @@ socket's peer IP; Simile does not trust forwarding headers. Request and response
 strings, credentials, idempotency keys, and header values other than `User-Agent` are never written
 to the access log.
 
-Authentication and form/multipart codecs are not yet implemented. Async dispatch is process-owned
-and does not yet provide a durable outbox or retry lease. Planned webhook occurrences are not yet
-sent over the network. These omissions are reported here so that starting a service is not mistaken
-for full production equivalence.
+Mutual TLS authentication still awaits a TLS-aware listener. Ambiguous state transitions and
+provider-specific error decisions require authored HCL. Simile reports those boundaries through
+`simile audit` so a runnable service never silently acquires authority its sources did not provide.
 
 Continue with [Lifecycle](/service-lifecycle) to see how this file becomes a registered
 revision, [Fault injection](/fault-injection) for environmental failure controls, or

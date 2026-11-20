@@ -18,6 +18,7 @@ sequenceDiagram
 
   App->>HTTP: method, URI, headers, body
   HTTP->>HTTP: match route, decode parameters, enforce wire limit
+  HTTP->>Service: authenticate compiled security alternatives
   HTTP->>Graph: validate path, query, header, cookie
   HTTP->>Service: operation key + normalized request
   Service->>Run: execute committed result
@@ -27,7 +28,8 @@ sequenceDiagram
   Graph-->>Run: validated response value
   Run-->>Service: committed outcome + effect plan
   Service->>Stack: transactional synchronous actions
-  Stack-->>Service: durable checkpoint
+  Service->>Stack: publish deferred work in the same transaction
+  Stack-->>Service: durable checkpoint + outbox
   Service-->>HTTP: committed outcome + transport plan
   alt ordinary response
     HTTP-->>App: status, headers, encoded body
@@ -37,7 +39,7 @@ sequenceDiagram
   else disconnect after commit
     HTTP--xApp: response stream reset
   end
-  HTTP-->>Service: dispatch named async work
+  Service-->>Stack: workers lease async and webhook work
 ```
 
 ## Route table

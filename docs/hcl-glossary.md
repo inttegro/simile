@@ -73,6 +73,13 @@ An executable cross-field relationship on a contract object. OpenAPI authors use
 the same compiled constraints. Constraints prove relationships within a payload and are distinct
 from HCL behavior. See [payload soundness](/payload-soundness).
 
+### Credential
+
+A synthetic secret associated with one contract security scheme inside a
+[`principal`](/hcl-language-specification#principal). Simile compares an incoming request with the
+credential and omits its value from descriptions and audit output. Credentials in Simile exist for
+local and CI tests and must never reuse production secrets.
+
 ## D
 
 ### Description
@@ -91,6 +98,12 @@ the same fault is chosen; no probability is involved.
 A service-level result such as `card_declined`, `requires_payment`, or `manual_review`. Domain
 outcomes are selected by a public request predicate, an explicit outcome name, or an opaque
 scenario—not by stochastic fault injection.
+
+### Durable outbox
+
+The persistent queue of asynchronous actions and webhook deliveries committed together with an
+operation's synchronous state. Workers lease items from the outbox, acknowledge completed work,
+schedule retries, and move exhausted items to dead letters. See [Durable work](/durable-work).
 
 ## E
 
@@ -144,6 +157,12 @@ never weakened by best-effort infrastructure or a stochastic reordering decision
 A value that can be evaluated without variables or external functions and converted to JSON.
 `outcome.body`, `protocol_error.body`, and `when.equals` accept literal values.
 
+### Lease
+
+Temporary ownership of one durable work item. A worker must acknowledge or release the item before
+the visibility timeout; otherwise it becomes eligible for another worker. Leases allow recovery
+when a process stops between receiving and completing work.
+
 ## N
 
 ### Named outcome
@@ -177,6 +196,12 @@ authority the body has; it does not by itself prove request-to-response reachabi
 
 A public request condition declared with `when`. Its `path` is a JSON Pointer into the validated
 request body and its `equals` value must match exactly. Every predicate on an outcome must match.
+
+### Principal
+
+A named local test identity declared in HCL. A principal contains one or more credentials, an
+active, revoked, or expired lifecycle state, and optional OAuth2/OpenID grants. Its credentials
+exercise the security schemes and requirements published by the contract.
 
 ### Protocol error
 
@@ -214,6 +239,12 @@ faults for specific contract operation IDs without exposing the provider's priva
 
 Conforming to one compiled contract schema in isolation. Schema validity is necessary but weaker than
 payload soundness or operation reachability.
+
+### Security requirement
+
+The contract rule describing which security schemes protect an operation. Simile preserves
+OpenAPI's composition: schemes within one requirement are conjunctive, while multiple requirements
+are alternatives. An empty requirement marks an operation public.
 
 ### Service artifact
 
@@ -254,8 +285,8 @@ from the reusable webhook contract.
 ### Webhook policy
 
 The service-wide `webhooks` configuration governing delivery ordering, bounded reordering
-probability, and concurrency. It describes infrastructure behavior; webhook contracts describe
-payloads, while effects decide which occurrences are emitted.
+probability, concurrency, and optional HMAC-SHA256 signing. Webhook contracts describe payloads,
+while effects decide which occurrences are emitted.
 
 Read the [language specification](/hcl-language-specification) for the complete syntax and
 compile-time rules.

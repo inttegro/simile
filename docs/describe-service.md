@@ -10,11 +10,13 @@ runs. It is the human-facing companion to the technical `simile inspect` command
 $ simile describe service inttegro
 ```
 
-The default view shows the service description, listener, contract version, webhook contracts and
-effective delivery policy, scenario catalogue, faults and profiles, backends, and
-asynchronous operations. Catalog faults carry built-in descriptions automatically.
+The default view shows the service description, listener, contract version, local principals,
+webhook contracts and effective delivery policy, scenario catalogue, faults and profiles,
+backends, and asynchronous operations. Credential values are omitted from the output. Catalog
+faults carry built-in descriptions automatically.
 
-Add `--verbose` to include every operation and its compiled outcomes:
+Add `--verbose` to include every operation, its compiled outcomes, its authentication surface, and
+whether its behavior came from the contract or provider-authored HCL:
 
 ```console
 $ simile describe service inttegro --verbose
@@ -64,7 +66,7 @@ The following named blocks accept `description`:
 - `error_set` and its outcomes
 - `protocol_error`
 - `scenario`
-- `backend` and `async`
+- `backend`, `principal`, and `async`
 - `effect` and provider-authored `webhook`
 - custom `fault` and `fault_profile`
 
