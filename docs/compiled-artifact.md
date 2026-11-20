@@ -30,7 +30,7 @@ runtime to resolve many relationships after loading. Simile instead builds sorte
 replaces cross-record names with numeric indexes before encoding deterministic CBOR. The runtime
 loads a graph that has already been linked and validated.
 
-## Envelope version 16
+## Envelope version 17
 
 Every artifact begins with a fixed 52-byte envelope:
 
@@ -38,7 +38,7 @@ Every artifact begins with a fixed 52-byte envelope:
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `SIMILEC` followed by NUL |
 | 8 | 2 | unsigned big-endian format version |
-| 10 | 2 | unsigned big-endian flags; zero in version 16 |
+| 10 | 2 | unsigned big-endian flags; zero in version 17 |
 | 12 | 8 | unsigned big-endian payload length |
 | 20 | 32 | SHA-256 digest of the payload |
 | 52 | variable | deterministic CBOR payload |
@@ -49,28 +49,34 @@ index. These checks happen before runtime execution.
 
 ## Payload model
 
-The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 16 contains:
+The payload is an ordered CBOR array rather than a serialized Rust struct map. Version 17 contains:
 
 1. compiler version string identifier;
 2. a sorted and deduplicated string table;
 3. service metadata;
 4. operations in stable operation-key order;
 5. an indexed value arena used by response definitions, exact outcome bodies, and predicates;
-6. resources in stable resource-reference order;
+6. backends in stable backend-reference order;
 7. asynchronous operations in stable name order;
-8. typed synchronous effects in stable name order; and
-9. one shared request/response/parameter schema catalog.
+8. one shared request/response/parameter/webhook schema catalog;
+9. typed effects in stable name order; and
+10. outbound webhook contracts in stable name order.
 
-Strings, value nodes, resources, and asynchronous operations are referenced with unsigned numeric
-identifiers. Async-operation records point directly to their abstract resources. Effect records
-link operation IDs to synchronous actions and named async units, while each action retains only a
-typed resource command and a compact request/response value template.
+Strings, value nodes, backends, and asynchronous operations are referenced with unsigned numeric
+identifiers. Async-operation records point directly to their declared backends. Effect records
+link operation IDs to synchronous actions, named async units, and outbound webhook occurrences.
+Each occurrence retains the webhook contract index, compact request/response payload and
+destination templates, hard dependency indexes, and delay in milliseconds.
 
 Service metadata also carries the provider-neutral protocol-error table, opaque scenario
-selections, environmental faults, bounded stochastic fault profiles, and a sorted public
-description catalogue. Description records identify a semantic kind, optional parent, name, and
-text. They let `simile describe` explain the service from the artifact without reopening HCL and
-never participate in execution. Each operation carries a named outcome catalog with exact status,
+selections, environmental faults, bounded stochastic fault profiles, the webhook delivery policy,
+and a sorted public description catalogue. The policy stores ordering as an integer tag, reordering
+probability in parts per million, the bounded window in milliseconds, and worker concurrency.
+Separate webhook contract records retain method, operation ID, public summary, callback target
+expression, compiled request-body schema, and contract origin. Description records identify a
+semantic kind, optional parent, name, and text. They
+let `simile describe` explain the service from the artifact without reopening HCL and never
+participate in execution. Each operation carries a named outcome catalog with exact status,
 optional media type and body, fidelity provenance, and public request predicates. Scenario records
 map an operation key to one of those names and may map an operation to a declared environmental
 fault; they never carry the private production decision that selected an outcome.
@@ -100,7 +106,7 @@ audit is a guardrail; the provider remains responsible for reviewing all publish
 Recognized `x-simile-constraints` declarations are compiled into typed relationship records in the
 same schema graph. Source extension objects are not shipped as arbitrary JSON. Artifact validation
 rejects relationship selectors, predicates, witnesses, expressions, lifecycle plans, or comparison
-kinds that do not match the embedded graph. Version 16 carries ordering, relative-bound,
+kinds that do not match the embedded graph. Version 17 carries ordering, relative-bound,
 implication, equality, equation, aggregate, distinct-selector, scalar-set, template, and lifecycle
 records; the runtime does not reparse their source constraint syntax.
 
@@ -109,7 +115,7 @@ bindings, derivations, guarded lifecycle rules, and omission rules reference the
 response schema graph by validated identifiers. This is the proof material that distinguishes a
 merely schema-valid response from one proven reachable from the submitted request.
 
-Version 16 also carries typed provider-neutral generation plans. Every plan records a stable rule
+Version 17 also carries typed provider-neutral generation plans. Every plan records a stable rule
 identifier, confidence, source-field evidence, and a typed repair. The runtime consumes those
 plans without re-running name inference. Provider-specific profiles are not part of this version.
 

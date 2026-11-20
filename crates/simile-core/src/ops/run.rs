@@ -124,6 +124,22 @@ pub struct ExecutedResponse {
     pub body: Option<Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutedWebhook {
+    pub name: String,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub body: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub delay_milliseconds: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunReport {
@@ -139,6 +155,8 @@ pub struct RunReport {
     pub outcome_provenance: Option<OutcomeProvenance>,
     pub request: ExecutedRequest,
     pub response: ExecutedResponse,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhooks: Vec<ExecutedWebhook>,
 }
 
 /// Compile a service source in memory and execute one selected operation.
@@ -218,6 +236,20 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         content_type: response.media_type().map(str::to_owned),
         body: response.value().cloned(),
     };
+    let webhooks = outcome
+        .effects()
+        .webhooks()
+        .iter()
+        .map(|webhook| ExecutedWebhook {
+            name: webhook.name().to_owned(),
+            method: webhook.method().to_owned(),
+            content_type: webhook.content_type().map(str::to_owned),
+            target: webhook.target().map(str::to_owned),
+            body: webhook.body().clone(),
+            after: webhook.after().to_vec(),
+            delay_milliseconds: webhook.delay_milliseconds(),
+        })
+        .collect();
     let report = RunReport {
         service,
         service_version,
@@ -228,6 +260,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         outcome_provenance: outcome.provenance(),
         request: executed_request,
         response: executed_response,
+        webhooks,
     };
     if let Some(path) = &request.bundle {
         super::reproduce::write(
@@ -239,6 +272,10 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         )?;
     }
     Ok(report)
+}
+
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 fn prepare_request(

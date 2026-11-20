@@ -59,7 +59,7 @@ from a route name.
 
 An HCL `behavior` may select a response already declared by OpenAPI and attach observable work that
 OpenAPI cannot describe. It cannot add an endpoint, contradict a schema, or name a private
-production check. HCL may also declare non-HTTP async operations and the abstract resources they
+production check. HCL may also declare non-HTTP async operations and the backends they
 use. Named OpenAPI examples form the default outcome catalog. HCL may add reusable, schema-checked
 outcomes, map protocol failures into public service errors, or group those outcomes behind opaque
 scenario names. The compiled artifact records whether an outcome is exact provider evidence or
@@ -70,7 +70,7 @@ declined payment methods, and forbidden states are deterministic service outcome
 connections are attempt-scoped delivery faults. A scenario may activate either deliberately;
 bounded stochastic profiles may activate only environmental faults, never invent a domain error.
 
-The supported resource vocabulary describes Simile's local emulation substrate: `db`, `cache`,
+The supported backend vocabulary describes Simile's local emulation substrate: `db`, `cache`,
 `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, and `http`. It deliberately excludes
 products such as PostgreSQL, Redis, or SES. Production topology is not part of the portable
 behavioral contract.

@@ -51,6 +51,27 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
     if let Some(revision) = &report.revision {
         terminal.line(format_args!("{MUTED}revision{MUTED:#} {revision}"))?;
     }
+    terminal.line(format_args!(
+        "{MUTED}webhooks{MUTED:#} {} contracts · {} · {:.4}% reorder · {}ms window · {} workers",
+        report.webhook_contracts.len(),
+        report.webhooks.ordering,
+        f64::from(report.webhooks.out_of_order_probability_ppm) / 10_000.0,
+        report.webhooks.reorder_window_milliseconds,
+        report.webhooks.concurrency
+    ))?;
+
+    if !report.webhook_contracts.is_empty() {
+        terminal.line(format_args!("{HEADING}Webhooks{HEADING:#}"))?;
+        for webhook in &report.webhook_contracts {
+            terminal.line(format_args!(
+                "{LABEL}{}{LABEL:#} · {} · {}{}",
+                webhook.name,
+                webhook.method,
+                webhook.origin,
+                suffix(webhook.description.as_deref())
+            ))?;
+        }
+    }
 
     if report.operations.is_empty() {
         terminal.line(format_args!(
@@ -113,13 +134,13 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
             ))?;
         }
     }
-    if !report.resources.is_empty() {
-        terminal.line(format_args!("{HEADING}Resources{HEADING:#}"))?;
-        for resource in &report.resources {
+    if !report.backends.is_empty() {
+        terminal.line(format_args!("{HEADING}Backends{HEADING:#}"))?;
+        for backend in &report.backends {
             terminal.line(format_args!(
                 "{LABEL}{}{LABEL:#}{}",
-                resource.reference,
-                suffix(resource.description.as_deref())
+                backend.reference,
+                suffix(backend.description.as_deref())
             ))?;
         }
     }
@@ -129,7 +150,7 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
             terminal.line(format_args!(
                 "{LABEL}{}{LABEL:#} · uses {}{}",
                 operation.name,
-                operation.resources.join(", "),
+                operation.backends.join(", "),
                 suffix(operation.description.as_deref())
             ))?;
         }

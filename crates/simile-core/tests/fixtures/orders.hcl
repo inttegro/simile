@@ -1,4 +1,4 @@
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   uses = ["queue.orders"]

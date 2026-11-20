@@ -14,7 +14,7 @@ fn infers_one_conservative_database_write_for_a_created_entity() {
                   product:
                     $ref: '#/components/schemas/Product'
 "#,
-        "resource \"db\" \"primary\" {}",
+        "backend \"db\" \"primary\" {}",
     );
 
     let effect = service
@@ -39,7 +39,7 @@ fn does_not_guess_when_databases_or_entities_are_ambiguous() {
     let service = compile(
         "/things",
         "                type: object\n                properties:\n                  ok: { type: boolean }",
-        "resource \"db\" \"east\" {}\nresource \"db\" \"west\" {}",
+        "backend \"db\" \"east\" {}\nbackend \"db\" \"west\" {}",
     );
     assert!(service.effects.is_empty());
 }

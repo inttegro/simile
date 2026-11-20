@@ -80,7 +80,7 @@ or a future host without making schema logic depend on any transport.
 | Artifact | Deterministic CBOR encoding and the compile-time/run-time compatibility boundary | [Compiled artifact](/compiled-artifact) |
 | Runtime | Protocol-neutral operation execution | [Operation execution](/operation-execution) |
 | Supervisor | Atomic consequence execution and durable service ownership | [Dependencies and effects](/dependencies-and-effects) |
-| Stack | Deterministic abstract resources, persistence, and causal journal | [Simile Stack](/simile-stack) |
+| Stack | Deterministic backends, persistence, and causal journal | [Simile Stack](/simile-stack) |
 | HTTP | Routing, wire limits, content negotiation, and error adaptation | [HTTP server](/http-server) |
 | Application layer | Source loading, service registration, revisions, and process orchestration | [Application and registry](/application-registry) |
 
@@ -92,7 +92,7 @@ or a future host without making schema logic depend on any transport.
 - `.similec` is the only contract between compilation and execution. A registered service starts
   from its artifact rather than refetching its sources.
 - `simile-runtime` is protocol-neutral. HTTP routing and response writing belong to
-  `simile-server`; resource consequences belong to `simile-service`; files, URLs, registry paths,
+  `simile-server`; backend consequences belong to `simile-service`; files, URLs, registry paths,
   and terminal output belong above all three.
 - Explicit `x-simile-constraints` participate in proof and construction. Heuristics may improve
   generated values, but they never decide whether an incoming payload is valid.

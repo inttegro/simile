@@ -44,8 +44,8 @@ The semantic compiler rejects:
 - duplicate declarations;
 - behavior that names an unknown `operationId`;
 - a response status absent from that operation;
-- unknown resources used by async declarations;
-- provider-specific resource kinds; and
+- unknown backends used by async declarations;
+- provider-specific backend kinds; and
 - scenarios that select unknown outcomes.
 
 This two-phase design keeps syntax errors separate from cross-source meaning.

@@ -97,7 +97,7 @@ paths:
             behaviors: vec![Source::new(
                 "orders.hcl",
                 r#"
-resource "db" "orders" {}
+backend "db" "orders" {}
 
 effect "persist_order" {
   operations = ["createOrder"]

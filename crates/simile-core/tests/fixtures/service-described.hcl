@@ -11,7 +11,7 @@ service "orders" {
   }
 }
 
-resource "queue" "orders" {
+backend "queue" "orders" {
   description = "Carries accepted orders to background processors."
 }
 

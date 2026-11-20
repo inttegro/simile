@@ -18,13 +18,13 @@ impl<'a> Source<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResourceDeclaration {
+pub struct BackendDeclaration {
     pub kind: ResourceKind,
     pub name: String,
     pub description: Option<String>,
 }
 
-impl ResourceDeclaration {
+impl BackendDeclaration {
     #[must_use]
     pub fn reference(&self) -> ResourceRef {
         ResourceRef::new(self.kind, &self.name)
@@ -131,7 +131,7 @@ pub struct AsyncDeclaration {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionDeclaration {
-    pub resource: ResourceRef,
+    pub backend: ResourceRef,
     pub kind: EffectActionKind,
     pub arguments: std::collections::BTreeMap<String, EffectValue>,
 }
@@ -143,12 +143,38 @@ pub struct EffectDeclaration {
     pub operations: Vec<String>,
     pub actions: Vec<ActionDeclaration>,
     pub async_operations: Vec<String>,
+    pub webhooks: Vec<WebhookEmissionDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookEmissionDeclaration {
+    pub webhook: String,
+    pub body: EffectValue,
+    pub target: Option<EffectValue>,
+    pub after: Vec<String>,
+    pub delay_milliseconds: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub method: simile_spec::HttpMethod,
+    pub content_type: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookPolicyDeclaration {
+    pub ordering: simile_spec::WebhookOrdering,
+    pub out_of_order_probability_ppm: Option<u32>,
+    pub reorder_window_milliseconds: Option<u64>,
+    pub concurrency: Option<u16>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Module {
     pub source: String,
-    pub resources: Vec<ResourceDeclaration>,
+    pub backends: Vec<BackendDeclaration>,
     pub behaviors: Vec<BehaviorDeclaration>,
     pub error_sets: Vec<ErrorSetDeclaration>,
     pub error_set_applications: Vec<ErrorSetApplicationDeclaration>,
@@ -159,6 +185,8 @@ pub struct Module {
     pub fault_profiles: Vec<FaultProfileDeclaration>,
     pub async_operations: Vec<AsyncDeclaration>,
     pub effects: Vec<EffectDeclaration>,
+    pub webhooks: Vec<WebhookDeclaration>,
+    pub webhook_policies: Vec<WebhookPolicyDeclaration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

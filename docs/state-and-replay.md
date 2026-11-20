@@ -1,13 +1,13 @@
 ---
 title: State, identity, and replay
-description: Understand stable operation identity, durable resource state, and exact reproduction.
+description: Understand stable operation identity, durable backend state, and exact reproduction.
 ---
 
 Independent calls should vary; identified calls should not invent a second result. Simile separates
 three concerns that are often collapsed into “state”:
 
 1. operation replay keeps an identified public call stable;
-2. Stack state persists declared resource consequences; and
+2. Stack state persists declared backend consequences; and
 3. reproduction bundles preserve the evidence required to repeat one execution.
 
 ## Operation replay
@@ -21,13 +21,13 @@ For GET requests, the adapter uses the full URI as a resource identity. Repeatin
 and URI returns the first outcome for the lifetime of that operation runtime.
 
 Operation response replay remains process-local. It protects retries during one running service;
-it is not a substitute for durable resources or a cross-process response cache.
+durable backend state and cross-process response caching have separate lifecycles.
 
-## Durable resource state
+## Durable backend state
 
 Effects send typed commands to Simile Stack. The service supervisor applies each synchronous unit
 transactionally, saves the complete Stack snapshot to embedded redb, and rolls back in-memory state
-if the command or checkpoint fails. A restarted service restores resource state, logical time,
+if the command or checkpoint fails. A restarted service restores backend state, logical time,
 causal journal, counters, and Stack command replays from `$SIMILE_HOME/state/services/NAME.redb`.
 
 The file is bound to the registered service identity and artifact digest. Simile refuses to load it

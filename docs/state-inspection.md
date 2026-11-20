@@ -1,10 +1,10 @@
 ---
 title: State inspection
-description: Follow resource causality while keeping stored payloads private by default.
+description: Follow backend causality while keeping stored payloads private by default.
 ---
 
 Registered services persist Stack state under `SIMILE_HOME`. `simile state` gives an operator a
-single read-only view of the declared resources and their causal journal:
+single read-only view of the declared backends and their causal journal:
 
 ```bash
 simile state inttegro

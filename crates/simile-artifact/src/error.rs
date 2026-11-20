@@ -14,6 +14,13 @@ pub enum Error {
         source: simile_schema::CompileError,
     },
 
+    #[error("could not compile the request schema for webhook `{webhook}`: {source}")]
+    WebhookSchema {
+        webhook: String,
+        #[source]
+        source: simile_schema::CompileError,
+    },
+
     #[error("could not encode the compiled artifact: {0}")]
     Encode(String),
 

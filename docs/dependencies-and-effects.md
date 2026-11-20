@@ -16,23 +16,24 @@ flowchart LR
   Sync --> Checkpoint[(Atomic checkpoint)]
   Checkpoint --> Response[Deliver response]
   Checkpoint --> Async[Background asynchronous work]
+  Checkpoint --> Webhooks[Webhook occurrences]
   Sync --> Stack[Simile Stack]
   Async --> Stack
 ```
 
-## Declare abstract dependencies
+## Declare backends
 
-Resources describe capabilities, not production vendors:
+Backends describe the supporting systems the emulator provides:
 
 ```hcl
-resource "db" "orders" {}
-resource "event_bus" "commerce" {}
-resource "mail" "receipts" {}
+backend "db" "orders" {}
+backend "event_bus" "commerce" {}
+backend "mail" "receipts" {}
 ```
 
-The definition says database-like state, an event bus, and mail are externally relevant. It does
-not expose PostgreSQL, Kafka, SES, private table names, credentials, or topology. Supported kinds
-are `cache`, `db`, `event_bus`, `http`, `mail`, `object_store`, `queue`, and `scheduler`.
+The declaration exposes the capability class and local name. Production products, private table
+names, credentials, and topology stay outside the public service definition. Supported kinds are
+`cache`, `db`, `event_bus`, `http`, `mail`, `object_store`, `queue`, and `scheduler`.
 
 ## Define reusable background work
 
@@ -67,21 +68,30 @@ effect "commit_order" {
   }
 
   async = ["publish_order"]
+
+  emit = {
+    "order.created" = response.order
+  }
 }
 ```
 
-The compiler resolves operation IDs, resource references, action names, and required arguments. It
+The compiler resolves operation IDs, backend references, action names, and required arguments. It
 lowers them into typed artifact records. At runtime the service supervisor:
 
 1. validates the request and commits one public outcome;
 2. renders synchronous action arguments from that committed request and response;
 3. applies the synchronous unit transactionally and checkpoints durable Stack state;
-4. schedules named asynchronous units on a background worker; and
+4. plans schema-checked webhook occurrences and schedules named asynchronous units; and
 5. allows HTTP response delivery to proceed without waiting for that work.
 
 If a synchronous action or checkpoint fails, the Stack rolls back to its prior snapshot and the
 response is not delivered as though the effect succeeded. Idempotent operation replay does not
 repeat an already committed effect.
+
+Webhook occurrence planning belongs to the same effect because it is another public consequence of
+commit. The outbound wire contract still belongs in OpenAPI. See
+[Webhook delivery](/webhook-delivery) for compact multi-webhook emission, causal edges, and
+service-wide ordering policy.
 
 Request and response projections also define when an effect applies. An action that reads
 `response.order.id` is rendered only for outcomes that contain that value; a provider error or an

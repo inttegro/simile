@@ -174,15 +174,15 @@ is intentionally private.
 
 ## 5. Model effects without vendors
 
-Resources name abstract capabilities. Effects attach consequences to committed operations. Async
+Backends name supporting systems. Effects attach consequences to committed operations. Async
 units describe actions that run outside the response-critical path.
 
 ```hcl
-resource "db" "orders" {
+backend "db" "orders" {
   description = "Stores committed order state."
 }
 
-resource "queue" "fulfillment" {
+backend "queue" "fulfillment" {
   description = "Carries order work to background processors."
 }
 
@@ -212,14 +212,14 @@ not a leak of the production implementation. The synchronous database action com
 checkpoints before delivery. The named queue action dispatches afterwards, so it does not add
 response latency.
 
-**Question 7.** Which resource declaration is portable?
+**Question 7.** Which backend declaration is portable?
 
-- A. `resource "db" "orders" {}`
-- B. `resource "postgres" "orders" {}`
-- C. `resource "rds" "orders" {}`
+- A. `backend "db" "orders" {}`
+- B. `backend "postgres" "orders" {}`
+- C. `backend "rds" "orders" {}`
 
 <Accordion title="Show answer">
-  **A.** Resource kinds deliberately describe provider-neutral capabilities.
+  **A.** Backend kinds deliberately describe provider-neutral capabilities.
 </Accordion>
 
 ## 6. Separate service results from environmental faults
@@ -305,7 +305,7 @@ service "inttegro" {
 }
 ```
 
-Compilation resolves every operation ID, outcome, resource, async declaration, scenario, and fault before a
+Compilation resolves every operation ID, outcome, backend, async declaration, scenario, and fault before a
 listener binds. Human-readable descriptions are stored in the compiled artifact for
 `simile describe`; they never influence behavior.
 

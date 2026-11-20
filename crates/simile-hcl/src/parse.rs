@@ -8,11 +8,13 @@ use simile_spec::{
 };
 
 use crate::ast::{
-    ActionDeclaration, AsyncDeclaration, BehaviorDeclaration, EffectDeclaration,
-    ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration, FaultProfileDeclaration,
-    FaultUseDeclaration, Module, OutcomeDeclaration, ProtocolErrorDeclaration, ResourceDeclaration,
-    ScenarioDeclaration, ScenarioFaultDeclaration, ScenarioSelectionDeclaration, Source,
+    ActionDeclaration, AsyncDeclaration, BackendDeclaration, BehaviorDeclaration,
+    EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration,
+    FaultProfileDeclaration, FaultUseDeclaration, Module, OutcomeDeclaration,
+    ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
+    ScenarioSelectionDeclaration, Source,
 };
+use crate::webhook::{webhook_contract, webhook_emissions, webhook_policy};
 use crate::{Error, Result};
 
 pub fn parse(source: Source<'_>) -> Result<Module> {
@@ -22,7 +24,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
     })?;
     let mut module = Module {
         source: source.name.to_owned(),
-        resources: Vec::new(),
+        backends: Vec::new(),
         behaviors: Vec::new(),
         error_sets: Vec::new(),
         error_set_applications: Vec::new(),
@@ -33,6 +35,8 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
         effects: Vec::new(),
+        webhooks: Vec::new(),
+        webhook_policies: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -44,7 +48,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                 });
             }
             Structure::Block(block) => match block.identifier() {
-                "resource" => module.resources.push(resource(block, &module.source)?),
+                "backend" => module.backends.push(backend(block, &module.source)?),
                 "behavior" => module.behaviors.push(behavior(block, &module.source)?),
                 "error_set" => module.error_sets.push(error_set(block, &module.source)?),
                 "apply_error_set" => module
@@ -63,6 +67,12 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                     .async_operations
                     .push(async_operation(block, &module.source)?),
                 "effect" => module.effects.push(effect(block, &module.source)?),
+                "webhook" => module
+                    .webhooks
+                    .push(webhook_contract(block, &module.source)?),
+                "webhooks" => module
+                    .webhook_policies
+                    .push(webhook_policy(block, &module.source)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: module.source,
@@ -141,20 +151,20 @@ fn valid_fault_selector(selector: &str) -> bool {
     !selector.contains('*')
 }
 
-pub(crate) fn resource(block: &Block, source: &str) -> Result<ResourceDeclaration> {
+pub(crate) fn backend(block: &Block, source: &str) -> Result<BackendDeclaration> {
     labels(block, source, 2)?;
-    reject_blocks(block.body(), source, "resource")?;
-    reject_attributes(block.body(), source, "resource", &["description"])?;
+    reject_blocks(block.body(), source, "backend")?;
+    reject_attributes(block.body(), source, "backend", &["description"])?;
     let kind = block.labels()[0].as_str();
-    let kind = ResourceKind::from_str(kind).map_err(|()| Error::UnknownResourceKind {
+    let kind = ResourceKind::from_str(kind).map_err(|()| Error::UnknownBackendKind {
         file: source.to_owned(),
         kind: kind.to_owned(),
     })?;
 
-    Ok(ResourceDeclaration {
+    Ok(BackendDeclaration {
         kind,
         name: block.labels()[1].as_str().to_owned(),
-        description: optional_description(block.body(), source, "resource")?,
+        description: optional_description(block.body(), source, "backend")?,
     })
 }
 
@@ -458,19 +468,18 @@ pub(crate) fn fault_profile(block: &Block, source: &str) -> Result<FaultProfileD
             "seed",
         ],
     )?;
-    let probability = attribute(block.body(), "probability")
-        .and_then(|attribute| match attribute.expr() {
-            Expression::Number(value) => value.as_f64(),
-            _ => None,
-        })
-        .filter(|value| *value >= 0.000_001 && *value <= 1.0)
-        .ok_or_else(|| Error::InvalidAttribute {
+    let probability_ppm = probability_ppm(
+        attribute(block.body(), "probability").ok_or_else(|| Error::InvalidAttribute {
             file: source.to_owned(),
             block: "fault_profile".to_owned(),
             attribute: "probability".to_owned(),
             expected: "a number from 0.000001 through 1",
-        })?;
-    let probability_ppm = (probability * 1_000_000.0).round() as u32;
+        })?,
+        source,
+        "fault_profile",
+        "probability",
+        false,
+    )?;
     let faults = required_string_array(block.body(), source, "fault_profile", "faults")?;
     let operations = attribute(block.body(), "operations")
         .map(|value| string_array(value, source, "fault_profile", "operations"))
@@ -499,6 +508,32 @@ pub(crate) fn fault_profile(block: &Block, source: &str) -> Result<FaultProfileD
         cooldown_requests,
         seed,
     })
+}
+
+pub(crate) fn probability_ppm(
+    attribute: &Attribute,
+    source: &str,
+    block: &str,
+    name: &str,
+    allow_zero: bool,
+) -> Result<u32> {
+    let minimum = if allow_zero { 0.0 } else { 0.000_001 };
+    let probability = match attribute.expr() {
+        Expression::Number(value) => value.as_f64(),
+        _ => None,
+    }
+    .filter(|value| *value >= minimum && *value <= 1.0)
+    .ok_or_else(|| Error::InvalidAttribute {
+        file: source.to_owned(),
+        block: block.to_owned(),
+        attribute: name.to_owned(),
+        expected: if allow_zero {
+            "a number from 0 through 1"
+        } else {
+            "a number from 0.000001 through 1"
+        },
+    })?;
+    Ok((probability * 1_000_000.0).round() as u32)
 }
 
 fn response(block: &Block, source: &str) -> Result<u16> {
@@ -624,7 +659,12 @@ fn optional_u32(body: &Body, source: &str, block: &str, name: &str) -> Result<Op
     })
 }
 
-fn optional_u64(body: &Body, source: &str, block: &str, name: &str) -> Result<Option<u64>> {
+pub(crate) fn optional_u64(
+    body: &Body,
+    source: &str,
+    block: &str,
+    name: &str,
+) -> Result<Option<u64>> {
     attribute(body, name)
         .map(|attribute| match attribute.expr() {
             Expression::Number(value) => value.as_u64().ok_or_else(|| Error::InvalidAttribute {
@@ -670,7 +710,7 @@ fn string_attribute(
     }
 }
 
-fn non_empty_string(
+pub(crate) fn non_empty_string(
     attribute: &Attribute,
     source: &str,
     block: &str,
@@ -690,19 +730,23 @@ fn non_empty_string(
     })
 }
 
-fn duration_milliseconds(
+pub(crate) fn duration_milliseconds(
     attribute: &Attribute,
     source: &str,
     block: &str,
     name: &str,
 ) -> Result<u64> {
-    const MAX_MILLISECONDS: u64 = 86_400_000;
     let value = match attribute.expr() {
         Expression::String(value) => value,
         _ => {
             return Err(invalid_duration(source, block, name));
         }
     };
+    parse_duration(value, source, block, name)
+}
+
+pub(crate) fn parse_duration(value: &str, source: &str, block: &str, name: &str) -> Result<u64> {
+    const MAX_MILLISECONDS: u64 = 86_400_000;
     let (number, multiplier) = if let Some(number) = value.strip_suffix("ms") {
         (number, 1)
     } else if let Some(number) = value.strip_suffix('s') {
@@ -776,7 +820,15 @@ pub(crate) fn effect(block: &Block, source: &str) -> Result<EffectDeclaration> {
         block.body(),
         source,
         "effect",
-        &["description", "operations", "async"],
+        &[
+            "description",
+            "operations",
+            "async",
+            "emit",
+            "after",
+            "delay",
+            "to",
+        ],
     )?;
     let operations = attribute(block.body(), "operations")
         .ok_or_else(|| Error::MissingAttribute {
@@ -798,7 +850,8 @@ pub(crate) fn effect(block: &Block, source: &str) -> Result<EffectDeclaration> {
         .transpose()?
         .unwrap_or_default();
     let actions = action_blocks(block.body(), source, "effect")?;
-    if actions.is_empty() && async_operations.is_empty() {
+    let webhooks = webhook_emissions(block.body(), source)?;
+    if actions.is_empty() && async_operations.is_empty() && webhooks.is_empty() {
         return Err(Error::EmptyEffect {
             file: source.to_owned(),
             effect: block.labels()[0].as_str().to_owned(),
@@ -810,6 +863,7 @@ pub(crate) fn effect(block: &Block, source: &str) -> Result<EffectDeclaration> {
         operations,
         actions,
         async_operations,
+        webhooks,
     })
 }
 
@@ -831,22 +885,21 @@ fn action_blocks(body: &Body, source: &str, owner: &str) -> Result<Vec<ActionDec
 fn action(block: &Block, source: &str) -> Result<ActionDeclaration> {
     labels(block, source, 2)?;
     reject_blocks(block.body(), source, "action")?;
-    let resource = block.labels()[0].as_str();
-    let (kind, name) = resource
+    let backend = block.labels()[0].as_str();
+    let (kind, name) = backend
         .split_once('.')
-        .ok_or_else(|| Error::InvalidActionResource {
+        .ok_or_else(|| Error::InvalidActionBackend {
             file: source.to_owned(),
-            resource: resource.to_owned(),
+            backend: backend.to_owned(),
         })?;
-    let resource_kind =
-        ResourceKind::from_str(kind).map_err(|()| Error::InvalidActionResource {
-            file: source.to_owned(),
-            resource: resource.to_owned(),
-        })?;
+    let resource_kind = ResourceKind::from_str(kind).map_err(|()| Error::InvalidActionBackend {
+        file: source.to_owned(),
+        backend: backend.to_owned(),
+    })?;
     if name.is_empty() || name.contains('.') {
-        return Err(Error::InvalidActionResource {
+        return Err(Error::InvalidActionBackend {
             file: source.to_owned(),
-            resource: resource.to_owned(),
+            backend: backend.to_owned(),
         });
     }
     let command = block.labels()[1].as_str();
@@ -863,7 +916,7 @@ fn action(block: &Block, source: &str) -> Result<ActionDeclaration> {
         if !kind.accepts_argument(attribute.key()) {
             return Err(Error::UnknownEffectArgument {
                 file: source.to_owned(),
-                resource: resource.to_owned(),
+                backend: backend.to_owned(),
                 action: command.to_owned(),
                 argument: attribute.key().to_owned(),
             });
@@ -877,20 +930,24 @@ fn action(block: &Block, source: &str) -> Result<ActionDeclaration> {
         if !arguments.contains_key(*required) {
             return Err(Error::MissingEffectArgument {
                 file: source.to_owned(),
-                resource: resource.to_owned(),
+                backend: backend.to_owned(),
                 action: command.to_owned(),
                 argument: required,
             });
         }
     }
     Ok(ActionDeclaration {
-        resource: ResourceRef::new(resource_kind, name),
+        backend: ResourceRef::new(resource_kind, name),
         kind,
         arguments,
     })
 }
 
-fn effect_value(expression: &Expression, source: &str, attribute: &str) -> Result<EffectValue> {
+pub(crate) fn effect_value(
+    expression: &Expression,
+    source: &str,
+    attribute: &str,
+) -> Result<EffectValue> {
     match expression {
         Expression::Null | Expression::Bool(_) | Expression::Number(_) | Expression::String(_) => {
             literal_effect_value(expression, source, attribute)

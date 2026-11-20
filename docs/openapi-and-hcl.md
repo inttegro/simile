@@ -14,8 +14,8 @@ HCL is optional and must agree with it. This page covers the OpenAPI form of tha
 
 ```mermaid
 flowchart TD
-  OpenAPI[OpenAPI\nmethods, paths, schemas, responses] --> Compiler
-  HCL[Optional HCL\noutcomes, scenarios, effects] --> Compiler
+  OpenAPI[OpenAPI\nmethods, paths, schemas, responses, webhooks] --> Compiler
+  HCL[Optional HCL\noutcomes, scenarios, effects, emissions] --> Compiler
   Compiler --> Check{Do both sources agree?}
   Check -->|yes| Artifact[Compiled service]
   Check -->|no| Failure[Compilation error]
@@ -28,7 +28,8 @@ OpenAPI is the authority for:
 - HTTP methods and paths;
 - request body presence, media types, and schemas;
 - response statuses, media types, and schemas;
-- public examples and tags; and
+- public examples and tags;
+- callback and top-level webhook wire contracts; and
 - `operationId`, when a provider wants HCL to target an operation.
 
 With only OpenAPI, Simile can run every normalized operation, validate a supported request body,
@@ -44,7 +45,9 @@ HCL can:
 - select outcomes from public request values;
 - group outcomes into opaque test scenarios;
 - map Simile's protocol-error categories to declared service responses; and
-- declare abstract resources, transactional consequences, and post-response work.
+- declare backends, transactional consequences, and post-response work;
+- attach one or more webhook occurrences to a committed effect; and
+- supply a minimal webhook contract only when the public API source omits it.
 
 HCL cannot add a route, replace a request schema, invent a response status, or contradict OpenAPI.
 It targets an operation by its exact `operationId`, which is why an operation needs an ID only when
@@ -56,7 +59,7 @@ Suppose OpenAPI already declares `POST /orders`, `operationId: createOrder`, and
 The provider can choose that response and declare observable follow-up work:
 
 ```hcl
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   action "queue.orders" "publish" {
@@ -74,7 +77,7 @@ effect "commit_order" {
 }
 ```
 
-The compiler verifies that `createOrder` exists, `201` is declared, and the resource reference
+The compiler verifies that `createOrder` exists, `201` is declared, and the backend reference
 resolves. `behavior` selects the public HTTP result, `effect` owns its synchronous consequences,
 and `async` owns work dispatched outside the response-critical path. The service supervisor applies
 this compiled plan without reopening HCL.
@@ -120,6 +123,11 @@ schemas, and examples twice, while ordinary OpenAPI tooling could not see the em
 Keeping HCL additive makes source ownership clear and allows OpenAPI-only services to remain
 first-class.
 
+The same boundary applies to webhooks. OpenAPI owns a reusable outbound method and payload schema.
+HCL owns when an operation emits that message, how its body is projected from public request or
+response data, and any explicit causal dependencies between sibling occurrences. See
+[Webhook delivery](/webhook-delivery) for the complete model.
+
 The complete block grammar, value types, defaults, and name-resolution rules are defined in the
 [Simile HCL language specification](/hcl-language-specification). Use the
 [HCL glossary](/hcl-glossary) when a term such as outcome, scenario, fault, or effect needs a
@@ -137,4 +145,4 @@ semantics. Approximation is permitted only in bounded payload generation heurist
 reported and never becomes a validation rule.
 
 Continue with [Outcome fidelity](/outcome-fidelity) for response selection or
-[Dependencies and effects](/dependencies-and-effects) for resource declarations.
+[Dependencies and effects](/dependencies-and-effects) for backend declarations.

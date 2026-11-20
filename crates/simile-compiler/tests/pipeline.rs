@@ -87,7 +87,7 @@ fn hcl_refines_only_the_operation_it_names() {
             behaviors: vec![Source::new(
                 "orders.hcl",
                 r#"
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   uses = ["queue.orders"]

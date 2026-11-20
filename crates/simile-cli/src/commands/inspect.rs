@@ -28,7 +28,7 @@ pub fn execute(arguments: InspectArgs, terminal: &Terminal) -> Result<Status> {
                 report.openapi_version, report.operations, report.responses
             ))?;
             terminal.line(format_args!(
-                "{MUTED}runtime{MUTED:#} {} async operations · {} resources · {} value nodes",
+                "{MUTED}runtime{MUTED:#} {} async operations · {} backends · {} value nodes",
                 report.async_operations, report.resources, report.value_nodes
             ))?;
             terminal.line(format_args!(
@@ -42,6 +42,15 @@ pub fn execute(arguments: InspectArgs, terminal: &Terminal) -> Result<Status> {
             terminal.line(format_args!(
                 "{MUTED}faults{MUTED:#} {} definitions · {} profiles · {} scenario injections",
                 report.faults, report.fault_profiles, report.scenario_faults
+            ))?;
+            terminal.line(format_args!(
+                "{MUTED}webhooks{MUTED:#} {} contracts · {} emissions · {} · {:.4}% reorder · {}ms window · {} workers",
+                report.webhooks,
+                report.webhook_emissions,
+                report.webhook_policy.ordering,
+                f64::from(report.webhook_policy.out_of_order_probability_ppm) / 10_000.0,
+                report.webhook_policy.reorder_window_milliseconds,
+                report.webhook_policy.concurrency
             ))?;
             terminal.line(format_args!(
                 "{MUTED}export{MUTED:#} {}",

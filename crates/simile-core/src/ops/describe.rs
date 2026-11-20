@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use serde::Serialize;
 use simile_artifact::Artifact;
-use simile_spec::{DescriptionKind, FaultAction, FaultPhase};
+use simile_spec::{DescriptionKind, FaultAction, FaultPhase, WebhookOrigin};
 
 use super::start::prepare_loaded_service;
 use crate::registry::Registry;
@@ -33,10 +33,36 @@ pub struct DescribeServiceReport {
     pub scenarios: Vec<DescribedScenario>,
     pub faults: Vec<DescribedFault>,
     pub fault_profiles: Vec<DescribedFaultProfile>,
-    pub resources: Vec<DescribedResource>,
+    pub backends: Vec<DescribedBackend>,
     pub async_operations: Vec<DescribedAsyncOperation>,
     pub protocol_errors: Vec<DescribedProtocolError>,
+    pub webhooks: DescribedWebhookPolicy,
+    pub webhook_contracts: Vec<DescribedWebhook>,
     pub authoring_objects: Vec<DescribedObject>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedWebhookPolicy {
+    pub ordering: String,
+    pub out_of_order_probability_ppm: u32,
+    pub reorder_window_milliseconds: u64,
+    pub concurrency: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedWebhook {
+    pub name: String,
+    pub method: String,
+    pub origin: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub content_types: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -92,7 +118,7 @@ pub struct DescribedFaultProfile {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DescribedResource {
+pub struct DescribedBackend {
     pub reference: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -104,7 +130,7 @@ pub struct DescribedAsyncOperation {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub resources: Vec<String>,
+    pub backends: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -240,12 +266,12 @@ fn report(
             operations: profile.operations().to_vec(),
         })
         .collect();
-    let resources = artifact
+    let backends = artifact
         .resources()
         .map(|resource| {
             let reference = resource.reference().to_string();
-            DescribedResource {
-                description: description(artifact, DescriptionKind::Resource, &reference),
+            DescribedBackend {
+                description: description(artifact, DescriptionKind::Backend, &reference),
                 reference,
             }
         })
@@ -255,7 +281,7 @@ fn report(
         .map(|operation| DescribedAsyncOperation {
             name: operation.name().to_owned(),
             description: description(artifact, DescriptionKind::AsyncOperation, operation.name()),
-            resources: operation
+            backends: operation
                 .resources()
                 .map(|resource| resource.reference().to_string())
                 .collect(),
@@ -284,6 +310,28 @@ fn report(
             description: entry.text().to_owned(),
         })
         .collect();
+    let webhook_policy = artifact.webhook_policy();
+    let webhook_contracts = artifact
+        .webhooks()
+        .map(|webhook| DescribedWebhook {
+            name: webhook.name().to_owned(),
+            method: webhook.method().to_owned(),
+            origin: match webhook.origin() {
+                WebhookOrigin::OpenApiCallback => "openapi_callback",
+                WebhookOrigin::OpenApiWebhook => "openapi_webhook",
+                WebhookOrigin::ProviderAuthored => "provider_authored",
+            }
+            .to_owned(),
+            operation_id: webhook.operation_id().map(str::to_owned),
+            description: description(artifact, DescriptionKind::Webhook, webhook.name())
+                .or_else(|| webhook.summary().map(str::to_owned)),
+            target: webhook.target().map(str::to_owned),
+            content_types: webhook
+                .request_body()
+                .map(|body| body.media_types().map(str::to_owned).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
 
     DescribeServiceReport {
         service: request.service.clone(),
@@ -301,9 +349,16 @@ fn report(
         scenarios,
         faults,
         fault_profiles,
-        resources,
+        backends,
         async_operations,
         protocol_errors,
+        webhooks: DescribedWebhookPolicy {
+            ordering: webhook_policy.ordering.as_str().to_owned(),
+            out_of_order_probability_ppm: webhook_policy.out_of_order_probability_ppm,
+            reorder_window_milliseconds: webhook_policy.reorder_window_milliseconds,
+            concurrency: webhook_policy.concurrency,
+        },
+        webhook_contracts,
         authoring_objects,
     }
 }
@@ -320,10 +375,11 @@ const fn kind_name(kind: DescriptionKind) -> &'static str {
         DescriptionKind::ErrorSet => "error_set",
         DescriptionKind::ProtocolError => "protocol_error",
         DescriptionKind::Scenario => "scenario",
-        DescriptionKind::Resource => "resource",
+        DescriptionKind::Backend => "backend",
         DescriptionKind::AsyncOperation => "async",
         DescriptionKind::Fault => "fault",
         DescriptionKind::FaultProfile => "fault_profile",
         DescriptionKind::Effect => "effect",
+        DescriptionKind::Webhook => "webhook",
     }
 }

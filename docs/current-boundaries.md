@@ -16,11 +16,13 @@ service described by the long-term charter.
 - declarations-only semantic TypeScript ingestion, including split packages and relative imports
 - optional HCL behavior modules and service configuration
 - named outcomes, reusable error sets, public request predicates, and opaque scenarios
-- abstract resource and async-operation declarations
+- backend and async-operation declarations
 - supported JSON Schema compilation, explicit soundness constraints, and generation heuristics
 - deterministic, versioned `.similec` artifacts with integrity validation
 - compiled path, query, header, and cookie parameter contracts
 - typed synchronous effects, named asynchronous units, and conservative database-write inference
+- OpenAPI callback and OpenAPI 3.1/3.2 top-level webhook ingestion
+- provider-authored webhook contracts and compact multi-webhook effect emissions
 
 ### Operation runtime
 
@@ -34,19 +36,22 @@ service described by the long-term charter.
 - provider-declared protocol-error rendering, with Simile diagnostics as a fallback
 - process-local replay by idempotency key and GET URI
 - deterministic scenario faults and bounded, seeded stochastic fault profiles
+- compiled best-effort or strict webhook ordering policy with bounded, reproducible pair decisions
+- schema-checked webhook occurrence planning with body-derived callback targets, hard dependencies,
+  explicit delays, and destination overrides
 - response delay before delivery and disconnect after commit
 - resolved planning of HCL-declared async work
 - transactional synchronous effect execution with durable Stack checkpoints
 - background dispatch of named asynchronous units without response-path waiting
 - deterministic reproduction bundles and batch conformance replay
 
-### Stack resource layer
+### Stack backend layer
 
 - typed deterministic engines for database, cache, queue, mail, object store, event bus,
   scheduler, and outbound HTTP capabilities
-- one versioned command/result protocol with resource-kind validation and idempotent replay
+- one versioned command/result protocol with backend-kind validation and idempotent replay
 - one logical-time model for cache TTLs, queue visibility, scheduled work, and timestamps
-- serializable snapshots, reset, stable resource errors, and a payload-free causal journal
+- serializable snapshots, reset, stable backend errors, and a payload-free causal journal
 - separately runnable `simile-*` component processes with uniform lifecycle endpoints
 - automatic redb checkpoints under `SIMILE_HOME` that restore complete component state, time,
   journal, counters, and replay records after restart
@@ -86,6 +91,19 @@ outbox, lease, retry policy, or crash recovery for work that was committed immed
 process stopped. Providers should not use completion of async actions as evidence of a production
 delivery guarantee.
 
+### Webhook delivery
+
+Simile extracts OpenAPI callbacks and OpenAPI 3.1/3.2 top-level webhooks, compiles provider-authored
+fallback contracts, and plans schema-checked occurrences from committed effects. It resolves body
+pointer callback targets, explicit destination overrides, delays, and hard causal dependencies.
+The service-wide policy can then make bounded, reproducible ordering decisions for independent
+occurrences.
+
+The current server does not yet place those occurrences in a durable outbox, deliver signed HTTP
+requests, persist retry attempts, or expose redelivery commands. A planned occurrence is therefore
+proof of what the operation caused, not evidence that a receiver accepted it. The `webhooks` block
+configures delivery semantics but does not by itself send a request.
+
 ### Production equivalence
 
 Simile does not infer provider latency, capacity, private risk decisions, undocumented behavior,
@@ -105,12 +123,13 @@ You can confidently test:
 - request-constrained results when the provider publishes `x-simile-from-request`;
 - idempotency conflict handling and stable process-local replay;
 - how an integration handles declared latency or a lost response after commit; and
-- whether synchronous resource consequences commit atomically; and
-- which named post-response actions a definition dispatches.
+- whether synchronous backend consequences commit atomically; and
+- which named post-response actions a definition dispatches; and
+- which webhook occurrences a committed effect plans, with schema-valid payloads and causal edges.
 
-Do not yet assert that ordinary GET/DELETE semantics were inferred from route shape or that
-post-response work survived a process crash. Those are still explicit boundaries rather than
-plausible claims.
+Do not yet assert that ordinary GET/DELETE semantics were inferred from route shape, post-response
+work survived a process crash, or a planned webhook was accepted by a network receiver. Those are
+still explicit boundaries rather than plausible claims.
 
 Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
 [Fault injection](/fault-injection) for the environmental failure model, or

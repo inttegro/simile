@@ -36,8 +36,8 @@ The runtime performs one ordered run:
 1. resolve the operation from the loaded artifact;
 2. decode and validate the request body;
 3. synthesize the immediate response, using the validated request as context; and
-4. render the typed synchronous and asynchronous effect plans attached to that committed result;
-   and
+4. render the typed synchronous, asynchronous, and webhook occurrence plans attached to that
+   committed result; and
 5. cache the completed outcome when the adapter supplied a replay identity.
 
 ```mermaid
@@ -57,8 +57,10 @@ sequenceDiagram
 ```
 
 The result owns the validated request body, synthesized response, transport plan, and rendered
-effect plan. `simile-service` composes that result with Stack: synchronous actions execute as one
-rollback-capable transition and checkpoint before delivery; named asynchronous units dispatch
+effect plan. A webhook occurrence includes its schema-checked payload, resolved destination when
+available, hard dependencies, and delay. `simile-service` composes that result with Stack:
+synchronous actions execute as one rollback-capable transition and checkpoint before delivery;
+named asynchronous units dispatch
 on a background worker without blocking delivery. The HTTP handler never applies resource commands itself.
 
 ## One-shot CLI execution
@@ -112,14 +114,19 @@ HTTP adapter enacts the transport plan; the runtime never sleeps or manipulates 
 
 ## Consequence supervision
 
-HCL effects attach typed resource actions to one or more operation IDs. Inline actions are
+HCL effects attach typed backend actions to one or more operation IDs. Inline actions are
 synchronous consequences: the supervisor snapshots Stack, applies every command, checkpoints the
 new snapshot, and restores the prior snapshot on command or storage failure. A replayed public
 operation does not repeat those actions.
 
-Named `async` units contain their own typed actions. The supervisor dispatches them outside the
+Named `async` units contain their own typed backend actions. The supervisor dispatches them outside the
 response-critical path so they do not add immediate response latency. This dispatcher is currently
 process-owned, not a durable outbox; crash recovery and retry leases remain an explicit boundary.
+
+Webhook emissions are rendered from the same committed request and response. Their payload schemas,
+callback body-pointer destinations, explicit destination overrides, delays, and causal edges are
+therefore proven before the adapter receives the execution. Network delivery remains a later
+outbox layer; a planned occurrence does not claim that a receiver accepted it.
 
 ## HTTP adapter
 

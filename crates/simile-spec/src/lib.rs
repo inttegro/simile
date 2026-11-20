@@ -4,12 +4,13 @@ mod behavior;
 mod contract;
 mod effect;
 pub mod fault_catalog;
+mod webhook;
 
 pub use behavior::{
     AsyncOperation, Behavior, BehaviorOrigin, BehaviorSpec, CompiledOperation, CompiledService,
     DescriptionCatalog, DescriptionEntry, DescriptionKind, ErrorSet, ErrorSetApplication, Fault,
     FaultAction, FaultPhase, FaultProfile, Outcome, OutcomeCondition, OutcomeProvenance,
-    ProtocolError, Resource, ResourceKind, ResourceRef, Scenario,
+    ProtocolError, Resource, ResourceKind, ResourceRef, Scenario, WebhookOrdering, WebhookPolicy,
 };
 pub use contract::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiFeature, OpenApiVersion, Operation,
@@ -17,3 +18,4 @@ pub use contract::{
     ResponseContract, ResponseStatus, SchemaFeature, SchemaVersion, ServiceInfo,
 };
 pub use effect::{Effect, EffectAction, EffectActionKind, EffectOrigin, EffectValue};
+pub use webhook::{WebhookContract, WebhookEmission, WebhookOrigin};

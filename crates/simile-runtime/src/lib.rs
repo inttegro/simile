@@ -9,13 +9,14 @@ mod parameter;
 mod protocol;
 mod replay;
 mod response;
+mod webhook;
 
 use serde_json::Value;
 use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
-pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation};
+pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation, PlannedWebhook};
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
     ReplayIdentity,
@@ -26,6 +27,10 @@ pub use parameter::{IncomingParameters, ParameterIssue, ValidatedParameters, val
 pub use response::{
     ResponseSoundness, ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
     synthesize_response_with_seed,
+};
+pub use webhook::{
+    WebhookDeliveryPair, WebhookOrder, WebhookOrderingDecision, WebhookOrderingReason,
+    decide_webhook_order,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -160,6 +165,27 @@ pub enum Error {
     #[error("effect `{effect}` references missing async operation `{operation}`")]
     EffectAsyncMissing { effect: String, operation: String },
 
+    #[error("effect references missing webhook `{webhook}`")]
+    EffectWebhookMissing { webhook: String },
+
+    #[error("webhook `{webhook}` has no selectable request content type")]
+    EffectWebhookMediaTypeMissing { webhook: String },
+
+    #[error("webhook target must resolve to a non-empty string")]
+    InvalidWebhookTarget,
+
+    #[error("OpenAPI callback expression `{expression}` is not supported")]
+    UnsupportedCallbackExpression { expression: String },
+
+    #[error("OpenAPI callback expression `{expression}` did not resolve to a URL")]
+    CallbackTargetMissing { expression: String },
+
+    #[error("webhook `{webhook}` body failed schema validation with {} issue(s)", .issues.len())]
+    InvalidWebhookBody {
+        webhook: String,
+        issues: Vec<ValidationIssue>,
+    },
+
     #[error(
         "effect argument `{argument}` cannot project {document} value at JSON pointer `{pointer}`"
     )]
@@ -282,7 +308,9 @@ impl Error {
     #[must_use]
     pub fn issues(&self) -> &[ValidationIssue] {
         match self {
-            Self::InvalidBody { issues } | Self::InvalidResponseBody { issues } => issues,
+            Self::InvalidBody { issues }
+            | Self::InvalidResponseBody { issues }
+            | Self::InvalidWebhookBody { issues, .. } => issues,
             _ => &[],
         }
     }

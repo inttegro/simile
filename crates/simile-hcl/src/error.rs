@@ -82,11 +82,11 @@ pub enum Error {
         expected: &'static str,
     },
 
-    #[error("{file}: resource kind `{kind}` is not a Simile abstraction")]
-    UnknownResourceKind { file: String, kind: String },
+    #[error("{file}: backend kind `{kind}` is not a Simile abstraction")]
+    UnknownBackendKind { file: String, kind: String },
 
-    #[error("resource `{resource}` is declared more than once")]
-    DuplicateResource { resource: String },
+    #[error("backend `{backend}` is declared more than once")]
+    DuplicateBackend { backend: String },
 
     #[error("behavior for operationId `{operation_id}` is declared more than once")]
     DuplicateBehavior { operation_id: String },
@@ -142,6 +142,9 @@ pub enum Error {
     #[error("fault profile `{name}` is declared more than once")]
     DuplicateFaultProfile { name: String },
 
+    #[error("webhook infrastructure policy is declared more than once")]
+    DuplicateWebhookPolicy,
+
     #[error("fault profile `{profile}` lists fault `{fault}` more than once")]
     DuplicateFaultProfileFault { profile: String, fault: String },
 
@@ -176,33 +179,60 @@ pub enum Error {
     #[error("effect `{name}` is declared more than once")]
     DuplicateEffect { name: String },
 
+    #[error("webhook `{name}` is declared more than once")]
+    DuplicateWebhook { name: String },
+
+    #[error("webhook `{name}` is already declared by the API contract")]
+    ContractWebhookRedefined { name: String },
+
+    #[error("{file}: effect emits webhook `{webhook}` more than once")]
+    DuplicateWebhookEmission { file: String, webhook: String },
+
+    #[error("{file}: effect configures unknown emitted webhook `{webhook}`")]
+    UnknownWebhookEmissionOverride { file: String, webhook: String },
+
+    #[error(
+        "{file}: webhook `{webhook}` has invalid dependency `{dependency}`; dependencies must be distinct emitted webhooks"
+    )]
+    InvalidWebhookDependency {
+        file: String,
+        webhook: String,
+        dependency: String,
+    },
+
+    #[error("effect `{effect}` emits unknown webhook `{webhook}`")]
+    UnknownEffectWebhook { effect: String, webhook: String },
+
+    #[error("effect `{effect}` contains a webhook dependency cycle")]
+    WebhookDependencyCycle { effect: String },
+
     #[error("{file}: effect `{effect}` must contain an action or name asynchronous work")]
     EmptyEffect { file: String, effect: String },
 
     #[error(
-        "{file}: action resource `{resource}` must be a declared resource address such as `db.orders`"
+        "{file}: action target `{backend}` must be a declared backend address such as `db.orders`"
     )]
-    InvalidActionResource { file: String, resource: String },
+    InvalidActionBackend { file: String, backend: String },
 
-    #[error("{file}: `{action}` is not an effect action supported by `{resource_kind}` resources")]
+    #[error("{file}: `{action}` is not an effect action supported by `{resource_kind}` backends")]
     UnknownEffectAction {
         file: String,
         resource_kind: ResourceKind,
         action: String,
     },
 
-    #[error("{file}: action `{resource} {action}` does not accept argument `{argument}`")]
+    #[error("{file}: action `{backend} {action}` does not accept argument `{argument}`")]
     UnknownEffectArgument {
         file: String,
-        resource: String,
+        backend: String,
         action: String,
         argument: String,
     },
 
-    #[error("{file}: action `{resource} {action}` requires argument `{argument}`")]
+    #[error("{file}: action `{backend} {action}` requires argument `{argument}`")]
     MissingEffectArgument {
         file: String,
-        resource: String,
+        backend: String,
         action: String,
         argument: &'static str,
     },
@@ -221,8 +251,8 @@ pub enum Error {
     #[error("effect `{effect}` references unknown async operation `{operation}")]
     UnknownEffectAsync { effect: String, operation: String },
 
-    #[error("{owner} action references undeclared resource `{resource}`")]
-    UnknownEffectResource { owner: String, resource: String },
+    #[error("{owner} action references undeclared backend `{backend}`")]
+    UnknownEffectBackend { owner: String, backend: String },
 
     #[error("behavior references unknown OpenAPI operationId `{operation_id}`")]
     UnknownOperation { operation_id: String },
@@ -260,6 +290,6 @@ pub enum Error {
         operation_id: String,
     },
 
-    #[error("async operation `{operation}` uses undeclared resource `{resource}`")]
-    UnknownResource { operation: String, resource: String },
+    #[error("async operation `{operation}` uses undeclared backend `{backend}`")]
+    UnknownBackend { operation: String, backend: String },
 }

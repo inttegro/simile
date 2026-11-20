@@ -71,6 +71,7 @@ pub(crate) fn infer_default_effects(contract: &ApiContract, behaviors: &mut Beha
                     arguments,
                 }],
                 async_operations: Vec::new(),
+                webhooks: Vec::new(),
             },
         );
     }

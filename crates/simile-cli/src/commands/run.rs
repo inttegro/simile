@@ -95,6 +95,24 @@ fn render_human(report: &ops::RunReport, terminal: &Terminal) -> Result<()> {
     if let Some(body) = &report.response.body {
         terminal.line(format_args!("{body}"))?;
     }
+    for webhook in &report.webhooks {
+        terminal.line(format_args!(
+            "{MUTED}webhook{MUTED:#} {} · {}{} · {}ms delay{}",
+            webhook.name,
+            webhook.method,
+            webhook
+                .target
+                .as_deref()
+                .map_or(String::new(), |target| format!(" · {target}")),
+            webhook.delay_milliseconds,
+            if webhook.after.is_empty() {
+                String::new()
+            } else {
+                format!(" · after {}", webhook.after.join(", "))
+            }
+        ))?;
+        terminal.line(format_args!("{}", webhook.body))?;
+    }
     Ok(())
 }
 

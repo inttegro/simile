@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind, Effect,
     EffectAction, EffectOrigin, ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase,
-    FaultProfile, Outcome, OutcomeProvenance, ProtocolError, Resource, Scenario,
+    FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, ProtocolError,
+    RequestBodyContract, Resource, Scenario, WebhookContract, WebhookEmission, WebhookOrdering,
+    WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Module, Result};
@@ -14,11 +16,13 @@ pub fn compile(
 ) -> Result<BehaviorSpec> {
     let mut spec = BehaviorSpec::default();
     let mut fault_uses = Vec::new();
+    let mut webhook_policy = None;
     install_builtin_protocol_errors(&mut spec);
 
     for module in modules {
-        collect_resources(&mut spec, module.resources)?;
+        collect_backends(&mut spec, module.backends)?;
         collect_async_operations(&mut spec, module.async_operations)?;
+        collect_webhooks(&mut spec, module.webhooks, api)?;
         collect_effects(&mut spec, module.effects)?;
         collect_error_sets(&mut spec, module.error_sets)?;
         collect_error_set_applications(&mut spec, module.error_set_applications);
@@ -28,6 +32,11 @@ pub fn compile(
         collect_faults(&mut spec, module.faults)?;
         collect_fault_profiles(&mut spec, module.fault_profiles)?;
         collect_scenarios(&mut spec, module.scenarios)?;
+        collect_webhook_policy(&mut webhook_policy, module.webhook_policies)?;
+    }
+
+    if let Some(policy) = webhook_policy {
+        spec.webhook_policy = policy;
     }
 
     collect_fault_uses(&mut spec, fault_uses)?;
@@ -38,6 +47,38 @@ pub fn compile(
     validate_faults(&spec, api)?;
     validate_scenarios(&spec, api)?;
     Ok(spec)
+}
+
+fn collect_webhook_policy(
+    policy: &mut Option<WebhookPolicy>,
+    declarations: impl IntoIterator<Item = crate::WebhookPolicyDeclaration>,
+) -> Result<()> {
+    for declaration in declarations {
+        if policy.is_some() {
+            return Err(Error::DuplicateWebhookPolicy);
+        }
+        let defaults = WebhookPolicy::default();
+        let strict = declaration.ordering == WebhookOrdering::Strict;
+        *policy = Some(WebhookPolicy {
+            ordering: declaration.ordering,
+            out_of_order_probability_ppm: declaration.out_of_order_probability_ppm.unwrap_or(
+                if strict {
+                    0
+                } else {
+                    defaults.out_of_order_probability_ppm
+                },
+            ),
+            reorder_window_milliseconds: declaration.reorder_window_milliseconds.unwrap_or(
+                if strict {
+                    0
+                } else {
+                    defaults.reorder_window_milliseconds
+                },
+            ),
+            concurrency: declaration.concurrency.unwrap_or(defaults.concurrency),
+        });
+    }
+    Ok(())
 }
 
 fn collect_error_set_applications(
@@ -78,15 +119,15 @@ fn install_builtin_protocol_errors(spec: &mut BehaviorSpec) {
     }
 }
 
-fn collect_resources(
+fn collect_backends(
     spec: &mut BehaviorSpec,
-    declarations: impl IntoIterator<Item = crate::ResourceDeclaration>,
+    declarations: impl IntoIterator<Item = crate::BackendDeclaration>,
 ) -> Result<()> {
     for declaration in declarations {
         let reference = declaration.reference();
         insert_description(
             spec,
-            DescriptionKind::Resource,
+            DescriptionKind::Backend,
             None,
             reference.as_str(),
             declaration.description.clone(),
@@ -96,8 +137,8 @@ fn collect_resources(
             name: declaration.name,
         };
         if spec.resources.insert(reference.clone(), resource).is_some() {
-            return Err(Error::DuplicateResource {
-                resource: reference.to_string(),
+            return Err(Error::DuplicateBackend {
+                backend: reference.to_string(),
             });
         }
     }
@@ -125,7 +166,7 @@ fn collect_async_operations(
                     declaration
                         .actions
                         .iter()
-                        .map(|action| action.resource.clone()),
+                        .map(|action| action.backend.clone()),
                 );
                 uses.sort();
                 uses.dedup();
@@ -171,6 +212,17 @@ fn collect_effects(
                 .map(compiled_action)
                 .collect(),
             async_operations: declaration.async_operations,
+            webhooks: declaration
+                .webhooks
+                .into_iter()
+                .map(|emission| WebhookEmission {
+                    webhook: emission.webhook,
+                    body: emission.body,
+                    target: emission.target,
+                    after: emission.after,
+                    delay_milliseconds: emission.delay_milliseconds,
+                })
+                .collect(),
         };
         if spec.effects.insert(name.clone(), effect).is_some() {
             return Err(Error::DuplicateEffect { name });
@@ -179,9 +231,55 @@ fn collect_effects(
     Ok(())
 }
 
+fn collect_webhooks(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::WebhookDeclaration>,
+    api: &ApiContract,
+) -> Result<()> {
+    for declaration in declarations {
+        let name = declaration.name;
+        if api.webhooks.contains_key(&name) {
+            return Err(Error::ContractWebhookRedefined { name });
+        }
+        insert_description(
+            spec,
+            DescriptionKind::Webhook,
+            None,
+            &name,
+            declaration.description.clone(),
+        );
+        let webhook = WebhookContract {
+            name: name.clone(),
+            method: declaration.method,
+            operation_id: None,
+            summary: declaration.description,
+            target: None,
+            request: Some(RequestBodyContract {
+                required: true,
+                content: [(
+                    declaration.content_type,
+                    MediaTypeContract {
+                        schema: None,
+                        example: None,
+                        examples: BTreeMap::new(),
+                        request_relation: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }),
+            origin: WebhookOrigin::ProviderAuthored,
+        };
+        if spec.webhooks.insert(name.clone(), webhook).is_some() {
+            return Err(Error::DuplicateWebhook { name });
+        }
+    }
+    Ok(())
+}
+
 fn compiled_action(declaration: crate::ActionDeclaration) -> EffectAction {
     EffectAction {
-        resource: declaration.resource,
+        resource: declaration.backend,
         kind: declaration.kind,
         arguments: declaration.arguments,
     }
@@ -593,17 +691,17 @@ fn validate_resources(spec: &BehaviorSpec) -> Result<()> {
     for operation in spec.async_operations.values() {
         for resource in &operation.uses {
             if !spec.resources.contains_key(resource) {
-                return Err(Error::UnknownResource {
+                return Err(Error::UnknownBackend {
                     operation: operation.name.clone(),
-                    resource: resource.to_string(),
+                    backend: resource.to_string(),
                 });
             }
         }
         for action in &operation.actions {
             if !spec.resources.contains_key(&action.resource) {
-                return Err(Error::UnknownEffectResource {
+                return Err(Error::UnknownEffectBackend {
                     owner: format!("async operation `{}`", operation.name),
-                    resource: action.resource.to_string(),
+                    backend: action.resource.to_string(),
                 });
             }
         }
@@ -633,14 +731,78 @@ fn validate_effects(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
         }
         for action in &effect.actions {
             if !spec.resources.contains_key(&action.resource) {
-                return Err(Error::UnknownEffectResource {
+                return Err(Error::UnknownEffectBackend {
                     owner: format!("effect `{}`", effect.name),
-                    resource: action.resource.to_string(),
+                    backend: action.resource.to_string(),
                 });
             }
         }
+        let mut emitted = BTreeSet::new();
+        for emission in &effect.webhooks {
+            if !emitted.insert(emission.webhook.clone())
+                || (!api.webhooks.contains_key(&emission.webhook)
+                    && !spec.webhooks.contains_key(&emission.webhook))
+            {
+                return Err(Error::UnknownEffectWebhook {
+                    effect: effect.name.clone(),
+                    webhook: emission.webhook.clone(),
+                });
+            }
+            for dependency in &emission.after {
+                if !effect
+                    .webhooks
+                    .iter()
+                    .any(|candidate| &candidate.webhook == dependency)
+                {
+                    return Err(Error::InvalidWebhookDependency {
+                        file: "compiled behavior".to_owned(),
+                        webhook: emission.webhook.clone(),
+                        dependency: dependency.clone(),
+                    });
+                }
+            }
+        }
+        if webhook_dependency_cycle(&effect.webhooks) {
+            return Err(Error::WebhookDependencyCycle {
+                effect: effect.name.clone(),
+            });
+        }
     }
     Ok(())
+}
+
+fn webhook_dependency_cycle(emissions: &[WebhookEmission]) -> bool {
+    fn visit(
+        name: &str,
+        emissions: &[WebhookEmission],
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        if visited.contains(name) {
+            return false;
+        }
+        if !visiting.insert(name.to_owned()) {
+            return true;
+        }
+        let cyclic = emissions
+            .iter()
+            .find(|emission| emission.webhook == name)
+            .is_some_and(|emission| {
+                emission
+                    .after
+                    .iter()
+                    .any(|dependency| visit(dependency, emissions, visiting, visited))
+            });
+        visiting.remove(name);
+        visited.insert(name.to_owned());
+        cyclic
+    }
+
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    emissions
+        .iter()
+        .any(|emission| visit(&emission.webhook, emissions, &mut visiting, &mut visited))
 }
 
 fn validate_behaviors(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {

@@ -29,7 +29,7 @@ pub struct ServiceReport {
     pub openapi_version: String,
     pub listen: SocketAddr,
     pub operations: usize,
-    pub resources: usize,
+    pub backends: usize,
     pub async_operations: usize,
     pub faults: usize,
     pub fault_profiles: usize,
@@ -146,7 +146,7 @@ pub(crate) fn prepare_loaded_service(
         openapi_version: summary.openapi_version,
         listen,
         operations: summary.operations,
-        resources: summary.resources,
+        backends: summary.resources,
         async_operations: summary.async_operations,
         faults: summary.faults,
         fault_profiles: summary.fault_profiles,
@@ -177,7 +177,7 @@ fn prepare_registered_service(ctx: &Context, request: &StartRequest) -> Result<P
         openapi_version: summary.openapi_version,
         listen,
         operations: summary.operations,
-        resources: summary.resources,
+        backends: summary.resources,
         async_operations: summary.async_operations,
         faults: summary.faults,
         fault_profiles: summary.fault_profiles,
@@ -202,7 +202,7 @@ fn verify_service_name(requested: &str, document: &ServiceDocument) -> Result<()
 }
 
 fn module_is_empty(module: &simile_hcl::Module) -> bool {
-    module.resources.is_empty()
+    module.backends.is_empty()
         && module.behaviors.is_empty()
         && module.error_sets.is_empty()
         && module.error_set_applications.is_empty()
@@ -212,6 +212,7 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
         && module.fault_profiles.is_empty()
         && module.async_operations.is_empty()
         && module.effects.is_empty()
+        && module.webhook_policies.is_empty()
 }
 
 #[cfg(test)]
@@ -251,7 +252,7 @@ mod tests {
             SocketAddr::from(([127, 0, 0, 1], 8484))
         );
         assert_eq!(prepared.report.operations, 3);
-        assert_eq!(prepared.report.resources, 1);
+        assert_eq!(prepared.report.backends, 1);
         assert_eq!(prepared.report.async_operations, 1);
         assert_eq!(prepared.artifact.operations().count(), 3);
     }

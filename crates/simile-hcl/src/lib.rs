@@ -5,13 +5,15 @@ mod compile;
 mod error;
 mod parse;
 mod service;
+mod webhook;
 
 pub use ast::{
-    ActionDeclaration, AsyncDeclaration, BehaviorDeclaration, ContractDeclaration,
-    EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration,
-    FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module, OutcomeDeclaration,
-    ProtocolErrorDeclaration, ResourceDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
+    ActionDeclaration, AsyncDeclaration, BackendDeclaration, BehaviorDeclaration,
+    ContractDeclaration, EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
+    FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
+    OutcomeDeclaration, ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, Source, SourceDeclaration,
+    WebhookDeclaration, WebhookEmissionDeclaration, WebhookPolicyDeclaration,
 };
 pub use compile::compile;
 pub use error::{Error, Result};

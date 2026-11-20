@@ -22,7 +22,7 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// One running service: public operations, declared resources, and durable state.
+/// One running service: public operations, declared backends, and durable state.
 pub struct Service {
     runtime: Runtime,
     stack: Mutex<Stack>,

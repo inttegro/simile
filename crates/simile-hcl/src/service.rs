@@ -6,10 +6,11 @@ use crate::ast::{
     SourceDeclaration,
 };
 use crate::parse::{
-    apply_error_set, async_operation, attribute, behavior, effect, error_set, fault, fault_profile,
-    fault_uses, labels, optional_description, protocol_error, reject_attributes, reject_blocks,
-    resource, scenario, string_array,
+    apply_error_set, async_operation, attribute, backend, behavior, effect, error_set, fault,
+    fault_profile, fault_uses, labels, optional_description, protocol_error, reject_attributes,
+    reject_blocks, scenario, string_array,
 };
+use crate::webhook::{webhook_contract, webhook_policy};
 use crate::{Error, Result};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -23,7 +24,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
     let mut service = None;
     let mut inline_behavior = Module {
         source: source.name.to_owned(),
-        resources: Vec::new(),
+        backends: Vec::new(),
         behaviors: Vec::new(),
         error_sets: Vec::new(),
         error_set_applications: Vec::new(),
@@ -34,6 +35,8 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         fault_profiles: Vec::new(),
         async_operations: Vec::new(),
         effects: Vec::new(),
+        webhooks: Vec::new(),
+        webhook_policies: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -53,9 +56,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                     }
                     service = Some(parse_service_block(block, source.name)?);
                 }
-                "resource" => inline_behavior
-                    .resources
-                    .push(resource(block, source.name)?),
+                "backend" => inline_behavior.backends.push(backend(block, source.name)?),
                 "behavior" => inline_behavior
                     .behaviors
                     .push(behavior(block, source.name)?),
@@ -82,6 +83,12 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                     .async_operations
                     .push(async_operation(block, source.name)?),
                 "effect" => inline_behavior.effects.push(effect(block, source.name)?),
+                "webhook" => inline_behavior
+                    .webhooks
+                    .push(webhook_contract(block, source.name)?),
+                "webhooks" => inline_behavior
+                    .webhook_policies
+                    .push(webhook_policy(block, source.name)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: source.name.to_owned(),
@@ -296,7 +303,7 @@ service "inttegro" {
   behaviors = ["./orders.hcl"]
 }
 
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   uses = ["queue.orders"]
@@ -323,6 +330,13 @@ fault_profile "rough_network" {
 scenario "slow_order" {
   inject "createOrder" { fault = "slow_response" }
 }
+
+webhooks {
+  ordering                    = "best_effort"
+  out_of_order_probability    = 0.2
+  reorder_window              = "3s"
+  concurrency                 = 4
+}
 "#,
         ))
         .unwrap_or_else(|error| panic!("{error}"));
@@ -335,13 +349,42 @@ scenario "slow_order" {
             ContractDeclaration::OpenApi(SourceDeclaration::Path("./commerce.yml".to_owned()))
         );
         assert_eq!(document.service.behaviors, ["./orders.hcl"]);
-        assert_eq!(document.inline_behavior.resources.len(), 1);
+        assert_eq!(document.inline_behavior.backends.len(), 1);
         assert_eq!(document.inline_behavior.async_operations.len(), 1);
         assert_eq!(document.inline_behavior.behaviors.len(), 1);
         assert_eq!(document.inline_behavior.fault_uses.len(), 1);
         assert_eq!(document.inline_behavior.faults.len(), 1);
         assert_eq!(document.inline_behavior.fault_profiles.len(), 1);
         assert_eq!(document.inline_behavior.scenarios[0].faults.len(), 1);
+        assert_eq!(document.inline_behavior.webhook_policies.len(), 1);
+        assert_eq!(
+            document.inline_behavior.webhook_policies[0],
+            crate::WebhookPolicyDeclaration {
+                ordering: simile_spec::WebhookOrdering::BestEffort,
+                out_of_order_probability_ppm: Some(200_000),
+                reorder_window_milliseconds: Some(3_000),
+                concurrency: Some(4),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_reordering_controls_for_strict_webhooks() {
+        let result = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  openapi { path = "./openapi.yml" }
+}
+
+webhooks {
+  ordering                 = "strict"
+  out_of_order_probability = 0.1
+}
+"#,
+        ));
+        assert!(matches!(result, Err(Error::InvalidAttribute { .. })));
     }
 
     #[test]

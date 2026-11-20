@@ -233,6 +233,8 @@ pub struct ApiContract {
     pub openapi: SchemaVersion,
     pub info: ServiceInfo,
     pub operations: BTreeMap<OperationKey, Operation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub webhooks: BTreeMap<String, crate::WebhookContract>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub schemas: BTreeMap<String, Value>,
 }
@@ -249,6 +251,7 @@ impl ApiContract {
             openapi: schema,
             info,
             operations,
+            webhooks: BTreeMap::new(),
             schemas,
         }
     }

@@ -80,6 +80,31 @@ fn plans_committed_effects_from_validated_request_and_response_values() {
 }
 
 #[test]
+fn plans_schema_checked_webhook_occurrences_from_effects() {
+    let artifact = artifact();
+    let result = Runtime::new(&artifact)
+        .execute(order_call(br#"{"product":"beat_pack","quantity":2}"#))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let webhook = result
+        .effects()
+        .webhooks()
+        .first()
+        .unwrap_or_else(|| panic!("webhook missing"));
+    assert_eq!(webhook.name(), "order.created");
+    assert_eq!(webhook.method(), "POST");
+    assert_eq!(webhook.content_type(), Some("application/json"));
+    assert_eq!(webhook.target(), Some("https://merchant.test/hooks"));
+    assert_eq!(
+        webhook.body(),
+        result
+            .response()
+            .value()
+            .unwrap_or_else(|| panic!("response body missing"))
+    );
+}
+
+#[test]
 fn runs_openapi_only_bodyless_operations() {
     let artifact = artifact();
     let result = Runtime::new(&artifact)
@@ -542,10 +567,27 @@ paths:
                   object: { type: string, const: customer }
                   email: { type: string }
                   name: { type: string }
+webhooks:
+  order.created:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, product, quantity]
+              properties:
+                id: { type: string, minLength: 12 }
+                product: { type: string }
+                quantity: { type: integer }
+      responses:
+        "204": { description: Accepted }
 "#;
     let behavior = r#"
-resource "db" "orders" {}
-resource "mail" "receipts" {}
+backend "db" "orders" {}
+backend "mail" "receipts" {}
 
 async "record_order" {
   uses = ["db.orders"]
@@ -553,6 +595,12 @@ async "record_order" {
 
 effect "persist_order" {
   operations = ["createOrder"]
+  emit = {
+    "order.created" = response
+  }
+  to = {
+    "order.created" = "https://merchant.test/hooks"
+  }
   action "db.orders" "put" {
     collection = "orders"
     key        = response.id

@@ -93,9 +93,9 @@ that preserve their actual retry and commit semantics.
 
 ## Planned subsystem namespaces
 
-Wire faults are only one half of the catalog. Simile's resource abstractions also need faults for
+Wire faults are only one half of the catalog. Simile's backend abstractions also need faults for
 observable dependency and async-work behavior. These namespaces remain design vocabulary rather
-than executable selectors until deterministic resource adapters exist.
+than executable selectors until deterministic backend adapters exist.
 
 | Namespace | Planned behavior families |
 | --- | --- |

@@ -38,6 +38,55 @@ pub struct PlannedAsyncOperation {
     actions: Vec<PlannedAction>,
 }
 
+/// One schema-checked outbound webhook occurrence caused by an effect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlannedWebhook {
+    name: String,
+    method: String,
+    content_type: Option<String>,
+    target: Option<String>,
+    body: Value,
+    after: Vec<String>,
+    delay_milliseconds: u64,
+}
+
+impl PlannedWebhook {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
+    }
+
+    #[must_use]
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> &Value {
+        &self.body
+    }
+
+    #[must_use]
+    pub fn after(&self) -> &[String] {
+        &self.after
+    }
+
+    #[must_use]
+    pub const fn delay_milliseconds(&self) -> u64 {
+        self.delay_milliseconds
+    }
+}
+
 impl PlannedAsyncOperation {
     #[must_use]
     pub fn name(&self) -> &str {
@@ -59,6 +108,7 @@ impl PlannedAsyncOperation {
 pub struct EffectPlan {
     synchronous: Vec<PlannedAction>,
     asynchronous: Vec<PlannedAsyncOperation>,
+    webhooks: Vec<PlannedWebhook>,
 }
 
 impl EffectPlan {
@@ -73,8 +123,13 @@ impl EffectPlan {
     }
 
     #[must_use]
+    pub fn webhooks(&self) -> &[PlannedWebhook] {
+        &self.webhooks
+    }
+
+    #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.synchronous.is_empty() && self.asynchronous.is_empty()
+        self.synchronous.is_empty() && self.asynchronous.is_empty() && self.webhooks.is_empty()
     }
 }
 
@@ -116,13 +171,19 @@ pub(crate) fn plan(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            Ok((synchronous, asynchronous))
+            let webhooks = effect
+                .webhooks()
+                .iter()
+                .map(|emission| render_webhook(artifact, emission, request, response))
+                .collect::<Result<Vec<_>>>()?;
+            Ok((synchronous, asynchronous, webhooks))
         })();
 
         match rendered {
-            Ok((synchronous, asynchronous)) => {
+            Ok((synchronous, asynchronous, webhooks)) => {
                 plan.synchronous.extend(synchronous);
                 plan.asynchronous.extend(asynchronous);
+                plan.webhooks.extend(webhooks);
             }
             // Projections are also applicability guards. An effect that writes
             // `response.id` belongs to outcomes that actually return an id; an
@@ -133,6 +194,96 @@ pub(crate) fn plan(
         }
     }
     Ok(plan)
+}
+
+fn render_webhook(
+    artifact: &Artifact,
+    emission: &simile_spec::WebhookEmission,
+    request: Option<&Value>,
+    response: Option<&Value>,
+) -> Result<PlannedWebhook> {
+    let webhook =
+        artifact
+            .webhook(&emission.webhook)
+            .ok_or_else(|| Error::EffectWebhookMissing {
+                webhook: emission.webhook.clone(),
+            })?;
+    let body = render_value(&emission.body, request, response, "emit")?;
+    let content_type = webhook
+        .request_body()
+        .and_then(|plan| plan.media_types().next().map(str::to_owned));
+    if let (Some(plan), Some(content_type)) = (webhook.request_body(), content_type.as_deref()) {
+        let selected =
+            plan.select(content_type)
+                .ok_or_else(|| Error::EffectWebhookMediaTypeMissing {
+                    webhook: emission.webhook.clone(),
+                })?;
+        let issues = selected.validate(&body);
+        if !issues.is_empty() {
+            return Err(Error::InvalidWebhookBody {
+                webhook: emission.webhook.clone(),
+                issues,
+            });
+        }
+    }
+    let target = match &emission.target {
+        Some(value) => Some(render_webhook_target(value, request, response)?),
+        None => webhook
+            .target()
+            .map(|target| resolve_callback_target(target, request, response))
+            .transpose()?,
+    };
+    Ok(PlannedWebhook {
+        name: emission.webhook.clone(),
+        method: webhook.method().to_owned(),
+        content_type,
+        target,
+        body,
+        after: emission.after.clone(),
+        delay_milliseconds: emission.delay_milliseconds,
+    })
+}
+
+fn render_webhook_target(
+    value: &EffectValue,
+    request: Option<&Value>,
+    response: Option<&Value>,
+) -> Result<String> {
+    render_value(value, request, response, "to")?
+        .as_str()
+        .filter(|target| !target.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or(Error::InvalidWebhookTarget)
+}
+
+fn resolve_callback_target(
+    expression: &str,
+    request: Option<&Value>,
+    response: Option<&Value>,
+) -> Result<String> {
+    let expression = expression
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+        .unwrap_or(expression);
+    let (document, pointer) = expression
+        .strip_prefix("$request.body#")
+        .map(|pointer| (request, pointer))
+        .or_else(|| {
+            expression
+                .strip_prefix("$response.body#")
+                .map(|pointer| (response, pointer))
+        })
+        .ok_or_else(|| Error::UnsupportedCallbackExpression {
+            expression: expression.to_owned(),
+        })?;
+    document
+        .and_then(|document| document.pointer(pointer))
+        .and_then(Value::as_str)
+        .filter(|target| !target.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::CallbackTargetMissing {
+            expression: expression.to_owned(),
+        })
 }
 
 fn render_action(

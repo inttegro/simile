@@ -68,7 +68,7 @@ maintaining two competing HTTP contracts.
 
 ### Invalid definitions fail early
 
-Unknown operation IDs, undeclared statuses, impossible constraints, missing resources, and invalid
+Unknown operation IDs, undeclared statuses, impossible constraints, missing backends, and invalid
 outcome bodies fail compilation. The runtime never silently ignores a behavior declaration it
 cannot execute.
 

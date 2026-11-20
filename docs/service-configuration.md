@@ -33,7 +33,18 @@ service "inttegro" {
     "./payments.hcl",
   ]
 }
+
+webhooks {
+  ordering                 = "best_effort"
+  out_of_order_probability = 0.10
+  reorder_window           = "5s"
+  concurrency              = 8
+}
 ```
+
+The optional `webhooks` block controls service-wide delivery infrastructure. Its default models
+bounded, reproducible out-of-order delivery instead of promising global ordering that real webhook
+systems rarely provide. See [Webhook delivery](/webhook-delivery).
 
 The document must contain exactly one `service` block. Its label is the service name passed to the
 CLI:
@@ -152,11 +163,12 @@ remote configuration are rejected rather than resolved against the process worki
 ## Behavior modules
 
 `behaviors` is an optional list of HCL module paths. Relative paths resolve from the configuration
-directory. The service document may also contain `resource`, `async`, `behavior`, `scenario`,
-`faults`, `fault`, and `fault_profile` blocks after the `service` block:
+directory. The service document may also contain `backend`, `async`, `effect`, `behavior`,
+`scenario`, `faults`, `fault`, `fault_profile`, `webhook`, and `webhooks` blocks after the
+`service` block:
 
 ```hcl
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   action "queue.orders" "publish" {
@@ -167,6 +179,13 @@ async "dispatch_order" {
 effect "commit_order" {
   operations = ["createOrder"]
   async      = ["dispatch_order"]
+  emit = {
+    "order.created" = response.order
+  }
+}
+
+webhook "order.created" {
+  description = "Sent after an order has committed."
 }
 
 behavior "createOrder" {
@@ -179,13 +198,17 @@ faults {
 }
 ```
 
-Resources are the portable dependencies of the emulated service. They name abstract capabilities
-such as `db`, `cache`, `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, or `http`, never a
-production vendor. Async declarations name post-response work. Effects attach synchronous actions
+Backends are the portable supporting systems of the emulated service. They name capabilities such
+as `db`, `cache`, `queue`, `mail`, `object_store`, `event_bus`, `scheduler`, or `http`. Production
+vendor details stay outside HCL. Async declarations name post-response work. Effects attach synchronous actions
 and named async units to operations; the compiler turns each action into a typed Stack command.
+Webhook contracts normally come from OpenAPI callbacks or top-level webhooks. A singular
+`webhook` block fills a public-contract gap, while `effect.emit` attaches one or more outbound
+occurrences to committed operations. The plural `webhooks` block configures delivery
+infrastructure once for the service.
 
 Imported and inline declarations enter the same semantic compiler. Duplicate declarations,
-unknown contract operation IDs, undeclared resources, and contradictory response selections fail
+unknown contract operation IDs, undeclared backends, and contradictory response selections fail
 startup before the listener binds.
 
 The plural `faults` block imports complete environmental faults from Simile's built-in catalog.
@@ -207,6 +230,8 @@ protocol-neutral runtime. It currently provides:
 - named contract and HCL outcomes, including an optional process-wide `--scenario NAME`;
 - deterministic scenario fault injection and an optional bounded stochastic
   `--fault-profile NAME`;
+- schema-checked planning of effect-emitted webhook occurrences, including supported callback
+  destination expressions, explicit destinations, delays, and hard dependencies;
 - service-declared protocol-error mappings for malformed or contract-invalid requests, with a
   Simile diagnostic only when the operation has no suitable error response;
 - process-local replay for `Idempotency-Key` and for the full URI of GET requests; and
@@ -223,8 +248,9 @@ strings, credentials, idempotency keys, and header values other than `User-Agent
 to the access log.
 
 Authentication and form/multipart codecs are not yet implemented. Async dispatch is process-owned
-and does not yet provide a durable outbox or retry lease. These omissions are reported here so that
-starting a service is not mistaken for full production equivalence.
+and does not yet provide a durable outbox or retry lease. Planned webhook occurrences are not yet
+sent over the network. These omissions are reported here so that starting a service is not mistaken
+for full production equivalence.
 
 Continue with [Lifecycle](/service-lifecycle) to see how this file becomes a registered
 revision, [Fault injection](/fault-injection) for environmental failure controls, or

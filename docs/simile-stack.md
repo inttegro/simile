@@ -1,6 +1,6 @@
 ---
 title: Simile Stack
-description: Deterministic local resources that make a service emulator behave like a system.
+description: Deterministic local backends that make a service emulator behave like a system.
 ---
 
 An API is rarely only HTTP. A request may write state, cache a value, publish an event, enqueue
@@ -49,17 +49,16 @@ This keeps service definitions:
 | [Scheduler](/stack-scheduler) | `simile-scheduler` | Named tasks fired by logical time |
 | [Outbound HTTP](/stack-http) | `simile-http` | Expected calls, local responses, and request history |
 
-One process hosts one capability kind and may contain several named resources. For example,
+One process hosts one capability kind and may contain several named backends. For example,
 `queue.orders` and `queue.receipts` are isolated namespaces in one `simile-queue` process. This is
-small enough to run locally while preserving the resource boundaries in the service definition.
+small enough to run locally while preserving the backend boundaries in the service definition.
 
 ## What every component shares
 
 All components implement the same [versioned protocol](/stack-protocol), use the same
 [logical-time model](/stack-time), and contribute payload-free entries to the same conceptual
 [causal journal](/stack-journal). Their state is serializable, resettable, and restorable. The
-supervisor owns command identity and time, so individual resources cannot disagree about when an
-operation occurred.
+supervisor owns command identity and time, so every backend observes the same operation timeline.
 
 Every component process checkpoints each coherent transition into an embedded redb database under
 the Simile home directory and restores it before accepting traffic after a restart. No state-file
@@ -70,7 +69,7 @@ runtime checkpoint and a portable JSON snapshot.
 ## Execution boundary
 
 The Stack engines and component processes are implemented. HCL already retains `async`
-declarations and their abstract resource dependencies for discovery. The next integration layer
+declarations and their backend dependencies for discovery. The next integration layer
 must attach provider-authored effects to operations, compile their actions into protocol commands,
 and dispatch them after a successful operation.
 

@@ -74,7 +74,8 @@
 							},
 							"state-and-replay",
 							"state-inspection",
-							"dependencies-and-effects"
+							"dependencies-and-effects",
+							"webhook-delivery"
 						]
 					},
 					{

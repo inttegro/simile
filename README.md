@@ -153,7 +153,7 @@ OpenAPI JSON/YAML, Smithy IDL, semantic TypeScript declarations, and HCL are sou
 are not the runtime storage format. A
 `.similec` file contains a compact indexed model encoded as deterministic CBOR, wrapped in a
 versioned envelope with a payload length and SHA-256 integrity digest. The string table,
-operation records, value arena, async-operation records, and resource records are all
+operation records, value arena, async-operation records, and backend records are all
 ordered before encoding, so identical compiler input produces identical artifact bytes. See the
 [compiled artifact format](docs/compiled-artifact.md) for the compatibility contract.
 The public authoring standards are documented separately for
@@ -170,7 +170,7 @@ The deliberately weaker generation-only inference boundary is documented in
 [generation heuristics](docs/generation-heuristics.md).
 Named responses, protocol errors, scenarios, provenance, and the public export boundary are
 documented in [outcome fidelity](docs/outcome-fidelity.md).
-The local resource architecture and its explicit integration boundary are documented in
+The local backend architecture and its explicit integration boundary are documented in
 [Simile Stack](docs/simile-stack.md). Its durable process state is specified in
 [Stack persistence](docs/stack-persistence.md).
 
@@ -223,7 +223,7 @@ for `Idempotency-Key` and repeated GET identities. See
 [service configuration](docs/service-configuration.md) for the complete current boundary.
 
 `simile describe service NAME` renders the public meaning retained in the registered artifact:
-service metadata, scenarios, environmental faults, profiles, resources, and async declarations. Add
+service metadata, scenarios, environmental faults, profiles, backends, and async declarations. Add
 `--verbose` for operations and outcomes, or `--config URL_OR_FILE` to compile and describe a
 transient configuration without changing the registry. Named semantic HCL blocks accept an
 optional public `description`; catalog faults provide one automatically. See
@@ -236,8 +236,8 @@ GET resource identity. HCL is used only when a provider needs to select a declar
 describe public runtime concepts that OpenAPI cannot express:
 
 ```hcl
-resource "db" "orders" {}
-resource "event_bus" "commerce" {}
+backend "db" "orders" {}
+backend "event_bus" "commerce" {}
 
 behavior "createOrder" {
   response { status = 201 }
@@ -280,7 +280,7 @@ and stores the service outcome before returning a protocol-neutral transport pla
 an idempotent retry after a lost response therefore receives the committed result normally. See
 [fault injection](docs/fault-injection.md) for the fault vocabulary and activation controls.
 
-Resource kinds are intentionally abstract. A definition may declare `db`, `cache`, `queue`,
+Backend kinds are intentionally abstract. A definition may declare `db`, `cache`, `queue`,
 `mail`, `object_store`, `event_bus`, `scheduler`, or `http`; it cannot couple local emulation to a
 production vendor or reveal private implementation checks.
 
@@ -307,7 +307,7 @@ Simile follows a pipeline of narrow ownership boundaries:
   server framework.
 - `simile-service` supervises one runtime and one Stack, applies synchronous effects before
   delivery, checkpoints them atomically, and exposes background asynchronous dispatch.
-- `simile-stack` owns deterministic abstract resources, logical time, causal journaling,
+- `simile-stack` owns deterministic backend engines, logical time, causal journaling,
   idempotent commands, and memory or redb-backed service state.
 - `simile-server` owns HTTP listener lifecycle, route-template matching, wire limits, replay
   identity extraction, parameter decoding, and translation between HTTP and the protocol-neutral

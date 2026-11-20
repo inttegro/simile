@@ -121,7 +121,9 @@ fn compiles_a_service_contract_as_json() {
             "  \"openapiDefaults\": 0,\n",
             "  \"hclBehaviors\": 1,\n",
             "  \"asyncOperations\": 1,\n",
-            "  \"resources\": 1,\n",
+            "  \"backends\": 1,\n",
+            "  \"webhooks\": 0,\n",
+            "  \"webhookEmissions\": 0,\n",
             "  \"faults\": 0,\n",
             "  \"faultProfiles\": 0,\n",
             "  \"heuristicPolicy\": \"standard\"\n",
@@ -222,7 +224,7 @@ fn registers_a_service_in_simile_home() {
             "  \"openapiVersion\": \"3.1.2\",\n",
             "  \"listen\": \"127.0.0.1:4242\",\n",
             "  \"operations\": 3,\n",
-            "  \"resources\": 1,\n",
+            "  \"backends\": 1,\n",
             "  \"asyncOperations\": 1,\n",
             "  \"directory\": \"[..]\",\n",
             "  \"config\": \"[..]/config.hcl\",\n",
@@ -307,7 +309,7 @@ fn describes_a_transient_service_from_the_compiled_artifact() {
         "Delay the completed response before delivery."
     );
     assert_eq!(
-        report["resources"][0]["description"],
+        report["backends"][0]["description"],
         "Carries accepted orders to background processors."
     );
 }
@@ -338,7 +340,7 @@ fn registers_a_service_from_a_remote_configuration() {
             "  \"openapiVersion\": \"3.1.2\",\n",
             "  \"listen\": \"127.0.0.1:4343\",\n",
             "  \"operations\": 3,\n",
-            "  \"resources\": 0,\n",
+            "  \"backends\": 0,\n",
             "  \"asyncOperations\": 0,\n",
             "  \"directory\": \"[..]\",\n",
             "  \"config\": \"[..]/config.hcl\",\n",
@@ -455,7 +457,7 @@ fn updates_a_registered_service_from_a_remote_configuration() {
             "  \"openapiVersion\": \"3.1.2\",\n",
             "  \"listen\": \"127.0.0.1:4343\",\n",
             "  \"operations\": 3,\n",
-            "  \"resources\": 0,\n",
+            "  \"backends\": 0,\n",
             "  \"asyncOperations\": 0,\n",
             "  \"directory\": \"[..]\",\n",
             "  \"config\": \"[..]/config.hcl\",\n",
@@ -519,10 +521,11 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "Compiled Orders 1.0.0\n",
                 "contract OpenAPI · JSON Schema 3.2.1 · 1 operations\n",
                 "behavior 0 contract defaults · 1 HCL overlays\n",
-                "runtime 1 async operations · 1 resources\n",
+                "runtime 1 async operations · 1 backends\n",
+                "webhooks 0 contracts · 0 emissions\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 16 · [..] bytes\n",
+                "artifact {} · format 17 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -534,7 +537,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 16,\n",
+            "  \"formatVersion\": 17,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -573,11 +576,19 @@ fn writes_and_inspects_a_compiled_artifact() {
             "  \"resources\": 1,\n",
             "  \"asyncOperations\": 1,\n",
             "  \"effects\": 0,\n",
+            "  \"webhooks\": 0,\n",
+            "  \"webhookEmissions\": 0,\n",
             "  \"providerAuthoredEffects\": 0,\n",
             "  \"conventionInferredEffects\": 0,\n",
             "  \"effectActions\": 0,\n",
             "  \"encodedBytes\": [..],\n",
-            "  \"payloadSha256\": \"[..]\"\n",
+            "  \"payloadSha256\": \"[..]\",\n",
+            "  \"webhookPolicy\": {\n",
+            "    \"ordering\": \"best_effort\",\n",
+            "    \"outOfOrderProbabilityPpm\": 100000,\n",
+            "    \"reorderWindowMilliseconds\": 5000,\n",
+            "    \"concurrency\": 8\n",
+            "  }\n",
             "}\n"
         ));
 

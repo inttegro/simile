@@ -19,7 +19,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 16);
+    assert_eq!(summary.format_version, 17);
     assert_eq!(summary.parameters, 0);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
@@ -36,6 +36,10 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
     assert_eq!(summary.resources, 1);
     assert_eq!(summary.async_operations, 1);
     assert_eq!(summary.effects, 0);
+    assert_eq!(
+        summary.webhook_policy,
+        simile_spec::WebhookPolicy::default()
+    );
     assert_eq!(summary.provider_authored_effects, 0);
     assert_eq!(summary.convention_inferred_effects, 0);
     assert_eq!(summary.effect_actions, 0);
@@ -442,6 +446,7 @@ fn example_service() -> CompiledService {
                 description: None,
             },
             operations: BTreeMap::from([(key.clone(), operation)]),
+            webhooks: BTreeMap::new(),
             schemas: BTreeMap::new(),
         },
         heuristic_policy: simile_heuristics::Policy::Standard,
@@ -453,5 +458,7 @@ fn example_service() -> CompiledService {
         resources: BTreeMap::from([(resource_ref, resource)]),
         async_operations: BTreeMap::from([(asynchronous.name.clone(), asynchronous)]),
         effects: BTreeMap::new(),
+        webhooks: BTreeMap::new(),
+        webhook_policy: simile_spec::WebhookPolicy::default(),
     }
 }

@@ -8,19 +8,23 @@ Definitions describe Simile v0.2.0. Follow each link for syntax or execution det
 
 ## A
 
-### Abstract resource
-
-A provider-neutral capability named by a [`resource`](/hcl-language-specification#resource) block,
-such as `db`, `queue`, or `mail`. It describes what emulated behavior needs without publishing a
-production vendor or topology.
-
 ### Async operation
 
-A named declaration created with [`async`](/hcl-language-specification#async). It lists the abstract
-resources that background work may use. Simile currently compiles and describes the declaration but
-does not attach it to an HTTP operation or execute it.
+A named declaration created with [`async`](/hcl-language-specification#async). It lists the
+backends that background work may use. An effect attaches it to contract operations; the service
+supervisor dispatches its actions outside the immediate response path.
 
 ## B
+
+### Backend
+
+A provider-neutral backing system named by a [`backend`](/hcl-language-specification#backend)
+block, such as `db`, `queue`, or `mail`. It gives effects and asynchronous work a local capability
+while keeping production vendor and topology details private.
+
+### Backend reference
+
+The canonical `KIND.NAME` identifier for a declared backend, such as `queue.orders`.
 
 ### Behavior
 
@@ -55,7 +59,7 @@ invariants, validates exact outcome bodies, and produces a deterministic service
 ### Compiled service
 
 The normalized in-memory result of compilation: contract operations plus resolved behavior,
-outcomes, scenarios, faults, abstract resources, and async declarations.
+outcomes, scenarios, faults, backends, and async declarations.
 
 ### Configuration
 
@@ -92,9 +96,9 @@ scenario—not by stochastic fault injection.
 
 ### Effect
 
-A future provider-authored attachment that will connect a completed operation to state mutation or
-background work. Effects are deliberately separate from `behavior`, which owns HTTP result
-selection. Effect syntax and execution are not part of the current language version.
+A provider-authored attachment connecting committed operations to synchronous Stack actions,
+named asynchronous work, and/or webhook occurrences. Effects are deliberately separate from
+`behavior`, which owns HTTP result selection.
 
 ### Environmental fault
 
@@ -127,6 +131,11 @@ operation scope, repetition limits, cooldown, and an optional seed.
 
 HashiCorp Configuration Language. Simile uses HCL's native notation as the concrete syntax for its
 own small domain-specific language; it does not implement Terraform semantics.
+
+### Hard dependency
+
+An explicit causal edge requiring one webhook occurrence to follow another. A hard dependency is
+never weakened by best-effort infrastructure or a stochastic reordering decision.
 
 ## L
 
@@ -179,18 +188,20 @@ contract operation declares.
 
 ### Reachability
 
-The property that a generated response is a possible result of the submitted request and operation,
-not merely valid against an isolated response schema. Request–response bindings, constraints,
-outcome predicates, and lifecycle rules contribute to reachability.
+The property that a generated response is a possible result of the submitted request and operation.
+Request–response bindings, constraints, outcome predicates, and lifecycle rules establish this
+stronger guarantee beyond isolated schema validity.
 
 ### Replay identity
 
 An idempotency key or stable GET resource identity used to return the same completed result within
-one running service process. Replay is not a durable resource database.
+one running service process. Durable backend state has a separate lifecycle.
 
-### Resource reference
+### Reorder window
 
-The canonical `KIND.NAME` identifier for an abstract resource, such as `queue.orders`.
+The maximum scheduled-time separation within which two independent webhook deliveries are
+eligible to overtake one another. The window prevents distant occurrences from being arbitrarily
+shuffled.
 
 ## S
 
@@ -225,6 +236,26 @@ Stochastic selection never chooses domain outcomes or parameter errors.
 
 A request body successfully decoded for the selected media type and accepted by the operation's
 compiled contract request schema. HCL outcome predicates evaluate only against this body.
+
+## W
+
+### Webhook contract
+
+The public wire description for one outbound HTTP message: its stable name, method, optional
+request-body schema, and optional callback target expression. Contracts normally come from
+OpenAPI callbacks or top-level webhooks; a singular HCL `webhook` block can fill a documented gap.
+
+### Webhook occurrence
+
+One rendered outbound message caused by a committed effect. An occurrence has a payload and may
+have an explicit destination, delay, and hard dependencies on sibling occurrences. It is distinct
+from the reusable webhook contract.
+
+### Webhook policy
+
+The service-wide `webhooks` configuration governing delivery ordering, bounded reordering
+probability, and concurrency. It describes infrastructure behavior; webhook contracts describe
+payloads, while effects decide which occurrences are emitted.
 
 Read the [language specification](/hcl-language-specification) for the complete syntax and
 compile-time rules.

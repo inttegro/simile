@@ -7,8 +7,8 @@ fn parses_and_compiles_behavior_modules() {
     let module = simile_hcl::parse(Source::new(
         "orders.hcl",
         r#"
-resource "db" "orders" {}
-resource "event_bus" "commerce" {}
+backend "db" "orders" {}
+backend "event_bus" "commerce" {}
 
 async "publish_order" {
   uses = ["db.orders", "event_bus.commerce"]
@@ -37,8 +37,8 @@ behavior "createOrder" {
 }
 
 #[test]
-fn rejects_provider_specific_resources() {
-    let error = parse_error(r#"resource "postgres" "orders" {}"#);
+fn rejects_provider_specific_backends() {
+    let error = parse_error(r#"backend "postgres" "orders" {}"#);
 
     assert!(error.to_string().contains("not a Simile abstraction"));
 }
@@ -78,7 +78,7 @@ behavior "createOrder" {
 }
 
 #[test]
-fn rejects_unknown_resource_references() {
+fn rejects_unknown_backend_references() {
     let operation = module(
         r#"
 async "publish_order" {
@@ -87,7 +87,7 @@ async "publish_order" {
 "#,
     );
     let error = compile_error([operation]);
-    assert!(error.to_string().contains("undeclared resource"));
+    assert!(error.to_string().contains("undeclared backend"));
 }
 
 #[test]
@@ -95,8 +95,8 @@ fn compiles_typed_effects_and_public_value_projections() {
     let compiled = simile_hcl::compile(
         [module(
             r#"
-resource "db" "orders" {}
-resource "queue" "fulfillment" {}
+backend "db" "orders" {}
+backend "queue" "fulfillment" {}
 
 async "publish_order" {
   action "queue.fulfillment" "publish" {
@@ -201,7 +201,7 @@ async "publish_order" {
     );
     let resources = module(
         r#"
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 "#,
     );
 
@@ -323,7 +323,7 @@ fn retains_public_descriptions_without_changing_behavior() {
     let compiled = simile_hcl::compile(
         [module(
             r#"
-resource "queue" "orders" {
+backend "queue" "orders" {
   description = "Carries accepted orders."
 }
 
@@ -586,6 +586,136 @@ scenario "ambiguous" {
 "#,
     )]);
     assert!(ambiguous.to_string().contains("more than once"));
+}
+
+#[test]
+fn compiles_one_service_wide_webhook_delivery_policy() {
+    let spec = simile_hcl::compile(
+        [module(
+            r#"
+webhooks {
+  ordering                 = "best_effort"
+  out_of_order_probability = 0.125
+  reorder_window           = "4s"
+  concurrency              = 6
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        spec.webhook_policy,
+        simile_spec::WebhookPolicy {
+            ordering: simile_spec::WebhookOrdering::BestEffort,
+            out_of_order_probability_ppm: 125_000,
+            reorder_window_milliseconds: 4_000,
+            concurrency: 6,
+        }
+    );
+
+    let duplicate = compile_error([
+        module("webhooks { ordering = \"strict\" }"),
+        module("webhooks { ordering = \"strict\" }"),
+    ]);
+    assert!(matches!(
+        duplicate,
+        simile_hcl::Error::DuplicateWebhookPolicy
+    ));
+}
+
+#[test]
+fn defaults_to_realistic_best_effort_webhook_delivery() {
+    let spec =
+        simile_hcl::compile([module("")], &contract()).unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(spec.webhook_policy, simile_spec::WebhookPolicy::default());
+}
+
+#[test]
+fn compiles_provider_webhooks_and_compact_effect_emissions() {
+    let source = r#"
+webhook "payment.succeeded" {
+  description = "A payment reached its terminal success state."
+}
+
+webhook "order.paid" {}
+webhook "receipt.available" {}
+
+effect "announce_payment" {
+  operations = ["createOrder"]
+
+  emit = {
+    "payment.succeeded" = response.payment
+    "order.paid"        = response.order
+    "receipt.available" = response.receipt
+  }
+
+  after = {
+    "order.paid" = ["payment.succeeded"]
+  }
+
+  delay = {
+    "receipt.available" = "2s"
+  }
+
+  to = {
+    "payment.succeeded" = request.callback_url
+  }
+}
+"#;
+    let spec = simile_hcl::compile([module(source)], &contract())
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(spec.webhooks.len(), 3);
+    let effect = &spec.effects["announce_payment"];
+    assert_eq!(effect.webhooks.len(), 3);
+    let order = effect
+        .webhooks
+        .iter()
+        .find(|emission| emission.webhook == "order.paid")
+        .unwrap_or_else(|| panic!("order webhook missing"));
+    assert_eq!(order.after, ["payment.succeeded"]);
+    let receipt = effect
+        .webhooks
+        .iter()
+        .find(|emission| emission.webhook == "receipt.available")
+        .unwrap_or_else(|| panic!("receipt webhook missing"));
+    assert_eq!(receipt.delay_milliseconds, 2_000);
+}
+
+#[test]
+fn rejects_incomplete_or_cyclic_webhook_emissions() {
+    let missing_emit = parse_error(
+        r#"
+effect "announce_payment" {
+  operations = ["createOrder"]
+  after = { "order.paid" = ["payment.succeeded"] }
+}
+"#,
+    );
+    assert!(missing_emit.to_string().contains("attribute `emit`"));
+
+    let cycle = compile_error([module(
+        r#"
+webhook "payment.succeeded" {}
+webhook "order.paid" {}
+
+effect "announce_payment" {
+  operations = ["createOrder"]
+  emit = {
+    "payment.succeeded" = response.payment
+    "order.paid"        = response.order
+  }
+  after = {
+    "payment.succeeded" = ["order.paid"]
+    "order.paid"        = ["payment.succeeded"]
+  }
+}
+"#,
+    )]);
+    assert!(cycle.to_string().contains("dependency cycle"));
 }
 
 fn module(source: &str) -> simile_hcl::Module {

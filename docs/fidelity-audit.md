@@ -12,15 +12,15 @@ simile audit service.similec --strict
 ```
 
 The report distinguishes errors, warnings, and information. Every finding has a stable code, a
-specific operation or resource, a plain-language explanation, and an actionable remediation.
+specific operation or backend, a plain-language explanation, and an actionable remediation.
 Current checks include:
 
 - missing stable `operationId` values;
 - operations whose outcomes remain schema-only;
-- state-mutating operations with no resource effect;
+- state-mutating operations with no backend effect;
 - untyped or unsupported HTTP parameter styles;
 - inferred effects, so reviewers can distinguish convention from authorship;
-- resources that no action uses; and
+- backends that no action uses; and
 - public protocol failures without provider error mappings.
 
 `--strict` also treats warnings as failure, which is useful after a provider has established its

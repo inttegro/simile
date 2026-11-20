@@ -48,6 +48,9 @@ pub enum Error {
         second: String,
     },
 
+    #[error("webhook `{name}` is declared more than once")]
+    DuplicateWebhook { name: String },
+
     #[error("additional operation `{method}` duplicates a standard Path Item operation")]
     DuplicateStandardMethod { method: String },
 

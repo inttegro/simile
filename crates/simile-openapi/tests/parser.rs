@@ -337,6 +337,86 @@ paths:
     assert!(error.to_string().contains("PUT /orders/{id}"));
 }
 
+#[test]
+fn normalizes_callbacks_and_top_level_webhooks() {
+    let source = r#"
+openapi: 3.1.2
+info: { title: Payments, version: 1.0.0 }
+paths:
+  /payments:
+    post:
+      operationId: createPayment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                callback_url: { type: string, format: uri }
+      callbacks:
+        status:
+          '{$request.body#/callback_url}':
+            post:
+              operationId: paymentStatusChanged
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/PaymentEvent'
+              responses:
+                "204": { description: Accepted }
+      responses:
+        "201": { description: Created }
+webhooks:
+  account.updated:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [id] }
+      responses:
+        "204": { description: Accepted }
+components:
+  schemas:
+    PaymentEvent:
+      type: object
+      required: [id, status]
+"#;
+
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    let callback = &contract.webhooks["paymentStatusChanged"];
+    assert_eq!(callback.method, HttpMethod::Post);
+    assert_eq!(
+        callback.target.as_deref(),
+        Some("{$request.body#/callback_url}")
+    );
+    assert_eq!(callback.origin, simile_spec::WebhookOrigin::OpenApiCallback);
+    assert!(callback.request.is_some());
+
+    let webhook = &contract.webhooks["account.updated"];
+    assert_eq!(webhook.method, HttpMethod::Post);
+    assert_eq!(webhook.origin, simile_spec::WebhookOrigin::OpenApiWebhook);
+    assert!(webhook.target.is_none());
+}
+
+#[test]
+fn openapi_3_0_ignores_the_unsupported_top_level_webhooks_field() {
+    let source = r#"
+openapi: 3.0.4
+info: { title: Payments, version: 1.0.0 }
+paths: {}
+webhooks:
+  payment.updated:
+    post:
+      responses:
+        "204": { description: Accepted }
+"#;
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+    assert!(contract.webhooks.is_empty());
+}
+
 fn fixture(version: &str, method: &str) -> String {
     format!(
         r#"

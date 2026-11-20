@@ -10,9 +10,9 @@ runs. It is the human-facing companion to the technical `simile inspect` command
 $ simile describe service inttegro
 ```
 
-The default view shows the service description, listener, contract version, scenario catalogue,
-faults and profiles, abstract resources, and asynchronous operations. Catalog faults carry built-in
-descriptions automatically.
+The default view shows the service description, listener, contract version, webhook contracts and
+effective delivery policy, scenario catalogue, faults and profiles, backends, and
+asynchronous operations. Catalog faults carry built-in descriptions automatically.
 
 Add `--verbose` to include every operation and its compiled outcomes:
 
@@ -64,11 +64,13 @@ The following named blocks accept `description`:
 - `error_set` and its outcomes
 - `protocol_error`
 - `scenario`
-- `resource` and `async`
+- `backend` and `async`
+- `effect` and provider-authored `webhook`
 - custom `fault` and `fault_profile`
 
 Structural blocks such as `listen`, `openapi`, `response`, `when`, `select`, `inject`,
-`delay`, and `disconnect` do not accept descriptions. Their meaning comes from their parent object.
+`webhooks`, `delay`, and `disconnect` do not accept descriptions. Their meaning comes from their
+parent object.
 
 ## Describe versus inspect
 

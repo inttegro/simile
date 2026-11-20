@@ -133,6 +133,8 @@ impl Compiler {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         validate_scenario_outcomes(&operations, &behaviors.scenarios)?;
+        let mut webhooks = contract.webhooks.clone();
+        webhooks.extend(behaviors.webhooks);
 
         Ok(CompiledService {
             descriptions: behaviors.descriptions,
@@ -146,6 +148,8 @@ impl Compiler {
             resources: behaviors.resources,
             async_operations: behaviors.async_operations,
             effects: behaviors.effects,
+            webhooks,
+            webhook_policy: behaviors.webhook_policy,
         })
     }
 }

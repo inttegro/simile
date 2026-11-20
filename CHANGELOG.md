@@ -4,6 +4,9 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Rename the public HCL `resource` block to `backend`, including authoring diagnostics,
+  descriptions, command output, and documentation. Compiled Stack resource addresses remain an
+  internal runtime detail.
 - Add first-class Smithy 2.0 and declarations-only semantic TypeScript contract frontends for
   `compile`, `run`, and service configurations, including split TypeScript package resolution and
   lowering of public soundness and request-to-response relations into the canonical artifact.
@@ -22,7 +25,11 @@ All notable changes to Simile will be documented in this file.
   running process, and remove the state database with a confirmed service deletion.
 - Remove the unused `behavior.trigger` HCL form; effects now own operation attachment and async
   dispatch.
-- Advance the compiled artifact format to version 16. Existing artifacts must be recompiled.
+- Add a service-wide webhook infrastructure policy with best-effort ordering by default, bounded
+  probabilistic reordering, hard dependency protection, and reproducible runtime decisions.
+- Import OpenAPI callbacks and OpenAPI 3.1/3.2 top-level webhooks, allow provider-authored fallback
+  contracts, and compile compact multi-webhook effect emissions into schema-checked occurrences.
+- Advance the compiled artifact format to version 17. Existing artifacts must be recompiled.
 
 ## 0.2.0 - 2026-11-18
 

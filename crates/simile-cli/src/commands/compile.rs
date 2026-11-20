@@ -32,8 +32,12 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
                 report.openapi_defaults, report.hcl_behaviors
             ))?;
             terminal.line(format_args!(
-                "{MUTED}runtime{MUTED:#} {} async operations · {} resources",
-                report.async_operations, report.resources
+                "{MUTED}runtime{MUTED:#} {} async operations · {} backends",
+                report.async_operations, report.backends
+            ))?;
+            terminal.line(format_args!(
+                "{MUTED}webhooks{MUTED:#} {} contracts · {} emissions",
+                report.webhooks, report.webhook_emissions
             ))?;
             terminal.line(format_args!(
                 "{MUTED}faults{MUTED:#} {} definitions · {} profiles",

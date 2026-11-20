@@ -178,4 +178,6 @@ pub struct Effect {
     pub operations: Vec<String>,
     pub actions: Vec<EffectAction>,
     pub async_operations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhooks: Vec<crate::WebhookEmission>,
 }

@@ -70,8 +70,8 @@ fn render(report: &ops::ServiceReport, terminal: &Terminal) -> Result<()> {
                 report.openapi_version, report.operations
             ))?;
             terminal.line(format_args!(
-                "{MUTED}runtime{MUTED:#} {} async operations · {} resources",
-                report.async_operations, report.resources
+                "{MUTED}runtime{MUTED:#} {} async operations · {} backends",
+                report.async_operations, report.backends
             ))?;
             terminal.line(format_args!(
                 "{MUTED}faults{MUTED:#} {} definitions · {} profiles",

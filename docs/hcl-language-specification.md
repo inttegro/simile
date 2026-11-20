@@ -55,7 +55,7 @@ same compiler and namespace.
 A behavior module contains only behavior declarations. It has no `service` block:
 
 ```hcl
-resource "queue" "orders" {}
+backend "queue" "orders" {}
 
 async "dispatch_order" {
   uses = ["queue.orders"]
@@ -70,7 +70,7 @@ local service configuration.
 | Block | Service config | Behavior module | Purpose |
 | --- | --- | --- | --- |
 | [`service`](#service) | exactly one | not allowed | Compose the listener, contract source, and imported modules. |
-| [`resource`](#resource) | optional | optional | Name an abstract dependency. |
+| [`backend`](#backend) | optional | optional | Name an emulated backing system. |
 | [`async`](#async) | optional | optional | Declare planned follow-up work. |
 | [`behavior`](#behavior) | optional | optional | Refine one contract operation. |
 | [`error_set`](#error_set) | optional | optional | Define reusable named outcomes. |
@@ -80,6 +80,8 @@ local service configuration.
 | [`faults`](#faults-and-use) | optional | optional | Import built-in environmental faults. |
 | [`fault`](#fault) | optional | optional | Define a custom environmental fault. |
 | [`fault_profile`](#fault_profile) | optional | optional | Define bounded stochastic fault activation. |
+| [`webhook`](#webhook) | optional | optional | Declare a provider-authored outbound webhook missing from the contract. |
+| [`webhooks`](#webhooks) | at most one across all sources | at most one across all sources | Configure ordinary webhook delivery ordering and concurrency. |
 
 ## Concrete syntax
 
@@ -111,14 +113,14 @@ expression that evaluates without external variables or functions and converts t
 
 ### Public descriptions
 
-Named semantic blocks accept an optional `description` attribute: `service`, `resource`, `async`,
-`behavior`, `outcome`, `error_set`, `protocol_error`, `scenario`, custom `fault`, and
-`fault_profile`. Its value must be a non-empty string. Descriptions are presentation metadata
+Named semantic blocks accept an optional `description` attribute: `service`, `backend`, `async`,
+`effect`, `behavior`, `outcome`, `error_set`, `protocol_error`, `scenario`, custom `fault`,
+`fault_profile`, and provider-authored `webhook`. Its value must be a non-empty string. Descriptions are presentation metadata
 retained in the compiled artifact and displayed by `simile describe service`; they never influence
 matching, selection, synthesis, or execution.
 
 Structural blocks do not accept `description`: `listen`, `openapi`, `response`, `when`,
-`apply_error_set`, `faults`, `use`, `select`, `inject`, `delay`, and `disconnect`. Their meaning
+`apply_error_set`, `faults`, `webhooks`, `use`, `select`, `inject`, `delay`, and `disconnect`. Their meaning
 belongs to the named object that contains or references them. Descriptions are public integration
 documentation and must not contain secrets, internal thresholds, private rules, or production
 system names.
@@ -206,21 +208,81 @@ service configuration loaded from a URL has no local base directory, so it must 
 and inline behavior declarations. Split TypeScript packages require a local path; a TypeScript URL
 must identify a self-contained declaration document.
 
+## `webhook`
+
+OpenAPI callbacks and OpenAPI 3.1/3.2 top-level webhooks are imported as webhook contracts. Use a
+singular `webhook` block only when that public contract is absent from the selected API source:
+
+```hcl
+webhook "payment.succeeded" {
+  description  = "Sent after a payment has committed successfully."
+  method       = "POST"
+  content_type = "application/json"
+}
+```
+
+| Member | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | non-empty string | — | Stable name referenced by `effect.emit`. |
+| `description` | no | non-empty string | — | Public explanation retained for `simile describe`. |
+| `method` | no | HTTP method token | `"POST"` | Method used by the outbound message. |
+| `content_type` | no | non-empty string | `"application/json"` | Media type assigned to the provider-authored payload. |
+
+The block defines a wire-message identity, not a trigger. An [effect](#effect) decides which
+committed operation emits it and supplies the payload. A provider-authored webhook cannot redefine
+a webhook imported from the API contract. Its payload is not schema-constrained; publish the
+webhook in OpenAPI when consumers need Simile to validate its body against a reusable schema.
+
+## `webhooks`
+
+```hcl
+webhooks {
+  ordering                 = "best_effort"
+  out_of_order_probability = 0.10
+  reorder_window           = "5s"
+  concurrency              = 8
+}
+```
+
+The block configures the service's webhook delivery infrastructure. It does not declare a webhook
+payload or decide which operation emits one. At most one `webhooks` block may appear across the
+inline configuration and every imported behavior module.
+
+| Attribute | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `ordering` | no | `"best_effort"` or `"strict"` | `"best_effort"` | Whether independent deliveries may overtake one another. |
+| `out_of_order_probability` | no | number from `0` through `1` | `0.10` for best effort; `0` for strict | Probability that one eligible later delivery overtakes an earlier delivery. |
+| `reorder_window` | no | duration from `1ms` through `24h` | `"5s"` for best effort; disabled for strict | Maximum scheduled-time separation within which reordering may occur. |
+| `concurrency` | no | positive integer through `65535` | `8` | Maximum concurrent delivery workers represented by the policy. |
+
+`best_effort` is deliberately the default. Concurrent webhook infrastructure rarely guarantees
+global ordering, and retries can naturally arrive after newer occurrences. Simile samples only
+independent deliveries inside the configured window. The decision is derived from the compiled
+service fingerprint, correlation identifier, and delivery identifiers, so restarting the same
+service reproduces the same decision.
+
+An explicit causal dependency is stronger than this policy. When one occurrence declares that it
+must follow another, the runtime never reorders that pair. A strict service must omit
+`reorder_window` and set `out_of_order_probability` to zero or omit it. A non-zero probability also
+requires concurrency of at least two.
+
+See [Webhook delivery](/webhook-delivery) for the policy layers and rationale.
+
 ## Behavior declarations
 
 The remaining top-level blocks are legal both inline in a service configuration and in a behavior
 module.
 
-### `resource`
+### `backend`
 
 ```hcl
-resource "KIND" "NAME" {
+backend "KIND" "NAME" {
   description = "PUBLIC_DESCRIPTION"
 }
 ```
 
-A resource names an abstract capability used by emulated asynchronous work. `description` is the
-only optional attribute.
+A backend names an emulated backing system used by synchronous effects or asynchronous work.
+`description` is the only optional attribute.
 The supported kinds are:
 
 | Kind | Capability |
@@ -234,17 +296,17 @@ The supported kinds are:
 | `scheduler` | delayed or scheduled work |
 | `http` | an outbound HTTP dependency |
 
-The canonical resource reference is `KIND.NAME`, for example `queue.orders`. Resource kinds are
-provider-neutral; names such as `postgres`, `redis`, or `s3` are rejected.
+The canonical backend reference is `KIND.NAME`, for example `queue.orders`. Backend kinds are
+provider-neutral. Names such as `postgres`, `redis`, or `s3` are rejected.
 
 ### `async`
 
 ```hcl
 async "NAME" {
   description = "PUBLIC_DESCRIPTION"
-  uses = ["RESOURCE_REFERENCE", ...]
+  uses = ["BACKEND_REFERENCE", ...]
 
-  action "RESOURCE_REFERENCE" "COMMAND" {
+  action "BACKEND_REFERENCE" "COMMAND" {
     ARGUMENT = VALUE
   }
 }
@@ -253,10 +315,10 @@ async "NAME" {
 | Attribute | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
 | `description` | no | non-empty string | — | Public explanation of the planned work. |
-| `uses` | no | array of strings | `[]` | Resource references required by the planned work. |
-| `action` | no | zero or more blocks | — | Typed resource commands dispatched outside the response-critical path. |
+| `uses` | no | array of strings | `[]` | Backend references required by the planned work. |
+| `action` | no | zero or more blocks | — | Typed backend commands dispatched outside the response-critical path. |
 
-Every reference must resolve to a declared resource. Action resources are added to `uses`
+Every reference must resolve to a declared backend. Action backends are added to `uses`
 automatically. An async declaration is inert until an `effect.async` attribute names it; once
 attached, the service supervisor dispatches its actions on a background worker without making
 response delivery wait for them.
@@ -269,8 +331,26 @@ effect "NAME" {
   operations  = ["OPERATION_ID", ...]
   async       = ["ASYNC_NAME", ...]
 
-  action "RESOURCE_REFERENCE" "COMMAND" {
+  action "BACKEND_REFERENCE" "COMMAND" {
     ARGUMENT = VALUE
+  }
+
+  emit = {
+    "payment.succeeded" = response.payment_event
+    "order.paid"        = response.order_event
+    "receipt.available" = response.receipt_event
+  }
+
+  after = {
+    "order.paid" = ["payment.succeeded"]
+  }
+
+  delay = {
+    "receipt.available" = "2s"
+  }
+
+  to = {
+    "payment.succeeded" = request.callback_url
   }
 }
 ```
@@ -281,19 +361,41 @@ effect "NAME" {
 | `operations` | yes | non-empty array | Exact contract `operationId` values that commit the effect. |
 | `async` | no | array | Named async units dispatched outside the response-critical path. |
 | `action` | no | zero or more blocks | Synchronous typed commands committed before delivery. |
+| `emit` | no | object | Webhook name to request/response-derived payload. |
+| `after` | no | object | Emitted webhook name to hard prerequisites from the same effect. |
+| `delay` | no | object | Emitted webhook name to non-negative delivery delay. |
+| `to` | no | object | Emitted webhook name to an explicit destination projection or string. |
 
-An effect must contain at least one synchronous action or one async reference. Operation IDs,
-async names, resources, commands, required arguments, and accepted optional arguments are all
-validated at compile time.
+An effect must contain at least one synchronous action, one async reference, or one webhook
+emission. Operation IDs, async names, webhook names, backends, commands, required arguments, and
+accepted optional arguments are all validated at compile time.
 
 An action value may be a JSON-compatible literal, `request`, `response`, a dotted projection such
 as `request.customer_id` or `response.order.id`, or an array/object recursively containing those
-values. Projections are compiled into JSON Pointers; arbitrary functions and private resource reads
+values. Projections are compiled into JSON Pointers; arbitrary functions and private backend reads
 are not part of the expression language.
+
+`emit` is deliberately a map rather than a repeated block: one effect can declare several related
+occurrences compactly. Every key must name a webhook imported from OpenAPI or declared with
+`webhook`. An OpenAPI webhook body is checked against its request schema after the payload
+projection is rendered. `after`, `delay`, and `to` are optional maps whose keys must also occur in
+`emit`; they refine only the named occurrence.
+
+`after` forms a hard causal graph. Dependencies must name distinct webhook occurrences emitted by
+the same effect, and cycles are rejected. The service-wide best-effort delivery policy may reorder
+independent occurrences but never crosses one of these edges. `delay` accepts the same duration
+syntax as other HCL timing controls. `to` accepts a string or request/response projection and
+overrides an OpenAPI callback runtime expression for that occurrence.
+
+An OpenAPI callback target is otherwise resolved from its runtime expression. The current runtime
+supports JSON-body pointers such as `{$request.body#/callback_url}` and
+`{$response.body#/links/webhook}`. Header, query, path, and expression-composition targets are
+retained in the contract but require an explicit `to` override until those parameter contexts are
+available to effect planning.
 
 Supported mutation commands are:
 
-| Resource | Commands |
+| Backend | Commands |
 | --- | --- |
 | `db` | `put`, `delete` |
 | `cache` | `set`, `delete`, `increment`, `compare_and_set` |
@@ -387,7 +489,7 @@ when {
 
 `path` is a JSON Pointer into the validated request body. `equals` is a JSON-compatible value.
 Every `when` block on an outcome must match for the outcome to be selected. Predicates operate only
-on public request data; they cannot read headers, production state, resources, or private rules.
+on public request data; they cannot read headers, production state, backends, or private rules.
 
 ### `error_set`
 
@@ -597,12 +699,12 @@ all modules with the selected contract and resolves the service as a whole.
 Resolution is independent of declaration order. A reference may target a declaration in a later
 file. Compilation rejects:
 
-- duplicate resources, behaviors, error sets, async operations, scenarios, custom faults, or fault
+- duplicate backends, behaviors, error sets, async operations, scenarios, custom faults, or fault
   profiles;
 - unknown contract operation IDs or tags;
 - response statuses absent from the targeted contract operation;
 - provider-authored response bodies that fail the selected response schema;
-- unknown resources, error sets, outcomes, or faults;
+- unknown backends, error sets, outcomes, or faults;
 - duplicate provider-authored outcome names for one operation; and
 - incompatible fault phases, actions, selectors, or stochastic-profile members.
 
@@ -615,8 +717,8 @@ catalog to execute it.
 Simile HCL is distributable and inspectable. It must describe public observable behavior, not
 private implementation decisions. Use public request predicates when an input deliberately triggers
 an outcome. Use an opaque scenario when the underlying production decision must remain private.
-Resource declarations name capabilities, not vendors, credentials, private tables, thresholds, or
-topology.
+Backend declarations expose provider-neutral capabilities. Keep vendor names, credentials, private
+tables, thresholds, and topology out of public HCL.
 
 ## Language evolution
 

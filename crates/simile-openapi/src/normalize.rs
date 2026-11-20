@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use simile_spec::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
     ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo,
+    ResponseContract, ResponseStatus, ServiceInfo, WebhookContract, WebhookOrigin,
 };
 
 use crate::{Error, Result};
@@ -13,6 +13,7 @@ pub(crate) fn contract(
     document: &Value,
     version: OpenApiVersion,
     supports_extended_methods: bool,
+    supports_top_level_webhooks: bool,
 ) -> Result<ApiContract> {
     let root = object(document, "document")?;
     let info = object(required(root, "info")?, "info")?;
@@ -23,6 +24,7 @@ pub(crate) fn contract(
     };
     let paths = object(required(root, "paths")?, "paths")?;
     let mut operations = BTreeMap::new();
+    let mut webhooks = BTreeMap::new();
     let mut operation_ids: HashMap<String, OperationKey> = HashMap::new();
 
     for (path, path_value) in paths {
@@ -34,17 +36,135 @@ pub(crate) fn contract(
         }
         for (method_name, method, value) in entries {
             let operation = operation(document, path, path_item, method_name, method, value)?;
+            collect_callback_webhooks(
+                document,
+                &operation,
+                value,
+                supports_extended_methods,
+                &mut webhooks,
+            )?;
             register_operation_id(&mut operation_ids, &operation)?;
             operations.insert(operation.key.clone(), operation);
         }
+    }
+
+    if supports_top_level_webhooks {
+        collect_top_level_webhooks(document, root, supports_extended_methods, &mut webhooks)?;
     }
 
     Ok(ApiContract {
         openapi: version,
         info,
         operations,
+        webhooks,
         schemas: component_schemas(root)?,
     })
+}
+
+fn collect_top_level_webhooks(
+    document: &Value,
+    root: &Map<String, Value>,
+    supports_extended_methods: bool,
+    webhooks: &mut BTreeMap<String, WebhookContract>,
+) -> Result<()> {
+    let Some(value) = root.get("webhooks") else {
+        return Ok(());
+    };
+    let entries = object(value, "webhooks")?;
+    for (name, path_item) in entries {
+        collect_webhook_path_item(
+            document,
+            name,
+            None,
+            path_item,
+            WebhookOrigin::OpenApiWebhook,
+            supports_extended_methods,
+            webhooks,
+        )?;
+    }
+    Ok(())
+}
+
+fn collect_callback_webhooks(
+    document: &Value,
+    operation: &Operation,
+    raw_operation: &Value,
+    supports_extended_methods: bool,
+    webhooks: &mut BTreeMap<String, WebhookContract>,
+) -> Result<()> {
+    let operation_body = object(raw_operation, operation.key.as_str())?;
+    let Some(callbacks) = operation_body.get("callbacks") else {
+        return Ok(());
+    };
+    let callbacks = resolve_local_reference(document, callbacks, "callbacks", 0)?;
+    for (callback_name, callback) in object(callbacks, "callbacks")? {
+        let callback =
+            resolve_local_reference(document, callback, &format!("callbacks.{callback_name}"), 0)?;
+        for (target, path_item) in object(callback, &format!("callbacks.{callback_name}"))? {
+            let owner = operation
+                .operation_id
+                .as_deref()
+                .unwrap_or_else(|| operation.key.as_str());
+            collect_webhook_path_item(
+                document,
+                &format!("{owner}.{callback_name}"),
+                Some(target.clone()),
+                path_item,
+                WebhookOrigin::OpenApiCallback,
+                supports_extended_methods,
+                webhooks,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_webhook_path_item(
+    document: &Value,
+    base_name: &str,
+    target: Option<String>,
+    path_item: &Value,
+    origin: WebhookOrigin,
+    supports_extended_methods: bool,
+    webhooks: &mut BTreeMap<String, WebhookContract>,
+) -> Result<()> {
+    let path_item = resolve_local_reference(document, path_item, base_name, 0)?;
+    let path_item = object(path_item, base_name)?;
+    let mut entries = operation_entries(path_item, supports_extended_methods).collect::<Vec<_>>();
+    if supports_extended_methods {
+        entries.extend(additional_operation_entries(path_item)?);
+    }
+    let multiple = entries.len() > 1;
+    for (method_name, method, value) in entries {
+        let field = format!("webhook.{base_name}.{method_name}");
+        let body = object(value, &field)?;
+        let operation_id = optional_string(body, "operationId", &format!("{field}.operationId"))?;
+        let name = operation_id.clone().unwrap_or_else(|| {
+            if multiple {
+                format!("{base_name}.{}", method.as_str().to_ascii_lowercase())
+            } else {
+                base_name.to_owned()
+            }
+        });
+        let request = body
+            .get("requestBody")
+            .map(|value| request_body(document, value, &format!("{field}.requestBody")))
+            .transpose()?;
+        let contract = WebhookContract {
+            name: name.clone(),
+            method,
+            operation_id,
+            summary: optional_string(body, "summary", &format!("{field}.summary"))?,
+            target: target.clone(),
+            request,
+            origin,
+        };
+        if webhooks.insert(name.clone(), contract).is_some() {
+            return Err(Error::DuplicateWebhook { name });
+        }
+    }
+    Ok(())
 }
 
 fn operation_entries(

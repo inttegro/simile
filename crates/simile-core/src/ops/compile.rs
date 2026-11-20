@@ -65,7 +65,9 @@ pub struct CompileReport {
     pub openapi_defaults: usize,
     pub hcl_behaviors: usize,
     pub async_operations: usize,
-    pub resources: usize,
+    pub backends: usize,
+    pub webhooks: usize,
+    pub webhook_emissions: usize,
     pub faults: usize,
     pub fault_profiles: usize,
     pub heuristic_policy: Policy,
@@ -97,7 +99,13 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
         openapi_defaults: compiled.operations.len() - hcl_behaviors,
         hcl_behaviors,
         async_operations: compiled.async_operations.len(),
-        resources: compiled.resources.len(),
+        backends: compiled.resources.len(),
+        webhooks: compiled.webhooks.len(),
+        webhook_emissions: compiled
+            .effects
+            .values()
+            .map(|effect| effect.webhooks.len())
+            .sum(),
         faults: compiled.faults.len(),
         fault_profiles: compiled.fault_profiles.len(),
         heuristic_policy: compiled.heuristic_policy,
@@ -373,7 +381,9 @@ mod tests {
         assert_eq!(report.hcl_behaviors, 1);
         assert_eq!(report.openapi_defaults, 0);
         assert_eq!(report.async_operations, 1);
-        assert_eq!(report.resources, 1);
+        assert_eq!(report.backends, 1);
+        assert_eq!(report.webhooks, 0);
+        assert_eq!(report.webhook_emissions, 0);
         assert_eq!(report.artifact, None);
     }
 

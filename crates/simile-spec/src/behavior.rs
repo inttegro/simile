@@ -22,9 +22,10 @@ pub enum DescriptionKind {
     ErrorSet,
     ProtocolError,
     Scenario,
-    Resource,
+    Backend,
     AsyncOperation,
     Fault,
+    Webhook,
     FaultProfile,
     Effect,
 }
@@ -216,6 +217,61 @@ pub struct FaultProfile {
     pub seed: Option<u64>,
 }
 
+/// The delivery-order guarantee offered by the emulated webhook infrastructure.
+///
+/// `BestEffort` deliberately models ordinary concurrent delivery: independent
+/// webhook occurrences may overtake one another inside a bounded window. A
+/// provider can still declare hard causal dependencies between individual
+/// occurrences; the delivery scheduler must never violate those edges.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookOrdering {
+    BestEffort,
+    Strict,
+}
+
+impl WebhookOrdering {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BestEffort => "best_effort",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+impl fmt::Display for WebhookOrdering {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Service-wide webhook delivery infrastructure policy.
+///
+/// Probability is represented as parts per million so the compiled artifact
+/// remains deterministic and does not make floating-point decisions at
+/// runtime. The default represents a concurrent, best-effort delivery system,
+/// not an unrealistically ordered queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookPolicy {
+    pub ordering: WebhookOrdering,
+    pub out_of_order_probability_ppm: u32,
+    pub reorder_window_milliseconds: u64,
+    pub concurrency: u16,
+}
+
+impl Default for WebhookPolicy {
+    fn default() -> Self {
+        Self {
+            ordering: WebhookOrdering::BestEffort,
+            out_of_order_probability_ppm: 100_000,
+            reorder_window_milliseconds: 5_000,
+            concurrency: 8,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKind {
@@ -327,7 +383,7 @@ pub struct AsyncOperation {
     pub actions: Vec<crate::EffectAction>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BehaviorSpec {
     pub descriptions: DescriptionCatalog,
@@ -341,6 +397,8 @@ pub struct BehaviorSpec {
     pub fault_profiles: BTreeMap<String, FaultProfile>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
     pub effects: BTreeMap<String, Effect>,
+    pub webhooks: BTreeMap<String, crate::WebhookContract>,
+    pub webhook_policy: WebhookPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -374,4 +432,6 @@ pub struct CompiledService {
     pub resources: BTreeMap<ResourceRef, Resource>,
     pub async_operations: BTreeMap<String, AsyncOperation>,
     pub effects: BTreeMap<String, Effect>,
+    pub webhooks: BTreeMap<String, crate::WebhookContract>,
+    pub webhook_policy: WebhookPolicy,
 }

@@ -5,5 +5,5 @@ use crate::Result;
 use crate::normalize;
 
 pub(crate) fn parse(document: &Value, version: OpenApiVersion) -> Result<ApiContract> {
-    normalize::contract(document, version, true)
+    normalize::contract(document, version, true, true)
 }

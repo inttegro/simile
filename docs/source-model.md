@@ -93,14 +93,14 @@ See the [semantic TypeScript authoring standard](/typescript-contracts).
 2. The semantic compiler resolves those declarations against the normalized API contract.
 
 The semantic phase rejects duplicate declarations, unknown operation IDs, response statuses absent
-from the contract, missing asynchronous targets, undeclared resources, invalid effect commands or
-arguments, and provider-specific resource kinds. It collects declarations before resolving
+from the contract, missing asynchronous targets, undeclared backends, invalid effect commands or
+arguments, and provider-specific backend kinds. It collects declarations before resolving
 references, so module order has no meaning.
 
 ## Canonical model
 
 `simile-spec` contains the nouns shared by compilation and execution: API contracts, operations,
-parameters, behaviors, effects, abstract resources, asynchronous operations, and the compiled
+parameters, behaviors, effects, backends, asynchronous operations, and the compiled
 service. It has no YAML, HCL, file, URL, CLI, or HTTP-server concerns.
 
 That neutrality matters. A new source frontend can target the same model, and a new runtime adapter

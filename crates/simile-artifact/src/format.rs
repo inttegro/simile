@@ -14,12 +14,13 @@ use simile_schema::{
 use simile_spec::{
     BehaviorOrigin, CompiledService, DescriptionKind, EffectAction, EffectActionKind, EffectOrigin,
     EffectValue, FaultAction, FaultPhase, HttpMethod, OpenApiFeature, OutcomeProvenance,
-    ParameterLocation, ResourceKind, ResourceRef, ResponseStatus,
+    ParameterLocation, ResourceKind, ResourceRef, ResponseStatus, WebhookEmission, WebhookOrdering,
+    WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 16;
+pub const FORMAT_VERSION: u16 = 17;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -61,11 +62,14 @@ pub struct ArtifactSummary {
     pub resources: usize,
     pub async_operations: usize,
     pub effects: usize,
+    pub webhooks: usize,
+    pub webhook_emissions: usize,
     pub provider_authored_effects: usize,
     pub convention_inferred_effects: usize,
     pub effect_actions: usize,
     pub encoded_bytes: usize,
     pub payload_sha256: String,
+    pub webhook_policy: WebhookPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -200,9 +204,23 @@ pub struct ArtifactEffect {
     operations: Vec<String>,
     actions: Vec<EffectAction>,
     async_operations: Vec<String>,
+    webhooks: Vec<WebhookEmission>,
 }
 
-/// One abstract resource used by an asynchronous operation.
+/// One outbound webhook contract loaded from the artifact.
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactWebhook<'a> {
+    name: &'a str,
+    method: &'a str,
+    operation_id: Option<&'a str>,
+    summary: Option<&'a str>,
+    target: Option<&'a str>,
+    request_body: Option<&'a RequestBodyPlan>,
+    origin: WebhookOrigin,
+    schemas: &'a SchemaCatalog,
+}
+
+/// One backend used by an asynchronous operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArtifactResource<'a> {
     kind: ResourceKind,
@@ -504,7 +522,7 @@ impl<'a> ArtifactAsyncOperation<'a> {
         self.name
     }
 
-    /// Return the abstract resources declared by this asynchronous operation.
+    /// Return the backends declared by this asynchronous operation.
     pub fn resources(&self) -> impl Iterator<Item = ArtifactResource<'a>> + 'a {
         let resources = self.resources;
         let strings = self.strings;
@@ -550,6 +568,49 @@ impl ArtifactEffect {
     #[must_use]
     pub fn async_operations(&self) -> &[String] {
         &self.async_operations
+    }
+
+    #[must_use]
+    pub fn webhooks(&self) -> &[WebhookEmission] {
+        &self.webhooks
+    }
+}
+
+impl<'a> ArtifactWebhook<'a> {
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    #[must_use]
+    pub const fn method(&self) -> &'a str {
+        self.method
+    }
+
+    #[must_use]
+    pub const fn operation_id(&self) -> Option<&'a str> {
+        self.operation_id
+    }
+
+    #[must_use]
+    pub const fn summary(&self) -> Option<&'a str> {
+        self.summary
+    }
+
+    #[must_use]
+    pub const fn target(&self) -> Option<&'a str> {
+        self.target
+    }
+
+    #[must_use]
+    pub const fn origin(&self) -> WebhookOrigin {
+        self.origin
+    }
+
+    #[must_use]
+    pub fn request_body(&self) -> Option<BoundRequestBody<'a>> {
+        self.request_body
+            .map(|plan| BoundRequestBody::new(plan, self.schemas))
     }
 }
 
@@ -698,6 +759,8 @@ impl Artifact {
             resources: self.payload.5.len(),
             async_operations: self.payload.6.len(),
             effects: self.payload.8.len(),
+            webhooks: self.payload.9.len(),
+            webhook_emissions: self.payload.8.iter().map(|effect| effect.5.len()).sum(),
             provider_authored_effects: self
                 .payload
                 .8
@@ -724,7 +787,25 @@ impl Artifact {
                     .sum::<usize>(),
             encoded_bytes: self.encoded_bytes,
             payload_sha256: encode_hex(&self.digest),
+            webhook_policy: self.webhook_policy(),
         }
+    }
+
+    /// Return the service-wide webhook delivery infrastructure policy.
+    #[must_use]
+    pub fn webhook_policy(&self) -> WebhookPolicy {
+        WebhookPolicy {
+            ordering: decode_webhook_ordering(self.payload.2.11),
+            out_of_order_probability_ppm: self.payload.2.12,
+            reorder_window_milliseconds: self.payload.2.13,
+            concurrency: self.payload.2.14,
+        }
+    }
+
+    /// Return the stable artifact fingerprint used to seed reproducible runtime decisions.
+    #[must_use]
+    pub const fn fingerprint(&self) -> &[u8; 32] {
+        &self.digest
     }
 
     /// Find a compiled operation by its stable `METHOD /path` key.
@@ -852,7 +933,30 @@ impl Artifact {
                 .iter()
                 .map(|operation| self.string(*operation).to_owned())
                 .collect(),
+            webhooks: effect
+                .5
+                .iter()
+                .map(|emission| decode_webhook_emission(emission, &self.payload.1, &self.payload.4))
+                .collect(),
         })
+    }
+
+    /// Iterate over outbound webhook contracts in stable name order.
+    pub fn webhooks(&self) -> impl Iterator<Item = ArtifactWebhook<'_>> {
+        self.payload
+            .9
+            .iter()
+            .map(|webhook| self.webhook_record(webhook))
+    }
+
+    /// Find one outbound webhook contract by its public name.
+    #[must_use]
+    pub fn webhook(&self, name: &str) -> Option<ArtifactWebhook<'_>> {
+        self.payload
+            .9
+            .binary_search_by(|webhook| self.string(webhook.0).cmp(name))
+            .ok()
+            .map(|index| self.webhook_record(&self.payload.9[index]))
     }
 
     /// Return the effects attached to one stable operation key.
@@ -1026,6 +1130,19 @@ impl Artifact {
         }
     }
 
+    fn webhook_record<'a>(&'a self, webhook: &'a WebhookRecord) -> ArtifactWebhook<'a> {
+        ArtifactWebhook {
+            name: self.string(webhook.0),
+            method: decode_method(webhook.1, webhook.2.map(|id| self.string(id))),
+            operation_id: webhook.3.map(|id| self.string(id)),
+            summary: webhook.4.map(|id| self.string(id)),
+            target: webhook.5.map(|id| self.string(id)),
+            request_body: webhook.6.as_ref(),
+            origin: decode_webhook_origin(webhook.7),
+            schemas: &self.payload.7,
+        }
+    }
+
     fn string(&self, id: StringId) -> &str {
         // Decoding validates every identifier before constructing Artifact.
         &self.payload.1[id as usize]
@@ -1178,6 +1295,7 @@ struct Payload(
     Vec<AsyncRecord>,
     SchemaCatalog,
     Vec<EffectRecord>,
+    Vec<WebhookRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1193,6 +1311,10 @@ struct ServiceRecord(
     Vec<FaultRecord>,
     Vec<FaultProfileRecord>,
     Vec<DescriptionRecord>,
+    u8,
+    u32,
+    u64,
+    u16,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1277,6 +1399,28 @@ struct EffectRecord(
     Vec<StringId>,
     Vec<ActionRecord>,
     Vec<StringId>,
+    u8,
+    Vec<WebhookEmissionRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct WebhookEmissionRecord(
+    StringId,
+    EffectValueRecord,
+    Option<EffectValueRecord>,
+    Vec<StringId>,
+    u64,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct WebhookRecord(
+    StringId,
+    u8,
+    Option<StringId>,
+    Option<StringId>,
+    Option<StringId>,
+    Option<StringId>,
+    Option<RequestBodyPlan>,
     u8,
 );
 
@@ -1537,6 +1681,10 @@ impl Payload {
             faults,
             fault_profiles,
             descriptions,
+            encode_webhook_ordering(service.webhook_policy.ordering),
+            service.webhook_policy.out_of_order_probability_ppm,
+            service.webhook_policy.reorder_window_milliseconds,
+            service.webhook_policy.concurrency,
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -1715,12 +1863,60 @@ impl Payload {
                     .iter()
                     .map(|operation| strings.id(operation))
                     .collect::<Result<Vec<_>>>()?;
+                let webhooks = effect
+                    .webhooks
+                    .iter()
+                    .map(|emission| {
+                        Ok(WebhookEmissionRecord(
+                            strings.id(&emission.webhook)?,
+                            compile_effect_value(&emission.body, &strings, &mut values)?,
+                            emission
+                                .target
+                                .as_ref()
+                                .map(|target| compile_effect_value(target, &strings, &mut values))
+                                .transpose()?,
+                            emission
+                                .after
+                                .iter()
+                                .map(|dependency| strings.id(dependency))
+                                .collect::<Result<Vec<_>>>()?,
+                            emission.delay_milliseconds,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 Ok(EffectRecord(
                     strings.id(&effect.name)?,
                     operations,
                     actions,
                     asynchronous,
                     encode_effect_origin(effect.origin),
+                    webhooks,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let webhooks = service
+            .webhooks
+            .values()
+            .map(|webhook| {
+                let (method, additional_method) = encode_method(&webhook.method, &strings)?;
+                Ok(WebhookRecord(
+                    strings.id(&webhook.name)?,
+                    method,
+                    additional_method,
+                    strings.optional(webhook.operation_id.as_deref())?,
+                    strings.optional(webhook.summary.as_deref())?,
+                    strings.optional(webhook.target.as_deref())?,
+                    webhook
+                        .request
+                        .as_ref()
+                        .map(|request| schema_compiler.compile_request(request))
+                        .transpose()
+                        .map_err(|source| Error::WebhookSchema {
+                            webhook: webhook.name.clone(),
+                            source,
+                        })?,
+                    encode_webhook_origin(webhook.origin),
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -1738,6 +1934,7 @@ impl Payload {
             async_operations,
             schemas,
             effects,
+            webhooks,
         ))
     }
 
@@ -1834,12 +2031,24 @@ impl Payload {
             }
         }
         for description in &self.2.10 {
-            if description.0 > 10 {
+            if description.0 > 11 {
                 return Err(Error::Invalid("description kind"));
             }
             validate_optional_index(description.1, strings, "description parent")?;
             validate_index(description.2, strings, "description name")?;
             validate_index(description.3, strings, "description text")?;
+        }
+        if self.2.11 > 1 {
+            return Err(Error::Invalid("webhook ordering policy"));
+        }
+        if self.2.12 > 1_000_000 || self.2.14 == 0 {
+            return Err(Error::Invalid("webhook delivery policy"));
+        }
+        if self.2.11 == 1 && (self.2.12 != 0 || self.2.13 != 0) {
+            return Err(Error::Invalid("strict webhook delivery policy"));
+        }
+        if self.2.12 > 0 && (self.2.13 == 0 || self.2.14 < 2) {
+            return Err(Error::Invalid("webhook reordering policy"));
         }
 
         for operation in &self.3 {
@@ -1964,6 +2173,11 @@ impl Payload {
             .iter()
             .map(|operation| operation.0)
             .collect::<BTreeSet<_>>();
+        let webhook_names = self
+            .9
+            .iter()
+            .map(|webhook| webhook.0)
+            .collect::<BTreeSet<_>>();
         for effect in &self.8 {
             validate_index(effect.0, strings, "effect name")?;
             for operation in &effect.1 {
@@ -1983,6 +2197,63 @@ impl Payload {
             }
             if effect.4 > 1 {
                 return Err(Error::Invalid("effect origin"));
+            }
+            let emitted = effect
+                .5
+                .iter()
+                .map(|emission| emission.0)
+                .collect::<BTreeSet<_>>();
+            if emitted.len() != effect.5.len() {
+                return Err(Error::Invalid("duplicate effect webhook emission"));
+            }
+            for emission in &effect.5 {
+                validate_index(emission.0, strings, "effect webhook")?;
+                if !webhook_names.contains(&emission.0) {
+                    return Err(Error::Invalid("effect webhook reference"));
+                }
+                validate_effect_value(&emission.1, strings, values, &self.4)?;
+                if let Some(target) = &emission.2 {
+                    validate_effect_value(target, strings, values, &self.4)?;
+                }
+                for dependency in &emission.3 {
+                    validate_index(*dependency, strings, "webhook dependency")?;
+                    if !emitted.contains(dependency) || dependency == &emission.0 {
+                        return Err(Error::Invalid("effect webhook dependency"));
+                    }
+                }
+            }
+        }
+        for webhook in &self.9 {
+            validate_index(webhook.0, strings, "webhook name")?;
+            if webhook.1 > 9 {
+                return Err(Error::Invalid("webhook HTTP method"));
+            }
+            if webhook.1 == 9 && webhook.2.is_none() {
+                return Err(Error::Invalid("webhook additional HTTP method"));
+            }
+            if webhook.1 != 9 && webhook.2.is_some() {
+                return Err(Error::Invalid("webhook HTTP method payload"));
+            }
+            validate_optional_index(webhook.2, strings, "webhook additional HTTP method")?;
+            validate_optional_index(webhook.3, strings, "webhook operation id")?;
+            validate_optional_index(webhook.4, strings, "webhook summary")?;
+            validate_optional_index(webhook.5, strings, "webhook target")?;
+            if webhook
+                .6
+                .as_ref()
+                .is_some_and(|request| !BoundRequestBody::new(request, &self.7).is_well_formed())
+            {
+                return Err(Error::Invalid("webhook request schema"));
+            }
+            if webhook.7 > 2 {
+                return Err(Error::Invalid("webhook origin"));
+            }
+        }
+        for webhooks in self.9.windows(2) {
+            let left = &self.1[webhooks[0].0 as usize];
+            let right = &self.1[webhooks[1].0 as usize];
+            if left >= right {
+                return Err(Error::Invalid("webhook ordering"));
             }
         }
         Ok(())
@@ -2145,6 +2416,12 @@ fn audit_public_export(service: &CompiledService) -> Result<()> {
     for profile in service.fault_profiles.values() {
         audit_public_name(&profile.name)?;
     }
+    for webhook in service.webhooks.values() {
+        audit_public_name(&webhook.name)?;
+        if let Some(target) = &webhook.target {
+            audit_public_name(target)?;
+        }
+    }
     Ok(())
 }
 
@@ -2278,6 +2555,29 @@ impl StringTable {
             values.extend(effect.async_operations.iter().cloned());
             for action in &effect.actions {
                 collect_effect_action_strings(action, &mut values);
+            }
+            for emission in &effect.webhooks {
+                values.insert(emission.webhook.clone());
+                collect_effect_value_strings(&emission.body, &mut values);
+                if let Some(target) = &emission.target {
+                    collect_effect_value_strings(target, &mut values);
+                }
+                values.extend(emission.after.iter().cloned());
+            }
+        }
+        for webhook in service.webhooks.values() {
+            values.insert(webhook.name.clone());
+            if let HttpMethod::Additional(method) = &webhook.method {
+                values.insert(method.clone());
+            }
+            if let Some(operation_id) = &webhook.operation_id {
+                values.insert(operation_id.clone());
+            }
+            if let Some(summary) = &webhook.summary {
+                values.insert(summary.clone());
+            }
+            if let Some(target) = &webhook.target {
+                values.insert(target.clone());
             }
         }
 
@@ -2516,6 +2816,27 @@ fn decode_effect_value(
     }
 }
 
+fn decode_webhook_emission(
+    emission: &WebhookEmissionRecord,
+    strings: &[String],
+    values: &[ValueRecord],
+) -> WebhookEmission {
+    WebhookEmission {
+        webhook: strings[emission.0 as usize].clone(),
+        body: decode_effect_value(&emission.1, strings, values),
+        target: emission
+            .2
+            .as_ref()
+            .map(|target| decode_effect_value(target, strings, values)),
+        after: emission
+            .3
+            .iter()
+            .map(|dependency| strings[*dependency as usize].clone())
+            .collect(),
+        delay_milliseconds: emission.4,
+    }
+}
+
 fn index_resources(service: &CompiledService) -> Result<BTreeMap<ResourceRef, ResourceId>> {
     service
         .resources
@@ -2557,6 +2878,38 @@ const fn encode_heuristic_policy(policy: Policy) -> u8 {
         Policy::Conservative => 1,
         Policy::Standard => 2,
         Policy::Aggressive => 3,
+    }
+}
+
+const fn encode_webhook_ordering(ordering: WebhookOrdering) -> u8 {
+    match ordering {
+        WebhookOrdering::BestEffort => 0,
+        WebhookOrdering::Strict => 1,
+    }
+}
+
+fn decode_webhook_ordering(ordering: u8) -> WebhookOrdering {
+    match ordering {
+        0 => WebhookOrdering::BestEffort,
+        1 => WebhookOrdering::Strict,
+        _ => unreachable!("artifact validation rejects unknown webhook ordering policies"),
+    }
+}
+
+const fn encode_webhook_origin(origin: WebhookOrigin) -> u8 {
+    match origin {
+        WebhookOrigin::OpenApiCallback => 0,
+        WebhookOrigin::OpenApiWebhook => 1,
+        WebhookOrigin::ProviderAuthored => 2,
+    }
+}
+
+fn decode_webhook_origin(origin: u8) -> WebhookOrigin {
+    match origin {
+        0 => WebhookOrigin::OpenApiCallback,
+        1 => WebhookOrigin::OpenApiWebhook,
+        2 => WebhookOrigin::ProviderAuthored,
+        _ => unreachable!("artifact validation rejects unknown webhook origins"),
     }
 }
 
@@ -2636,11 +2989,12 @@ const fn encode_description_kind(kind: DescriptionKind) -> u8 {
         DescriptionKind::ErrorSet => 3,
         DescriptionKind::ProtocolError => 4,
         DescriptionKind::Scenario => 5,
-        DescriptionKind::Resource => 6,
+        DescriptionKind::Backend => 6,
         DescriptionKind::AsyncOperation => 7,
         DescriptionKind::Fault => 8,
         DescriptionKind::FaultProfile => 9,
         DescriptionKind::Effect => 10,
+        DescriptionKind::Webhook => 11,
     }
 }
 
@@ -2652,11 +3006,12 @@ fn decode_description_kind(kind: u8) -> DescriptionKind {
         3 => DescriptionKind::ErrorSet,
         4 => DescriptionKind::ProtocolError,
         5 => DescriptionKind::Scenario,
-        6 => DescriptionKind::Resource,
+        6 => DescriptionKind::Backend,
         7 => DescriptionKind::AsyncOperation,
         8 => DescriptionKind::Fault,
         9 => DescriptionKind::FaultProfile,
         10 => DescriptionKind::Effect,
+        11 => DescriptionKind::Webhook,
         _ => unreachable!("artifact validation rejects unknown description kinds"),
     }
 }
@@ -2821,6 +3176,10 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                0,
+                100_000,
+                5_000,
+                8,
             ),
             vec![OperationRecord(
                 99,
@@ -2840,6 +3199,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
             Vec::new(),
         );
 
@@ -2872,12 +3232,17 @@ mod tests {
                 vec![FaultRecord(4, 0, 1, 0)],
                 Vec::new(),
                 Vec::new(),
+                0,
+                100_000,
+                5_000,
+                8,
             ),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
             Vec::new(),
         );
 
