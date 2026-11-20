@@ -48,10 +48,16 @@ impl IncomingParameters {
 /// Parameters proven against one operation's compiled contract.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ValidatedParameters {
+    operation: Option<String>,
     values: BTreeMap<ParameterLocation, BTreeMap<String, Value>>,
 }
 
 impl ValidatedParameters {
+    #[must_use]
+    pub fn operation(&self) -> Option<&str> {
+        self.operation.as_deref()
+    }
+
     #[must_use]
     pub fn get(&self, location: ParameterLocation, name: &str) -> Option<&Value> {
         self.values.get(&location).and_then(|values| {
@@ -94,7 +100,10 @@ pub fn validate_parameters(
         .ok_or_else(|| Error::UnknownOperation {
             operation: operation.to_owned(),
         })?;
-    let mut validated = ValidatedParameters::default();
+    let mut validated = ValidatedParameters {
+        operation: Some(operation.key().to_owned()),
+        ..ValidatedParameters::default()
+    };
     let mut problems = Vec::new();
     for parameter in operation.parameters() {
         let identity = parameter_identity(parameter.location(), parameter.name());

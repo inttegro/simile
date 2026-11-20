@@ -56,6 +56,7 @@ impl Runtime {
                 status: Some(status),
                 content_type: None,
                 request_body: None,
+                request_parameters: None,
                 body: None,
             },
         )
@@ -92,6 +93,7 @@ impl Runtime {
                 status: Some(status),
                 content_type: mapping.content_type(),
                 request_body: None,
+                request_parameters: None,
                 body: mapping.body(),
             },
         )

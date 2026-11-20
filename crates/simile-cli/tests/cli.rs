@@ -739,7 +739,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "webhooks 0 contracts · 0 emissions\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 20 · [..] bytes\n",
+                "artifact {} · format 21 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -751,7 +751,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 20,\n",
+            "  \"formatVersion\": 21,\n",
             "  \"compilerVersion\": \"0.3.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",

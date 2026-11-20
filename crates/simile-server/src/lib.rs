@@ -14,7 +14,7 @@ use axum::Router;
 use axum::body::{Body, Bytes, HttpBody, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{ALLOW, CONTENT_TYPE, COOKIE, USER_AGENT};
-use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream;
@@ -627,6 +627,9 @@ fn disconnect_after_commit(response: &simile_runtime::SynthesizedResponse) -> Re
     {
         outgoing.headers_mut().insert(CONTENT_TYPE, content_type);
     }
+    if let Err(error) = apply_response_headers(&mut outgoing, response) {
+        return error;
+    }
     outgoing
 }
 
@@ -664,7 +667,34 @@ fn operation_response(response: &simile_runtime::SynthesizedResponse, head: bool
         };
         outgoing.headers_mut().insert(CONTENT_TYPE, value);
     }
+    if let Err(error) = apply_response_headers(&mut outgoing, response) {
+        return error;
+    }
     outgoing
+}
+
+fn apply_response_headers(
+    outgoing: &mut Response,
+    response: &simile_runtime::SynthesizedResponse,
+) -> std::result::Result<(), Response> {
+    for (name, value) in response.headers() {
+        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_response_header",
+                "compiled response contains an invalid header name",
+            )
+        })?;
+        let value = HeaderValue::from_str(value).map_err(|_| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_response_header",
+                "compiled response contains an invalid header value",
+            )
+        })?;
+        outgoing.headers_mut().append(name, value);
+    }
+    Ok(())
 }
 
 fn operation_error(
@@ -902,6 +932,16 @@ paths:
       operationId: recentOrders
       responses:
         '204': { description: empty }
+  /file-links/{id}/open:
+    get:
+      operationId: openFileLink
+      responses:
+        '303':
+          description: open file
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+              example: https://files.example.test/download/file_1234
 "#;
         compile_artifact(source)
     }
@@ -1243,6 +1283,17 @@ profile "merchant" {
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("content-type: application/json"));
         assert!(response.contains(r#""id":"#));
+    }
+
+    #[tokio::test]
+    async fn serves_declared_redirect_headers() {
+        let response = serve_raw(
+            b"GET /file-links/link_123/open HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+
+        assert!(response.starts_with("HTTP/1.1 303 See Other\r\n"));
+        assert!(response.contains("location: https://files.example.test/download/file_1234\r\n"));
     }
 
     #[tokio::test]

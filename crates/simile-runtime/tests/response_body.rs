@@ -2,8 +2,8 @@ use serde_json::json;
 use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
-    Error, IncomingBody, ResponseSoundness, ResponseSynthesisRequest, synthesize_response,
-    synthesize_response_with_seed, validate_request_body,
+    Error, IncomingBody, IncomingParameters, ResponseSoundness, ResponseSynthesisRequest,
+    synthesize_response, synthesize_response_with_seed, validate_parameters, validate_request_body,
 };
 
 #[test]
@@ -16,6 +16,7 @@ fn synthesizes_a_valid_response_without_request_context() {
             status: None,
             content_type: None,
             request_body: None,
+            request_parameters: None,
             body: None,
         },
     )
@@ -79,6 +80,7 @@ paths:
             status: None,
             content_type: None,
             request_body: None,
+            request_parameters: None,
             body: None,
         },
     )
@@ -98,6 +100,632 @@ paths:
             .as_str()
             .is_some_and(|value| !value.is_empty())
     );
+}
+
+#[test]
+fn omits_unrelated_optional_response_properties_and_selects_one_union_branch() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Products, version: 1.0.0 }
+paths:
+  /products/{id}:
+    get:
+      responses:
+        "200":
+          description: Product
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, shipment]
+                properties:
+                  id: { type: string, pattern: '^prod_[a-z0-9]{8}$' }
+                  refunds: { type: array, items: { type: object } }
+                  metadata: { type: object }
+                  shipment:
+                    oneOf:
+                      - type: object
+                        additionalProperties: false
+                        required: [type, render]
+                        properties:
+                          type: { const: render }
+                          render:
+                            type: object
+                            additionalProperties: false
+                            required: [template]
+                            properties: { template: { type: string } }
+                      - type: object
+                        additionalProperties: false
+                        required: [type, download]
+                        properties:
+                          type: { const: download }
+                          download:
+                            type: object
+                            additionalProperties: false
+                            required: [url]
+                            properties: { url: { type: string, format: uri } }
+"#;
+    let artifact = compile_artifact(openapi, None);
+
+    for seed in 0..32 {
+        let response = synthesize_response_with_seed(
+            &artifact,
+            ResponseSynthesisRequest {
+                operation: "GET /products/{id}",
+                status: Some(200),
+                content_type: Some("application/json"),
+                request_body: None,
+                request_parameters: None,
+                body: None,
+            },
+            seed,
+        )
+        .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        let value = response
+            .value()
+            .unwrap_or_else(|| panic!("response body should be present"));
+        let shipment = value["shipment"]
+            .as_object()
+            .unwrap_or_else(|| panic!("shipment should be an object"));
+
+        assert!(value.get("refunds").is_none(), "seed {seed}: {value}");
+        assert!(value.get("metadata").is_none(), "seed {seed}: {value}");
+        assert_eq!(shipment.len(), 2, "seed {seed}: {shipment:?}");
+        match shipment["type"].as_str() {
+            Some("render") => assert!(shipment.contains_key("render")),
+            Some("download") => assert!(shipment.contains_key("download")),
+            other => panic!("seed {seed}: unexpected shipment type {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn encodes_declared_text_and_binary_response_media() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Files, version: 1.0.0 }
+paths:
+  /files/{id}/contents:
+    get:
+      responses:
+        "200":
+          description: File contents
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+  /files/{id}/preview:
+    get:
+      responses:
+        "200":
+          description: File preview
+          content:
+            text/plain:
+              schema: { type: string }
+"#;
+    let artifact = compile_artifact(openapi, None);
+
+    for (operation, media_type) in [
+        ("GET /files/{id}/contents", "application/octet-stream"),
+        ("GET /files/{id}/preview", "text/plain"),
+    ] {
+        let response = synthesize_response_with_seed(
+            &artifact,
+            ResponseSynthesisRequest {
+                operation,
+                status: Some(200),
+                content_type: None,
+                request_body: None,
+                request_parameters: None,
+                body: None,
+            },
+            42,
+        )
+        .unwrap_or_else(|error| panic!("{operation}: {error}"));
+        let value = response
+            .value()
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{operation}: response should retain its string value"));
+
+        assert_eq!(response.media_type(), Some(media_type));
+        assert_eq!(response.bytes(), value.as_bytes());
+        assert!(!response.bytes().is_empty());
+    }
+}
+
+#[test]
+fn synthesizes_declared_redirect_headers_for_bodyless_responses() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: File links, version: 1.0.0 }
+paths:
+  /file-links/{id}/open:
+    get:
+      responses:
+        "303":
+          description: Open the file
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+              example: https://files.example.test/download/file_1234
+            X-Download-Mode:
+              schema: { type: string, enum: [redirect] }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "GET /file-links/{id}/open",
+            status: Some(303),
+            content_type: None,
+            request_body: None,
+            request_parameters: None,
+            body: None,
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let headers = response
+        .headers()
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    assert_eq!(response.status(), 303);
+    assert!(response.bytes().is_empty());
+    assert_eq!(
+        headers.get("Location"),
+        Some(&"https://files.example.test/download/file_1234")
+    );
+    assert_eq!(headers.get("X-Download-Mode"), Some(&"redirect"));
+}
+
+#[test]
+fn derives_substrings_masks_concatenations_and_defaults_from_the_request() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Tokens, version: 1.0.0 }
+paths:
+  /tokens:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [account_number]
+              properties:
+                account_number: { type: string, pattern: '^[0-9]{16}$' }
+                nickname: { type: string }
+      responses:
+        "200":
+          description: Token
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [last_four, masked, label, nickname]
+                properties:
+                  last_four: { type: string, pattern: '^[0-9]{4}$' }
+                  masked: { type: string, pattern: '^\*{12}[0-9]{4}$' }
+                  label: { type: string, pattern: '^acct-[0-9]{4}$' }
+                  nickname: { type: string }
+              x-simile-from-request:
+                bindings:
+                  - to: /last_four
+                    value:
+                      substring:
+                        value: { request: /account_number }
+                        start: -4
+                  - to: /masked
+                    value:
+                      mask:
+                        value: { request: /account_number }
+                        reveal: 4
+                  - to: /label
+                    value:
+                      concat:
+                        - { literal: 'acct-' }
+                        - substring:
+                            value: { request: /account_number }
+                            start: -4
+                  - to: /nickname
+                    value:
+                      coalesce:
+                        - { request: /nickname }
+                        - { literal: anonymous }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /tokens",
+            content_type: Some("application/json"),
+            bytes: br#"{"account_number":"1234567890124242"}"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    for seed in 0..32 {
+        let response = synthesize_response_with_seed(
+            &artifact,
+            ResponseSynthesisRequest {
+                operation: "POST /tokens",
+                status: Some(200),
+                content_type: Some("application/json"),
+                request_body: Some(&request),
+                request_parameters: None,
+                body: None,
+            },
+            seed,
+        )
+        .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert_eq!(
+            response.value(),
+            Some(&json!({
+                "last_four": "4242",
+                "masked": "************4242",
+                "label": "acct-4242",
+                "nickname": "anonymous"
+            }))
+        );
+        assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+    }
+}
+
+#[test]
+fn binds_validated_path_query_header_and_cookie_parameters_into_the_response() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Payouts, version: 1.0.0 }
+paths:
+  /payouts/{payout_id}:
+    get:
+      parameters:
+        - in: path
+          name: payout_id
+          required: true
+          schema: { type: string, pattern: '^py_[a-z0-9]{8}$' }
+        - in: query
+          name: expand
+          schema: { type: string, enum: [destination] }
+        - in: header
+          name: X-Trace-Id
+          schema: { type: string }
+        - in: cookie
+          name: session
+          schema: { type: string }
+      responses:
+        "200":
+          description: Payout
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [payout, expanded, trace_id, session]
+                properties:
+                  payout:
+                    type: object
+                    additionalProperties: false
+                    required: [id]
+                    properties:
+                      id: { type: string, pattern: '^py_[a-z0-9]{8}$' }
+                  expanded: { type: string, enum: [destination] }
+                  trace_id: { type: string }
+                  session: { type: string }
+              x-simile-from-request:
+                bindings:
+                  - { from: { path: payout_id }, to: /payout/id }
+                  - { from: { query: expand }, to: /expanded }
+                  - { from: { header: X-Trace-Id }, to: /trace_id }
+                  - { from: { cookie: session }, to: /session }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let parameters = validate_parameters(
+        &artifact,
+        "GET /payouts/{payout_id}",
+        &IncomingParameters {
+            path: [("payout_id".to_owned(), vec!["py_1234abcd".to_owned()])]
+                .into_iter()
+                .collect(),
+            query: [("expand".to_owned(), vec!["destination".to_owned()])]
+                .into_iter()
+                .collect(),
+            headers: [("x-trace-id".to_owned(), vec!["trace-42".to_owned()])]
+                .into_iter()
+                .collect(),
+            cookies: [("session".to_owned(), vec!["session-99".to_owned()])]
+                .into_iter()
+                .collect(),
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "GET /payouts/{payout_id}",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: None,
+            request_parameters: Some(&parameters),
+            body: None,
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+    assert_eq!(
+        response.value(),
+        Some(&json!({
+            "payout": {"id": "py_1234abcd"},
+            "expanded": "destination",
+            "trace_id": "trace-42",
+            "session": "session-99"
+        }))
+    );
+}
+
+#[test]
+fn combines_multipart_body_and_query_sources_in_one_response_proof() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Files, version: 1.0.0 }
+paths:
+  /files:
+    post:
+      parameters:
+        - in: query
+          name: folder
+          required: true
+          schema: { type: string, pattern: '^fld_[a-z0-9]{8}$' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title, contents]
+              properties:
+                title: { type: string, minLength: 1 }
+                contents: { type: string }
+      responses:
+        "201":
+          description: File
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, title, folder]
+                properties:
+                  id: { type: string, pattern: '^file_[a-z0-9]{8}$' }
+                  title: { type: string, minLength: 1 }
+                  folder: { type: string, pattern: '^fld_[a-z0-9]{8}$' }
+              x-simile-from-request:
+                bindings:
+                  - { from: { body: /title }, to: /title }
+                  - { from: { query: folder }, to: /folder }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /files",
+            content_type: Some("multipart/form-data; boundary=simile-test"),
+            bytes: b"--simile-test\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nAnnual report\r\n--simile-test\r\nContent-Disposition: form-data; name=\"contents\"; filename=\"report.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--simile-test--\r\n",
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+    let parameters = validate_parameters(
+        &artifact,
+        "POST /files",
+        &IncomingParameters {
+            query: [("folder".to_owned(), vec!["fld_1234abcd".to_owned()])]
+                .into_iter()
+                .collect(),
+            ..IncomingParameters::default()
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /files",
+            status: Some(201),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            request_parameters: Some(&parameters),
+            body: None,
+        },
+        42,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+    assert_eq!(
+        response.value().map(|value| &value["title"]),
+        Some(&json!("Annual report"))
+    );
+    assert_eq!(
+        response.value().map(|value| &value["folder"]),
+        Some(&json!("fld_1234abcd"))
+    );
+}
+
+#[test]
+fn preserves_the_request_selected_union_branch_across_response_synthesis() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Purchase intents, version: 1.0.0 }
+paths:
+  /purchase-intents:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [target]
+              properties:
+                target:
+                  oneOf:
+                    - type: object
+                      additionalProperties: false
+                      required: [type, product_id]
+                      properties:
+                        type: { const: product }
+                        product_id: { type: string, pattern: '^prod_[a-z0-9]{8}$' }
+                    - type: object
+                      additionalProperties: false
+                      required: [type, bundle_id]
+                      properties:
+                        type: { const: bundle }
+                        bundle_id: { type: string, pattern: '^bundle_[a-z0-9]{8}$' }
+      responses:
+        "200":
+          description: Purchase intent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, target]
+                properties:
+                  id: { type: string, pattern: '^pi_[a-z0-9]{8}$' }
+                  target:
+                    oneOf:
+                      - type: object
+                        additionalProperties: false
+                        required: [type, product_id, display_name]
+                        properties:
+                          type: { const: product }
+                          product_id: { type: string, pattern: '^prod_[a-z0-9]{8}$' }
+                          display_name: { type: string, minLength: 1 }
+                      - type: object
+                        additionalProperties: false
+                        required: [type, bundle_id, item_count]
+                        properties:
+                          type: { const: bundle }
+                          bundle_id: { type: string, pattern: '^bundle_[a-z0-9]{8}$' }
+                          item_count: { type: integer, minimum: 1 }
+              x-simile-from-request:
+                bindings:
+                  - { from: /target, to: /target }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /purchase-intents",
+            content_type: Some("application/json"),
+            bytes: br#"{"target":{"type":"product","product_id":"prod_1234abcd"}}"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    for seed in 0..64 {
+        let response = synthesize_response_with_seed(
+            &artifact,
+            ResponseSynthesisRequest {
+                operation: "POST /purchase-intents",
+                status: Some(200),
+                content_type: Some("application/json"),
+                request_body: Some(&request),
+                request_parameters: None,
+                body: None,
+            },
+            seed,
+        )
+        .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        let target = &response
+            .value()
+            .unwrap_or_else(|| panic!("response body should be present"))["target"];
+
+        assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+        assert_eq!(target["type"], "product", "seed {seed}: {target}");
+        assert_eq!(
+            target["product_id"], "prod_1234abcd",
+            "seed {seed}: {target}"
+        );
+        assert!(
+            target.get("display_name").is_some(),
+            "seed {seed}: {target}"
+        );
+        assert!(target.get("bundle_id").is_none(), "seed {seed}: {target}");
+        assert!(target.get("item_count").is_none(), "seed {seed}: {target}");
+    }
+}
+
+#[test]
+fn rejects_an_unreachable_relation_instead_of_returning_an_unrelated_success() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Codes, version: 1.0.0 }
+paths:
+  /codes:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Code
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [code]
+                properties:
+                  code: { type: string, enum: [allowed] }
+              x-simile-from-request:
+                bindings:
+                  - { from: /code, to: /code }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /codes",
+            content_type: Some("application/json"),
+            bytes: br#"{"code":"forbidden"}"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    let result = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /codes",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            request_parameters: None,
+            body: None,
+        },
+        42,
+    );
+
+    assert!(matches!(result, Err(Error::ResponseSynthesis { .. })));
 }
 
 #[test]
@@ -124,6 +752,7 @@ fn carries_compatible_request_values_into_the_response() {
             status: Some(201),
             content_type: Some("application/json; charset=utf-8"),
             request_body: Some(&request),
+            request_parameters: None,
             body: None,
         },
     )
@@ -311,6 +940,7 @@ components:
                 status: Some(200),
                 content_type: Some("application/json"),
                 request_body: Some(&request),
+                request_parameters: None,
                 body: None,
             },
             seed,
@@ -331,6 +961,7 @@ components:
             status: Some(200),
             content_type: Some("application/json"),
             request_body: Some(&request),
+            request_parameters: None,
             body: None,
         },
         42,
@@ -397,6 +1028,7 @@ components:
             status: Some(200),
             content_type: Some("application/json"),
             request_body: Some(&request),
+            request_parameters: None,
             body: Some(&impossible),
         },
         42,
@@ -421,6 +1053,7 @@ fn returns_bodyless_responses_without_inventing_content() {
             status: Some(204),
             content_type: None,
             request_body: None,
+            request_parameters: None,
             body: None,
         },
     )
@@ -456,6 +1089,7 @@ fn rejects_request_context_from_another_operation() {
             status: None,
             content_type: None,
             request_body: Some(&request),
+            request_parameters: None,
             body: None,
         },
     );
@@ -489,6 +1123,7 @@ behavior "startJob" {
             status: None,
             content_type: None,
             request_body: None,
+            request_parameters: None,
             body: None,
         },
     )
@@ -519,6 +1154,7 @@ paths:
                 status: requested,
                 content_type: None,
                 request_body: None,
+                request_parameters: None,
                 body: None,
             },
         )
@@ -546,6 +1182,7 @@ paths:
             status: None,
             content_type: None,
             request_body: None,
+            request_parameters: None,
             body: None,
         },
     )

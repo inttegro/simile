@@ -9,15 +9,20 @@ mod compile;
 mod evaluate;
 mod parse;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use simile_spec::ParameterLocation;
 
 use crate::{SchemaId, SchemaRef};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Plan {
     #[serde(rename = "q")]
-    request_schema: SchemaRef,
+    request_schemas: Vec<SchemaRef>,
+    #[serde(rename = "p", default, skip_serializing_if = "BTreeMap::is_empty")]
+    parameter_schemas: BTreeMap<ParameterSource, SchemaRef>,
     #[serde(rename = "m", default, skip_serializing_if = "Vec::is_empty")]
     mappings: Vec<Mapping>,
     #[serde(rename = "d", default, skip_serializing_if = "Vec::is_empty")]
@@ -29,7 +34,7 @@ pub(crate) struct Plan {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Mapping {
     #[serde(rename = "s")]
-    source: String,
+    source: Source,
     #[serde(rename = "t")]
     target: String,
     #[serde(rename = "T")]
@@ -49,7 +54,7 @@ struct Derivation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum Expression {
     #[serde(rename = "r")]
-    Request(String),
+    Request(Source),
     #[serde(rename = "p")]
     Relative(String),
     #[serde(rename = "l")]
@@ -58,6 +63,23 @@ enum Expression {
     Add(Vec<Expression>),
     #[serde(rename = "m")]
     Multiply(Vec<Expression>),
+    #[serde(rename = "c")]
+    Concat(Vec<Expression>),
+    #[serde(rename = "u")]
+    Substring {
+        value: Box<Expression>,
+        start: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        end: Option<i64>,
+    },
+    #[serde(rename = "k")]
+    Mask {
+        value: Box<Expression>,
+        reveal: usize,
+        character: char,
+    },
+    #[serde(rename = "o")]
+    Coalesce(Vec<Expression>),
     #[serde(rename = "s")]
     Sum {
         each: String,
@@ -78,9 +100,25 @@ struct Rule {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Condition {
     #[serde(rename = "p")]
-    path: String,
+    source: Source,
     #[serde(rename = "e")]
     equals: Value,
     #[serde(rename = "d", skip_serializing_if = "Option::is_none")]
     default: Option<Value>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+struct ParameterSource {
+    #[serde(rename = "l")]
+    location: ParameterLocation,
+    #[serde(rename = "n")]
+    name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+enum Source {
+    #[serde(rename = "b")]
+    Body(String),
+    #[serde(rename = "p")]
+    Parameter(ParameterSource),
 }

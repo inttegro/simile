@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -141,8 +141,20 @@ impl fmt::Display for ResponseStatus {
 pub struct ResponseContract {
     pub status: ResponseStatus,
     pub definition: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<ResponseHeaderContract>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<ResponseBodyContract>,
+}
+
+/// One response header declared by a public operation contract.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ResponseHeaderContract {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -165,7 +177,7 @@ pub struct RequestBodyContract {
 }
 
 /// The HTTP location from which an operation parameter is read.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParameterLocation {
     Path,

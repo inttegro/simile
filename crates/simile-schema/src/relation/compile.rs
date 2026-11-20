@@ -2,21 +2,36 @@
 
 use serde_json::Value;
 
-use super::{Expression, Plan, parse};
+use super::{Expression, ParameterSource, Plan, Source, parse};
 use crate::soundness::path;
-use crate::{CompileError, Result, SchemaCatalog, SchemaRef};
+use crate::{CompileError, RelationParameter, Result, SchemaCatalog, SchemaRef};
 
 impl Plan {
     pub(crate) fn compile(
         definition: &Value,
-        request_schema: SchemaRef,
+        request_schemas: Vec<SchemaRef>,
+        parameters: &[RelationParameter<'_>],
         response_schema: SchemaRef,
         catalog: &SchemaCatalog,
         field: &str,
     ) -> Result<Self> {
         let (mappings, derivations, rules) = parse::definition(definition, field)?;
         let mut plan = Self {
-            request_schema,
+            request_schemas,
+            parameter_schemas: parameters
+                .iter()
+                .filter_map(|parameter| {
+                    parameter.schema.map(|schema| {
+                        (
+                            ParameterSource {
+                                location: parameter.location,
+                                name: normalize_parameter_name(parameter.location, parameter.name),
+                            },
+                            schema.schema,
+                        )
+                    })
+                })
+                .collect(),
             mappings,
             derivations,
             rules,
@@ -41,13 +56,28 @@ impl Plan {
         response_schema: SchemaRef,
         field: &str,
     ) -> Result<()> {
-        if !catalog.contains(self.request_schema) || !catalog.contains(response_schema) {
+        if self
+            .request_schemas
+            .iter()
+            .any(|schema| !catalog.contains(*schema))
+            || self
+                .parameter_schemas
+                .values()
+                .any(|schema| !catalog.contains(*schema))
+            || !catalog.contains(response_schema)
+        {
             return Err(invalid(field, "relation references an unknown schema"));
         }
+        let request_schemas = self.request_schemas.clone();
+        let parameter_schemas = self.parameter_schemas.clone();
         for (index, mapping) in self.mappings.iter_mut().enumerate() {
             let item = format!("{field}.bindings.{index}");
-            path::resolve_selector(catalog, self.request_schema.0, &mapping.source)
-                .ok_or_else(|| invalid(&item, "source does not resolve in the request schema"))?;
+            mapping
+                .source
+                .resolve(&request_schemas, &parameter_schemas, catalog)
+                .ok_or_else(|| {
+                    invalid(&item, "source does not resolve in the operation request")
+                })?;
             mapping.target_schema =
                 path::resolve_property(catalog, response_schema.0, &mapping.target)
                     .ok_or_else(|| {
@@ -59,15 +89,17 @@ impl Plan {
             let item = format!("{field}.bindings.{index}");
             path::resolve_property(catalog, response_schema.0, &derivation.target)
                 .ok_or_else(|| invalid(&item, "target does not resolve in the response schema"))?;
-            derivation
-                .value
-                .check(catalog, self.request_schema, &item)?;
+            derivation.value.check(self, catalog, &item)?;
         }
         for (index, rule) in self.rules.iter().enumerate() {
             let item = format!("{field}.rules.{index}");
             for condition in &rule.when {
-                path::resolve_selector(catalog, self.request_schema.0, &condition.path)
-                    .ok_or_else(|| invalid(&item, "condition does not resolve in the request"))?;
+                condition
+                    .source
+                    .resolve(&request_schemas, &parameter_schemas, catalog)
+                    .ok_or_else(|| {
+                        invalid(&item, "condition does not resolve in the operation request")
+                    })?;
             }
             for (target, value) in &rule.set {
                 let target = path::resolve_property(catalog, response_schema.0, target)
@@ -95,10 +127,11 @@ impl Plan {
 }
 
 impl Expression {
-    fn check(&self, catalog: &SchemaCatalog, request: SchemaRef, field: &str) -> Result<()> {
+    fn check(&self, plan: &Plan, catalog: &SchemaCatalog, field: &str) -> Result<()> {
         match self {
-            Self::Request(path) => {
-                path::resolve_selector(catalog, request.0, path)
+            Self::Request(source) => {
+                source
+                    .resolve(&plan.request_schemas, &plan.parameter_schemas, catalog)
                     .ok_or_else(|| invalid(field, "request path does not resolve"))?;
             }
             Self::Relative(path) => {
@@ -113,11 +146,25 @@ impl Expression {
                     ));
                 }
                 for value in values {
-                    value.check(catalog, request, field)?;
+                    value.check(plan, catalog, field)?;
                 }
             }
+            Self::Concat(values) | Self::Coalesce(values) => {
+                if values.len() < 2 {
+                    return Err(invalid(field, "operation requires at least two values"));
+                }
+                for value in values {
+                    value.check(plan, catalog, field)?;
+                }
+            }
+            Self::Substring { value, .. } | Self::Mask { value, .. } => {
+                value.check(plan, catalog, field)?;
+            }
             Self::Sum { each, value } => {
-                let selected = path::resolve_selector(catalog, request.0, each)
+                let selected = plan
+                    .request_schemas
+                    .iter()
+                    .find_map(|request| path::resolve_selector(catalog, request.0, each))
                     .ok_or_else(|| invalid(field, "sum selector does not resolve"))?;
                 if !selected.multiple {
                     return Err(invalid(
@@ -143,11 +190,43 @@ impl Expression {
                 }
                 Ok(())
             }
+            Self::Concat(values) | Self::Coalesce(values) => {
+                for value in values {
+                    value.check_relative(field)?;
+                }
+                Ok(())
+            }
+            Self::Substring { value, .. } | Self::Mask { value, .. } => value.check_relative(field),
             Self::Request(_) | Self::Sum { .. } => Err(invalid(
                 field,
                 "sum values may use only relative paths, literals, add, and multiply",
             )),
         }
+    }
+}
+
+impl Source {
+    fn resolve(
+        &self,
+        request_schemas: &[SchemaRef],
+        parameter_schemas: &std::collections::BTreeMap<ParameterSource, SchemaRef>,
+        catalog: &SchemaCatalog,
+    ) -> Option<SchemaRef> {
+        match self {
+            Self::Body(selector) => request_schemas.iter().find_map(|root| {
+                path::resolve_selector(catalog, root.0, selector)
+                    .map(|selected| SchemaRef(selected.schema))
+            }),
+            Self::Parameter(source) => parameter_schemas.get(source).copied(),
+        }
+    }
+}
+
+fn normalize_parameter_name(location: simile_spec::ParameterLocation, name: &str) -> String {
+    if location == simile_spec::ParameterLocation::Header {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
     }
 }
 

@@ -4,6 +4,15 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Treat request-to-response bindings as hard postconditions across body, path, query, header, and
+  cookie sources, with explicit failures when a reachable response cannot be constructed.
+- Add request-derived concatenation, substring, masking, and conditional-default expressions.
+- Make response synthesis minimal by default so unrelated optional properties and union branches
+  stay absent.
+- Encode declared JSON, text, form URL-encoded, multipart, and octet-stream responses.
+- Compile and synthesize declared response headers, including bodyless redirects with `Location`.
+- Advance the compiled artifact format to version 21. Existing artifacts must be recompiled.
+
 ## 0.3.0 - 2026-11-20
 
 - Add provider-authored principal contracts, principal-setup workflows, and durable named profiles,

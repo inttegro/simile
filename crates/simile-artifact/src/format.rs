@@ -8,8 +8,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use simile_heuristics::Policy;
 use simile_schema::{
-    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, BoundValueSchema, RequestBodyPlan,
-    ResponseBodyPlan, SchemaCatalog, ValueSchemaPlan,
+    BodySchemaCompiler, BoundRequestBody, BoundResponseBody, BoundValueSchema, RelationParameter,
+    RequestBodyPlan, ResponseBodyPlan, SchemaCatalog, ValueSchemaPlan,
 };
 use simile_spec::{
     BehaviorOrigin, CompiledService, DescriptionKind, EffectAction, EffectActionKind, EffectOrigin,
@@ -21,7 +21,7 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 20;
+pub const FORMAT_VERSION: u16 = 21;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -170,6 +170,19 @@ pub struct ArtifactParameter<'a> {
 pub struct ArtifactResponse<'a> {
     status: ResponseStatus,
     body: Option<BoundResponseBody<'a>>,
+    headers: &'a [ResponseHeaderRecord],
+    strings: &'a [String],
+    values: &'a [ValueRecord],
+    schemas: &'a SchemaCatalog,
+}
+
+/// One compiled response header available to an HTTP transport adapter.
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactResponseHeader<'a> {
+    record: &'a ResponseHeaderRecord,
+    strings: &'a [String],
+    values: &'a [ValueRecord],
+    schemas: &'a SchemaCatalog,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -330,6 +343,10 @@ impl<'a> ArtifactOperation<'a> {
                 .3
                 .as_ref()
                 .map(|body| BoundResponseBody::new(body, self.schemas)),
+            headers: &response.4,
+            strings: self.strings,
+            values: self.values,
+            schemas: self.schemas,
         })
     }
 
@@ -540,6 +557,37 @@ impl<'a> ArtifactResponse<'a> {
     #[must_use]
     pub const fn body(&self) -> Option<BoundResponseBody<'a>> {
         self.body
+    }
+
+    pub fn headers(&self) -> impl Iterator<Item = ArtifactResponseHeader<'a>> + 'a {
+        self.headers.iter().map(|record| ArtifactResponseHeader {
+            record,
+            strings: self.strings,
+            values: self.values,
+            schemas: self.schemas,
+        })
+    }
+}
+
+impl ArtifactResponseHeader<'_> {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.strings[self.record.0 as usize]
+    }
+
+    #[must_use]
+    pub const fn schema(&self) -> Option<BoundValueSchema<'_>> {
+        match self.record.1.as_ref() {
+            Some(schema) => Some(BoundValueSchema::new(schema, self.schemas)),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub fn example(&self) -> Option<Value> {
+        self.record
+            .2
+            .map(|value| decode_value(value, self.strings, self.values))
     }
 }
 
@@ -1705,7 +1753,16 @@ struct ParameterRecord(
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ResponseRecord(u8, u16, ValueId, Option<ResponseBodyPlan>);
+struct ResponseRecord(
+    u8,
+    u16,
+    ValueId,
+    Option<ResponseBodyPlan>,
+    Vec<ResponseHeaderRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ResponseHeaderRecord(StringId, Option<ValueSchemaPlan>, Option<ValueId>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct OutcomeRecord(
@@ -2107,6 +2164,16 @@ impl Payload {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let relation_parameters = operation
+                .parameters
+                .iter()
+                .zip(&parameters)
+                .map(|(parameter, compiled)| RelationParameter {
+                    location: parameter.location,
+                    name: &parameter.name,
+                    schema: compiled.6.as_ref(),
+                })
+                .collect::<Vec<_>>();
             let security = operation
                 .security
                 .iter()
@@ -2133,6 +2200,46 @@ impl Payload {
                 .into_iter()
                 .map(|response| {
                     let (kind, status) = encode_status(&response.status);
+                    let mut ordered_headers = response.headers.iter().collect::<Vec<_>>();
+                    ordered_headers.sort_by(|left, right| {
+                        left.name
+                            .to_ascii_lowercase()
+                            .cmp(&right.name.to_ascii_lowercase())
+                            .then_with(|| left.name.cmp(&right.name))
+                    });
+                    let headers = ordered_headers
+                        .into_iter()
+                        .map(|header| {
+                            let schema = header
+                                .schema
+                                .as_ref()
+                                .map(|schema| {
+                                    schema_compiler.compile_response_header(
+                                        schema,
+                                        &format!(
+                                            "operation.{}.response.{}.header.{}",
+                                            key.as_str(),
+                                            response.status,
+                                            header.name
+                                        ),
+                                    )
+                                })
+                                .transpose()
+                                .map_err(|source| Error::OperationSchema {
+                                    operation: key.to_string(),
+                                    source,
+                                })?;
+                            Ok(ResponseHeaderRecord(
+                                strings.id(&header.name)?,
+                                schema,
+                                header
+                                    .example
+                                    .as_ref()
+                                    .map(|example| values.push(example, &strings))
+                                    .transpose()?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
                     Ok(ResponseRecord(
                         kind,
                         status,
@@ -2143,13 +2250,18 @@ impl Payload {
                             // Why: a cross-message projection is meaningful only against this
                             // operation's request schema, so compile both sides into one proof plan.
                             .map(|body| {
-                                schema_compiler.compile_response_for(body, request_body.as_ref())
+                                schema_compiler.compile_response_for_operation(
+                                    body,
+                                    request_body.as_ref(),
+                                    &relation_parameters,
+                                )
                             })
                             .transpose()
                             .map_err(|source| Error::OperationSchema {
                                 operation: key.to_string(),
                                 source,
                             })?,
+                        headers,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -2656,6 +2768,24 @@ impl Payload {
                     .is_some_and(|body| !BoundResponseBody::new(body, &self.7).is_well_formed())
                 {
                     return Err(Error::Invalid("response schema"));
+                }
+                for header in &response.4 {
+                    validate_index(header.0, strings, "response header name")?;
+                    if header.1.as_ref().is_some_and(|schema| {
+                        !BoundValueSchema::new(schema, &self.7).is_well_formed()
+                    }) {
+                        return Err(Error::Invalid("response header schema"));
+                    }
+                    validate_optional_index(header.2, values, "response header example")?;
+                    if let (Some(schema), Some(example)) = (&header.1, header.2) {
+                        let example = decode_value(example, strings, values);
+                        if !BoundValueSchema::new(schema, &self.7)
+                            .validate(&example)
+                            .is_empty()
+                        {
+                            return Err(Error::Invalid("response header example"));
+                        }
+                    }
                 }
             }
             for outcome in &operation.10 {
@@ -3171,6 +3301,12 @@ impl StringTable {
             }
             for response in &operation.responses {
                 collect_value_strings(&response.definition, &mut values);
+                for header in &response.headers {
+                    values.insert(header.name.clone());
+                    if let Some(example) = &header.example {
+                        collect_value_strings(example, &mut values);
+                    }
+                }
             }
             for outcome in &compiled.outcomes {
                 values.insert(outcome.name.clone());

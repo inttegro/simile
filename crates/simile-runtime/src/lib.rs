@@ -260,7 +260,7 @@ pub enum Error {
         response_operation: String,
     },
 
-    #[error("operation `{operation}` has no declared JSON response media type to synthesize")]
+    #[error("operation `{operation}` has no encodable declared response media type")]
     NoResponseMediaType {
         operation: String,
         expected: Vec<String>,
@@ -290,6 +290,22 @@ pub enum Error {
         source: SynthesisError,
     },
 
+    #[error("could not synthesize response header `{name}`: {source}")]
+    ResponseHeaderSynthesis {
+        name: String,
+        #[source]
+        source: SynthesisError,
+    },
+
+    #[error("response header `{name}` failed schema validation with {} issue(s)", .issues.len())]
+    InvalidResponseHeader {
+        name: String,
+        issues: Vec<ValidationIssue>,
+    },
+
+    #[error("response header `{name}` must synthesize to a scalar value")]
+    EncodeResponseHeader { name: String },
+
     #[error("could not encode a synthesized JSON request body: {message}")]
     EncodeJson { message: String },
 
@@ -299,8 +315,11 @@ pub enum Error {
         message: String,
     },
 
-    #[error("could not encode a synthesized JSON response body: {message}")]
-    EncodeResponseJson { message: String },
+    #[error("could not encode synthesized `{content_type}` response body: {message}")]
+    EncodeResponseBody {
+        content_type: String,
+        message: String,
+    },
 
     #[error("request body is not valid JSON at line {line}, column {column}: {message}")]
     MalformedJson {

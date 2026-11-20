@@ -459,6 +459,7 @@ fn response(
     Ok(ResponseContract {
         status: ResponseStatus::Exact(status),
         definition,
+        headers: Vec::new(),
         body,
     })
 }

@@ -25,6 +25,7 @@ pub(crate) fn produce(
         status: response_status,
         content_type: response_content_type,
         request_body: request_body.as_ref(),
+        request_parameters: options.parameters,
         body: selected
             .as_ref()
             .and_then(ArtifactOutcome::body)

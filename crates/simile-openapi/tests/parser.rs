@@ -181,6 +181,9 @@ components:
   responses:
     CreatedOrder:
       description: Created
+      headers:
+        Location:
+          $ref: '#/components/headers/OrderLocation'
       content:
         application/json:
           examples:
@@ -194,6 +197,10 @@ components:
       required: [id]
       properties:
         id: { type: string }
+  headers:
+    OrderLocation:
+      schema: { type: string, format: uri }
+      example: https://api.example.test/orders/ord_123
 "#;
     let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
     let operation = contract
@@ -215,6 +222,16 @@ components:
     assert_eq!(
         body.content["application/json"].examples["created"],
         serde_json::json!({"id": "ord_123"})
+    );
+    assert_eq!(operation.responses[0].headers.len(), 1);
+    assert_eq!(operation.responses[0].headers[0].name, "Location");
+    assert_eq!(
+        operation.responses[0].headers[0].schema,
+        Some(serde_json::json!({"type": "string", "format": "uri"}))
+    );
+    assert_eq!(
+        operation.responses[0].headers[0].example,
+        Some(serde_json::json!("https://api.example.test/orders/ord_123"))
     );
 }
 

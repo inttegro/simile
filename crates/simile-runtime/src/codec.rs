@@ -70,6 +70,46 @@ pub(crate) fn encode(content_type: &str, value: &Value) -> Result<(String, Vec<u
     }
 }
 
+pub(crate) fn encode_response(content_type: &str, value: &Value) -> Result<(String, Vec<u8>)> {
+    let essence = essence(content_type);
+    let encoded = if is_json(essence) {
+        serde_json::to_vec(value)
+            .map(|bytes| (essence.to_owned(), bytes))
+            .map_err(|error| error.to_string())
+    } else if essence.starts_with("text/") || essence == "application/octet-stream" {
+        value
+            .as_str()
+            .map(|value| (essence.to_owned(), value.as_bytes().to_vec()))
+            .ok_or_else(|| format!("{essence} requires a string value"))
+    } else if essence == "application/x-www-form-urlencoded" {
+        encode_form(value).map(|bytes| (essence.to_owned(), bytes))
+    } else if essence == "multipart/form-data" {
+        let boundary = "simile-boundary";
+        encode_multipart(value, boundary)
+            .map(|bytes| (format!("multipart/form-data; boundary={boundary}"), bytes))
+    } else {
+        return Err(Error::UnsupportedResponseEncoding {
+            content_type: essence.to_owned(),
+        });
+    };
+    encoded.map_err(|message| Error::EncodeResponseBody {
+        content_type: essence.to_owned(),
+        message: message.to_string(),
+    })
+}
+
+pub(crate) fn supports_response(content_type: &str) -> bool {
+    let essence = essence(content_type);
+    is_json(essence)
+        || essence.starts_with("text/")
+        || matches!(
+            essence,
+            "application/octet-stream"
+                | "application/x-www-form-urlencoded"
+                | "multipart/form-data"
+        )
+}
+
 fn essence(content_type: &str) -> &str {
     content_type.split(';').next().map(str::trim).unwrap_or("")
 }

@@ -1,9 +1,9 @@
 use serde_json::Value;
 use simile_artifact::{Artifact, ArtifactOperation, ArtifactResponse};
-use simile_schema::BoundResponseBody;
-use simile_spec::ResponseStatus;
+use simile_schema::{BoundResponseBody, RequestValues};
+use simile_spec::{ParameterLocation, ResponseStatus};
 
-use crate::{Error, Result, ValidatedBody, is_json};
+use crate::{Error, Result, ValidatedBody, ValidatedParameters, codec};
 
 /// The strongest proof Simile established for a synthesized response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,6 +21,7 @@ pub struct ResponseSynthesisRequest<'a> {
     pub status: Option<u16>,
     pub content_type: Option<&'a str>,
     pub request_body: Option<&'a ValidatedBody>,
+    pub request_parameters: Option<&'a ValidatedParameters>,
     /// An exact public example selected by a named outcome.
     pub body: Option<&'a Value>,
 }
@@ -29,6 +30,7 @@ pub struct ResponseSynthesisRequest<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynthesizedResponse {
     status: u16,
+    headers: Vec<(String, String)>,
     media_type: Option<String>,
     bytes: Vec<u8>,
     value: Option<Value>,
@@ -39,6 +41,12 @@ impl SynthesizedResponse {
     #[must_use]
     pub const fn status(&self) -> u16 {
         self.status
+    }
+
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.headers
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
     }
 
     #[must_use]
@@ -102,6 +110,7 @@ pub fn synthesize_response_with_seed(
         )
     })?;
 
+    let headers = synthesize_headers(&response, seed)?;
     let Some(body) = response.body() else {
         if request.body.is_some() {
             return Err(Error::ResponseBodyNotDeclared {
@@ -111,31 +120,88 @@ pub fn synthesize_response_with_seed(
         }
         return Ok(SynthesizedResponse {
             status,
+            headers,
             media_type: None,
             bytes: Vec::new(),
             value: None,
             soundness: ResponseSoundness::SchemaOnly,
         });
     };
-    synthesize_body(request, status, body, seed)
+    synthesize_body(request, status, headers, body, seed)
+}
+
+fn synthesize_headers(response: &ArtifactResponse<'_>, seed: u64) -> Result<Vec<(String, String)>> {
+    response
+        .headers()
+        .enumerate()
+        .filter(|(_, header)| {
+            !header.name().eq_ignore_ascii_case("content-type")
+                && !header.name().eq_ignore_ascii_case("content-length")
+        })
+        .map(|(index, header)| {
+            let name = header.name().to_owned();
+            let value = if let Some(example) = header.example() {
+                if let Some(schema) = header.schema() {
+                    let issues = schema.validate(&example);
+                    if !issues.is_empty() {
+                        return Err(Error::InvalidResponseHeader { name, issues });
+                    }
+                }
+                example
+            } else if let Some(schema) = header.schema() {
+                schema
+                    .synthesize_fuzz(seed.wrapping_add(index as u64 + 1))
+                    .map_err(|source| Error::ResponseHeaderSynthesis {
+                        name: name.clone(),
+                        source,
+                    })?
+            } else {
+                return Ok(None);
+            };
+            let value = match value {
+                Value::String(value) => value,
+                Value::Bool(value) => value.to_string(),
+                Value::Number(value) => value.to_string(),
+                Value::Null | Value::Array(_) | Value::Object(_) => {
+                    return Err(Error::EncodeResponseHeader { name });
+                }
+            };
+            Ok(Some((name, value)))
+        })
+        .filter_map(|result| result.transpose())
+        .collect()
 }
 
 fn verify_request_context(request: ResponseSynthesisRequest<'_>) -> Result<()> {
-    let Some(request_body) = request.request_body else {
-        return Ok(());
-    };
-    if request_body.operation() == request.operation {
-        return Ok(());
+    if let Some(request_body) = request.request_body {
+        if request_body.operation() != request.operation {
+            return Err(Error::RequestContextMismatch {
+                request_operation: request_body.operation().to_owned(),
+                response_operation: request.operation.to_owned(),
+            });
+        }
     }
-    Err(Error::RequestContextMismatch {
-        request_operation: request_body.operation().to_owned(),
-        response_operation: request.operation.to_owned(),
-    })
+    if let Some(request_parameters) = request.request_parameters {
+        if request_parameters
+            .operation()
+            .is_some_and(|operation| operation != request.operation)
+        {
+            return Err(Error::RequestContextMismatch {
+                request_operation: request_parameters
+                    .operation()
+                    .unwrap_or_default()
+                    .to_owned(),
+                response_operation: request.operation.to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn synthesize_body(
     request: ResponseSynthesisRequest<'_>,
     status: u16,
+    headers: Vec<(String, String)>,
     body: BoundResponseBody<'_>,
     seed: u64,
 ) -> Result<SynthesizedResponse> {
@@ -144,7 +210,7 @@ fn synthesize_body(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-        .or_else(|| preferred_json_media_type(&body));
+        .or_else(|| preferred_response_media_type(&body));
     let content_type = content_type.ok_or_else(|| Error::NoResponseMediaType {
         operation: request.operation.to_owned(),
         expected: body.media_types().map(str::to_owned).collect(),
@@ -156,27 +222,23 @@ fn synthesize_body(
                 content_type: content_type.clone(),
                 expected: body.media_types().map(str::to_owned).collect(),
             })?;
-    let soundness = if request.request_body.is_some() && selected.is_request_constrained() {
+    let request_values = request_values(request.request_body, request.request_parameters);
+    let soundness = if request_values.is_some() && selected.is_request_constrained() {
         ResponseSoundness::RequestConstrained
     } else {
         ResponseSoundness::SchemaOnly
     };
-    if !is_json(selected.requested()) {
-        return Err(Error::UnsupportedResponseEncoding {
-            content_type: selected.requested().to_owned(),
-        });
-    }
     let value = if let Some(body) = request.body {
         // Why: provider-authored outcomes remain exact except for relationships the provider
         // explicitly declared; this preserves fidelity while still reflecting caller-owned data.
-        request.request_body.map_or_else(
+        request_values.as_ref().map_or_else(
             || Ok(body.clone()),
-            |request_body| selected.project_exact_from(body, request_body.value()),
+            |request| selected.project_exact_from_request(body, request),
         )
     } else {
-        request.request_body.map_or_else(
-            || selected.synthesize_fuzz(seed),
-            |request_body| selected.synthesize_fuzz_from(request_body.value(), seed),
+        request_values.as_ref().map_or_else(
+            || selected.synthesize_fuzz_minimal(seed),
+            |request| selected.synthesize_fuzz_from_request(request, seed),
         )
     }
     .map_err(|source| Error::ResponseSynthesis { source })?;
@@ -184,16 +246,38 @@ fn synthesize_body(
     if !issues.is_empty() {
         return Err(Error::InvalidResponseBody { issues });
     }
-    let bytes = serde_json::to_vec(&value).map_err(|error| Error::EncodeResponseJson {
-        message: error.to_string(),
-    })?;
+    let (media_type, bytes) = codec::encode_response(selected.requested(), &value)?;
     Ok(SynthesizedResponse {
         status,
-        media_type: Some(selected.requested().to_owned()),
+        headers,
+        media_type: Some(media_type),
         bytes,
         value: Some(value),
         soundness,
     })
+}
+
+fn request_values<'a>(
+    body: Option<&'a ValidatedBody>,
+    parameters: Option<&'a ValidatedParameters>,
+) -> Option<RequestValues<'a>> {
+    if body.is_none() && parameters.is_none() {
+        return None;
+    }
+    let mut values = RequestValues::new(body.map(ValidatedBody::value));
+    if let Some(parameters) = parameters {
+        for location in [
+            ParameterLocation::Path,
+            ParameterLocation::Query,
+            ParameterLocation::Header,
+            ParameterLocation::Cookie,
+        ] {
+            for (name, value) in parameters.at(location) {
+                values.insert_parameter(location, name, value);
+            }
+        }
+    }
+    Some(values)
 }
 
 fn select_response(
@@ -264,10 +348,15 @@ fn select_response(
         .map(|(response, status)| (response.clone(), status))
 }
 
-fn preferred_json_media_type(plan: &BoundResponseBody<'_>) -> Option<String> {
+fn preferred_response_media_type(plan: &BoundResponseBody<'_>) -> Option<String> {
     plan.media_types()
-        .find(|media_type| is_json(media_type))
+        .find(|media_type| crate::is_json(media_type))
         .map(str::to_owned)
+        .or_else(|| {
+            plan.media_types()
+                .find(|media_type| codec::supports_response(media_type))
+                .map(str::to_owned)
+        })
         .or_else(|| {
             plan.media_types()
                 .any(|media_type| media_type == "application/*" || media_type == "*/*")

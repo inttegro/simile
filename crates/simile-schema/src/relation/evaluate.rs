@@ -4,19 +4,19 @@ use serde_json::{Number, Value};
 
 use super::{Expression, Plan, Rule};
 use crate::soundness::path;
-use crate::{SchemaCatalog, SchemaRef, SynthesisError};
+use crate::{RequestValues, SchemaCatalog, SchemaRef, SynthesisError};
 
 impl Plan {
     pub(crate) fn apply(
         &self,
         catalog: &SchemaCatalog,
         response_schema: SchemaRef,
-        request: &Value,
+        request: &RequestValues<'_>,
         response: &mut Value,
     ) -> std::result::Result<(), SynthesisError> {
         for mapping in &self.mappings {
             let Some(source) =
-                selected_value(request, &mapping.source).or_else(|| mapping.default.clone())
+                selected_source(request, &mapping.source).or_else(|| mapping.default.clone())
             else {
                 continue;
             };
@@ -46,7 +46,7 @@ impl Plan {
         for derivation in &self.derivations {
             let value = derivation
                 .value
-                .evaluate(request, request)
+                .evaluate(request, request.body().unwrap_or(&Value::Null))
                 .ok_or_else(|| unreachable(&derivation.target, "cannot be derived"))?;
             let target = path::resolve_property(catalog, response_schema.0, &derivation.target)
                 .ok_or_else(|| unreachable(&derivation.target, "is not declared"))?;
@@ -76,12 +76,12 @@ impl Plan {
 
     pub(crate) fn prove(
         &self,
-        request: &Value,
+        request: &RequestValues<'_>,
         response: &Value,
     ) -> std::result::Result<(), SynthesisError> {
         for mapping in &self.mappings {
             let Some(source) =
-                selected_value(request, &mapping.source).or_else(|| mapping.default.clone())
+                selected_source(request, &mapping.source).or_else(|| mapping.default.clone())
             else {
                 continue;
             };
@@ -98,7 +98,7 @@ impl Plan {
         for derivation in &self.derivations {
             let expected = derivation
                 .value
-                .evaluate(request, request)
+                .evaluate(request, request.body().unwrap_or(&Value::Null))
                 .ok_or_else(|| unreachable(&derivation.target, "cannot be derived"))?;
             if response.pointer(&derivation.target) != Some(&expected) {
                 return Err(unreachable(
@@ -127,16 +127,45 @@ impl Plan {
 }
 
 impl Expression {
-    fn evaluate(&self, request: &Value, context: &Value) -> Option<Value> {
+    fn evaluate(&self, request: &RequestValues<'_>, context: &Value) -> Option<Value> {
         match self {
-            Self::Request(path) => selected_value(request, path),
+            Self::Request(source) => selected_source(request, source),
             Self::Relative(path) => selected_value(context, path),
             Self::Literal(value) => Some(value.clone()),
             Self::Add(values) => numeric_fold(values, request, context, Numeric::add),
             Self::Multiply(values) => numeric_fold(values, request, context, Numeric::multiply),
+            Self::Concat(values) => values
+                .iter()
+                .map(|value| {
+                    value
+                        .evaluate(request, context)?
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect::<Option<String>>()
+                .map(Value::String),
+            Self::Substring { value, start, end } => value
+                .evaluate(request, context)?
+                .as_str()
+                .and_then(|value| substring(value, *start, *end))
+                .map(Value::String),
+            Self::Mask {
+                value,
+                reveal,
+                character,
+            } => value
+                .evaluate(request, context)?
+                .as_str()
+                .map(|value| mask(value, *reveal, *character))
+                .map(Value::String),
+            Self::Coalesce(values) => values.iter().find_map(|value| {
+                value
+                    .evaluate(request, context)
+                    .filter(|value| !value.is_null())
+            }),
             Self::Sum { each, value } => {
                 let mut total = Numeric::Integer(0);
-                for selected in path::select(request, each)? {
+                for selected in path::select(request.body()?, each)? {
                     let value = value.evaluate(request, selected.value)?;
                     total = total.add(Numeric::from_value(&value)?)?;
                 }
@@ -146,10 +175,38 @@ impl Expression {
     }
 }
 
+fn substring(value: &str, start: i64, end: Option<i64>) -> Option<String> {
+    let characters = value.chars().collect::<Vec<_>>();
+    let length = i64::try_from(characters.len()).ok()?;
+    let start = normalize_index(start, length)?;
+    let end = normalize_index(end.unwrap_or(length), length)?;
+    (start <= end).then(|| characters[start..end].iter().collect())
+}
+
+fn normalize_index(index: i64, length: i64) -> Option<usize> {
+    let index = if index < 0 {
+        length.checked_add(index)?
+    } else {
+        index
+    };
+    (0..=length)
+        .contains(&index)
+        .then(|| usize::try_from(index).ok())
+        .flatten()
+}
+
+fn mask(value: &str, reveal: usize, character: char) -> String {
+    let characters = value.chars().collect::<Vec<_>>();
+    let hidden = characters.len().saturating_sub(reveal);
+    std::iter::repeat_n(character, hidden)
+        .chain(characters.into_iter().skip(hidden))
+        .collect()
+}
+
 impl Rule {
-    fn matches(&self, request: &Value) -> bool {
+    fn matches(&self, request: &RequestValues<'_>) -> bool {
         self.when.iter().all(|condition| {
-            selected_value(request, &condition.path)
+            selected_source(request, &condition.source)
                 .or_else(|| condition.default.clone())
                 .as_ref()
                 == Some(&condition.equals)
@@ -224,7 +281,7 @@ fn selected_value(value: &Value, selector: &str) -> Option<Value> {
 
 fn numeric_fold(
     values: &[Expression],
-    request: &Value,
+    request: &RequestValues<'_>,
     context: &Value,
     operation: fn(Numeric, Numeric) -> Option<Numeric>,
 ) -> Option<Value> {
@@ -238,6 +295,15 @@ fn numeric_fold(
             )
         })?
         .into_value()
+}
+
+fn selected_source(request: &RequestValues<'_>, source: &super::Source) -> Option<Value> {
+    match source {
+        super::Source::Body(selector) => selected_value(request.body()?, selector),
+        super::Source::Parameter(source) => {
+            request.parameter(source.location, &source.name).cloned()
+        }
+    }
 }
 
 fn contains_request(response: &Value, request: &Value) -> bool {

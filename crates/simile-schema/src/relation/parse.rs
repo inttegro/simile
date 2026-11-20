@@ -2,9 +2,10 @@
 
 use serde_json::Value;
 
-use super::{Condition, Derivation, Expression, Mapping, Rule};
+use super::{Condition, Derivation, Expression, Mapping, ParameterSource, Rule, Source};
 use crate::soundness::path;
 use crate::{CompileError, Result};
+use simile_spec::ParameterLocation;
 
 pub(super) fn definition(
     definition: &Value,
@@ -53,7 +54,7 @@ fn legacy_mappings(value: &Value, field: &str) -> Result<Vec<Mapping>> {
                 ));
             }
             Ok(Mapping {
-                source: selector(object.get("source"), &format!("{field}.source"))?,
+                source: Source::Body(selector(object.get("source"), &format!("{field}.source"))?),
                 target: pointer(object.get("target"), &format!("{field}.target"))?,
                 target_schema: 0,
                 default: None,
@@ -78,8 +79,8 @@ fn bindings(value: Option<&Value>, field: &str) -> Result<(Vec<Mapping>, Vec<Der
             .ok_or_else(|| invalid(&item, "binding must be an object"))?;
         let target = pointer(object.get("to"), &format!("{item}.to"))?;
         match (object.get("from"), object.get("value")) {
-            (Some(source), None) => mappings.push(Mapping {
-                source: selector(Some(source), &format!("{item}.from"))?,
+            (Some(source_value), None) => mappings.push(Mapping {
+                source: source(Some(source_value), &format!("{item}.from"))?,
                 target,
                 target_schema: 0,
                 default: object.get("default").cloned(),
@@ -109,22 +110,101 @@ fn expression(value: &Value, field: &str) -> Result<Expression> {
         .next()
         .ok_or_else(|| invalid(field, "expression operator is required"))?;
     match operator.as_str() {
-        "request" => selector(Some(value), field).map(Expression::Request),
+        "request" => source(Some(value), field).map(Expression::Request),
         "path" => selector(Some(value), field).map(Expression::Relative),
         "literal" => Ok(Expression::Literal(value.clone())),
-        "add" | "multiply" => {
+        "add" | "multiply" | "concat" | "coalesce" => {
             let values = value
                 .as_array()
                 .filter(|values| values.len() >= 2)
-                .ok_or_else(|| invalid(field, "numeric operation requires at least two values"))?
+                .ok_or_else(|| invalid(field, "operation requires at least two values"))?
                 .iter()
                 .map(|value| expression(value, field))
                 .collect::<Result<Vec<_>>>()?;
-            if operator == "add" {
-                Ok(Expression::Add(values))
-            } else {
-                Ok(Expression::Multiply(values))
+            match operator.as_str() {
+                "add" => Ok(Expression::Add(values)),
+                "multiply" => Ok(Expression::Multiply(values)),
+                "concat" => Ok(Expression::Concat(values)),
+                "coalesce" => Ok(Expression::Coalesce(values)),
+                _ => unreachable!("operator is matched above"),
             }
+        }
+        "substring" => {
+            let substring = value
+                .as_object()
+                .filter(|substring| {
+                    substring.len() >= 2
+                        && substring.len() <= 3
+                        && substring.contains_key("value")
+                        && substring.contains_key("start")
+                        && substring
+                            .keys()
+                            .all(|key| matches!(key.as_str(), "value" | "start" | "end"))
+                })
+                .ok_or_else(|| {
+                    invalid(
+                        field,
+                        "substring requires `value`, `start`, and optionally `end`",
+                    )
+                })?;
+            Ok(Expression::Substring {
+                value: Box::new(expression(
+                    substring
+                        .get("value")
+                        .ok_or_else(|| invalid(field, "substring value is required"))?,
+                    field,
+                )?),
+                start: integer(substring.get("start"), field, "substring start")?,
+                end: substring
+                    .get("end")
+                    .map(|value| integer(Some(value), field, "substring end"))
+                    .transpose()?,
+            })
+        }
+        "mask" => {
+            let mask = value
+                .as_object()
+                .filter(|mask| {
+                    mask.len() >= 2
+                        && mask.len() <= 3
+                        && mask.contains_key("value")
+                        && mask.contains_key("reveal")
+                        && mask
+                            .keys()
+                            .all(|key| matches!(key.as_str(), "value" | "reveal" | "character"))
+                })
+                .ok_or_else(|| {
+                    invalid(
+                        field,
+                        "mask requires `value`, `reveal`, and optionally `character`",
+                    )
+                })?;
+            let reveal = integer(mask.get("reveal"), field, "mask reveal")?;
+            let reveal = usize::try_from(reveal)
+                .map_err(|_| invalid(field, "mask reveal must be a non-negative integer"))?;
+            let character = mask
+                .get("character")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|value| {
+                            let mut characters = value.chars();
+                            let first = characters.next()?;
+                            characters.next().is_none().then_some(first)
+                        })
+                        .ok_or_else(|| invalid(field, "mask character must be one character"))
+                })
+                .transpose()?
+                .unwrap_or('*');
+            Ok(Expression::Mask {
+                value: Box::new(expression(
+                    mask.get("value")
+                        .ok_or_else(|| invalid(field, "mask value is required"))?,
+                    field,
+                )?),
+                reveal,
+                character,
+            })
         }
         "sum" => {
             let sum = value
@@ -142,6 +222,12 @@ fn expression(value: &Value, field: &str) -> Result<Expression> {
         }
         _ => Err(invalid(field, "unsupported expression operator")),
     }
+}
+
+fn integer(value: Option<&Value>, field: &str, name: &str) -> Result<i64> {
+    value
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid(field, &format!("{name} must be an integer")))
 }
 
 fn rules(value: Option<&Value>, field: &str) -> Result<Vec<Rule>> {
@@ -212,7 +298,7 @@ fn condition(value: &Value, field: &str) -> Result<Condition> {
         .as_object()
         .ok_or_else(|| invalid(field, "condition must be an object"))?;
     Ok(Condition {
-        path: selector(object.get("request"), field)?,
+        source: source(object.get("request"), field)?,
         equals: object
             .get("equals")
             .cloned()
@@ -235,6 +321,48 @@ fn selector(value: Option<&Value>, field: &str) -> Result<String> {
         .ok_or_else(|| invalid(field, "value must be a JSON Pointer selector"))?;
     path::resolve_selector_syntax(value).map_err(|reason| invalid(field, &reason))?;
     Ok(value.to_owned())
+}
+
+fn source(value: Option<&Value>, field: &str) -> Result<Source> {
+    let value = value.ok_or_else(|| invalid(field, "request source is required"))?;
+    if value.is_string() {
+        return selector(Some(value), field).map(Source::Body);
+    }
+    let object = value
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .ok_or_else(|| {
+            invalid(
+                field,
+                "request source must be a body selector or one named parameter location",
+            )
+        })?;
+    let (location, value) = object
+        .iter()
+        .next()
+        .ok_or_else(|| invalid(field, "request source is required"))?;
+    if location == "body" {
+        return selector(Some(value), field).map(Source::Body);
+    }
+    let location = match location.as_str() {
+        "path" => ParameterLocation::Path,
+        "query" => ParameterLocation::Query,
+        "header" => ParameterLocation::Header,
+        "cookie" => ParameterLocation::Cookie,
+        _ => return Err(invalid(field, "unknown request parameter location")),
+    };
+    let name = value
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| invalid(field, "request parameter name must be a non-empty string"))?;
+    Ok(Source::Parameter(ParameterSource {
+        location,
+        name: if location == ParameterLocation::Header {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_owned()
+        },
+    }))
 }
 
 fn invalid(field: &str, reason: &str) -> CompileError {

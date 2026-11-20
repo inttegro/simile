@@ -154,6 +154,7 @@ fn response_source_order_does_not_change_the_artifact() {
     operation.contract.responses.push(ResponseContract {
         status: ResponseStatus::Exact(400),
         definition: json!({"description": "Bad request"}),
+        headers: Vec::new(),
         body: None,
     });
     service
@@ -383,6 +384,7 @@ fn example_service() -> CompiledService {
                     }
                 }
             }),
+            headers: Vec::new(),
             body: Some(ResponseBodyContract {
                 content: BTreeMap::from([(
                     "application/json".to_owned(),

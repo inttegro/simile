@@ -8,7 +8,7 @@ pub use format::{
     Artifact, ArtifactAsyncOperation, ArtifactCredential, ArtifactDescription, ArtifactEffect,
     ArtifactFault, ArtifactFaultProfile, ArtifactOperation, ArtifactOutcome,
     ArtifactOutcomeCondition, ArtifactParameter, ArtifactPrincipal, ArtifactProfile,
-    ArtifactProtocolError, ArtifactResource, ArtifactResponse, ArtifactScenario,
-    ArtifactSecurityRequirement, ArtifactSecurityScheme, ArtifactSummary, EXTENSION,
-    FORMAT_VERSION, OperationOutcomeSummary, OutcomeSummary, decode, encode,
+    ArtifactProtocolError, ArtifactResource, ArtifactResponse, ArtifactResponseHeader,
+    ArtifactScenario, ArtifactSecurityRequirement, ArtifactSecurityScheme, ArtifactSummary,
+    EXTENSION, FORMAT_VERSION, OperationOutcomeSummary, OutcomeSummary, decode, encode,
 };

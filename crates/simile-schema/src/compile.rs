@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 use simile_heuristics::{Plan as HeuristicPlan, Policy as HeuristicPolicy};
-use simile_spec::{OpenApiFeature, RequestBodyContract, ResponseBodyContract};
+use simile_spec::{OpenApiFeature, ParameterLocation, RequestBodyContract, ResponseBodyContract};
 
 use crate::{
     AdditionalProperties, CompileError, JsonType, MediaTypePlan, NumberBound, RequestBodyPlan,
@@ -24,6 +24,14 @@ pub struct BodySchemaCompiler<'a> {
     references: BTreeMap<(SchemaDirection, String), SchemaId>,
     pending_constraints: BTreeMap<SchemaId, Vec<soundness::PendingConstraint>>,
     heuristic_policy: HeuristicPolicy,
+}
+
+/// One compiled operation parameter available while request relations are resolved.
+#[derive(Clone, Copy)]
+pub struct RelationParameter<'a> {
+    pub location: ParameterLocation,
+    pub name: &'a str,
+    pub schema: Option<&'a ValueSchemaPlan>,
 }
 
 impl<'a> BodySchemaCompiler<'a> {
@@ -69,13 +77,35 @@ impl<'a> BodySchemaCompiler<'a> {
             })
     }
 
+    /// Compile one response header into the shared response schema graph.
+    pub fn compile_response_header(
+        &mut self,
+        schema: &Value,
+        field: &str,
+    ) -> Result<ValueSchemaPlan> {
+        self.compile_schema(schema, field, SchemaDirection::Response)
+            .map(|schema| ValueSchemaPlan {
+                schema: SchemaRef(schema),
+            })
+    }
+
     /// Compile a response body together with any public request-to-response relation.
     pub fn compile_response_for(
         &mut self,
         body: &ResponseBodyContract,
         request: Option<&RequestBodyPlan>,
     ) -> Result<ResponseBodyPlan> {
-        let content = self.compile_response_content(&body.content, request)?;
+        self.compile_response_for_operation(body, request, &[])
+    }
+
+    /// Compile a response with the complete validated request surface for its operation.
+    pub fn compile_response_for_operation(
+        &mut self,
+        body: &ResponseBodyContract,
+        request: Option<&RequestBodyPlan>,
+        parameters: &[RelationParameter<'_>],
+    ) -> Result<ResponseBodyPlan> {
+        let content = self.compile_response_content(&body.content, request, parameters)?;
         Ok(ResponseBodyPlan { content })
     }
 
@@ -83,6 +113,7 @@ impl<'a> BodySchemaCompiler<'a> {
         &mut self,
         content: &BTreeMap<String, simile_spec::MediaTypeContract>,
         request: Option<&RequestBodyPlan>,
+        parameters: &[RelationParameter<'_>],
     ) -> Result<BTreeMap<String, MediaTypePlan>> {
         content
             .iter()
@@ -109,16 +140,15 @@ impl<'a> BodySchemaCompiler<'a> {
                                 field: format!("{field}.x-simile-from-request"),
                                 reason: "a request relation requires a response schema".to_owned(),
                             })?;
-                        let request_schema = request
-                            .and_then(|request| request.select(media_type))
-                            .and_then(|selected| selected.schema())
-                            .ok_or_else(|| CompileError::InvalidConstraint {
-                                field: format!("{field}.x-simile-from-request"),
-                                reason: "a request relation requires a compatible request media type with a schema".to_owned(),
-                            })?;
+                        let request_schemas = request
+                            .into_iter()
+                            .flat_map(|request| request.content.values())
+                            .filter_map(|media| media.schema)
+                            .collect();
                         crate::relation::Plan::compile(
                             definition,
-                            request_schema,
+                            request_schemas,
+                            parameters,
                             response_schema,
                             &self.structural_catalog()?,
                             &format!("{field}.x-simile-from-request"),

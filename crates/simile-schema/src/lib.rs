@@ -9,15 +9,62 @@ mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub use compile::BodySchemaCompiler;
+pub use compile::{BodySchemaCompiler, RelationParameter};
 pub use error::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simile_heuristics::Plan as HeuristicPlan;
+use simile_spec::ParameterLocation;
 pub use synthesize::SynthesisError;
 pub use validate::{ValidationIssue, ValidationRule};
 
 type SchemaId = u32;
+
+/// Validated values from every public location of one operation request.
+#[derive(Clone, Debug, Default)]
+pub struct RequestValues<'a> {
+    body: Option<&'a Value>,
+    parameters: BTreeMap<(ParameterLocation, String), &'a Value>,
+}
+
+impl<'a> RequestValues<'a> {
+    #[must_use]
+    pub const fn new(body: Option<&'a Value>) -> Self {
+        Self {
+            body,
+            parameters: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert_parameter(
+        &mut self,
+        location: ParameterLocation,
+        name: impl Into<String>,
+        value: &'a Value,
+    ) {
+        let name = if location == ParameterLocation::Header {
+            name.into().to_ascii_lowercase()
+        } else {
+            name.into()
+        };
+        self.parameters.insert((location, name), value);
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> Option<&'a Value> {
+        self.body
+    }
+
+    #[must_use]
+    pub fn parameter(&self, location: ParameterLocation, name: &str) -> Option<&'a Value> {
+        let name = if location == ParameterLocation::Header {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_owned()
+        };
+        self.parameters.get(&(location, name)).copied()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct SchemaRef(SchemaId);
@@ -355,10 +402,18 @@ impl<'a> BoundMediaType<'a> {
         )
     }
 
+    /// Produce a varying valid value while omitting unrelated optional properties.
+    pub fn synthesize_fuzz_minimal(&self, seed: u64) -> std::result::Result<Value, SynthesisError> {
+        self.selected.schema().map_or_else(
+            || Ok(Value::Object(serde_json::Map::new())),
+            |schema| self.schemas.synthesize_fuzz_minimal(schema, seed),
+        )
+    }
+
     /// Synthesize a valid value and project compatible fields from a request body.
     pub fn synthesize_from(&self, request: &Value) -> std::result::Result<Value, SynthesisError> {
         let baseline = self.synthesize()?;
-        self.project_from(baseline, request, true)
+        self.project_from(baseline, &RequestValues::new(Some(request)), true)
     }
 
     /// Produce a representative valid value and project compatible request fields into it.
@@ -367,7 +422,7 @@ impl<'a> BoundMediaType<'a> {
         request: &Value,
     ) -> std::result::Result<Value, SynthesisError> {
         let baseline = self.synthesize_representative()?;
-        self.project_from(baseline, request, true)
+        self.project_from(baseline, &RequestValues::new(Some(request)), true)
     }
 
     /// Produce a varying valid value and project compatible request fields into it.
@@ -376,14 +431,17 @@ impl<'a> BoundMediaType<'a> {
         request: &Value,
         seed: u64,
     ) -> std::result::Result<Value, SynthesisError> {
-        let baseline = if self.selected.relation().is_some() {
-            self.selected.schema().map_or_else(
-                || Ok(Value::Object(serde_json::Map::new())),
-                |schema| self.schemas.synthesize_fuzz_minimal(schema, seed),
-            )?
-        } else {
-            self.synthesize_fuzz(seed)?
-        };
+        let baseline = self.synthesize_fuzz_minimal(seed)?;
+        self.project_from(baseline, &RequestValues::new(Some(request)), true)
+    }
+
+    /// Produce a varying valid response from every validated request location.
+    pub fn synthesize_fuzz_from_request(
+        &self,
+        request: &RequestValues<'_>,
+        seed: u64,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize_fuzz_minimal(seed)?;
         self.project_from(baseline, request, true)
     }
 
@@ -393,20 +451,32 @@ impl<'a> BoundMediaType<'a> {
         body: &Value,
         request: &Value,
     ) -> std::result::Result<Value, SynthesisError> {
+        self.project_from(body.clone(), &RequestValues::new(Some(request)), false)
+    }
+
+    /// Apply explicit request relations to an exact body using every request location.
+    pub fn project_exact_from_request(
+        &self,
+        body: &Value,
+        request: &RequestValues<'_>,
+    ) -> std::result::Result<Value, SynthesisError> {
         self.project_from(body.clone(), request, false)
     }
 
     fn project_from(
         &self,
         baseline: Value,
-        request: &Value,
+        request: &RequestValues<'_>,
         project_same_paths: bool,
     ) -> std::result::Result<Value, SynthesisError> {
         let Some(schema) = self.selected.schema() else {
             return Ok(baseline);
         };
         let mut candidate = if project_same_paths {
-            self.schemas.project(schema, &baseline, request)
+            request.body().map_or_else(
+                || baseline.clone(),
+                |body| self.schemas.project(schema, &baseline, body),
+            )
         } else {
             baseline
         };

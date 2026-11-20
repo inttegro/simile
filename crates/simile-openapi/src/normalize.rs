@@ -4,8 +4,8 @@ use serde_json::{Map, Value};
 use simile_spec::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
     ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, SecurityRequirement, SecurityScheme, ServiceInfo,
-    WebhookContract, WebhookOrigin,
+    ResponseContract, ResponseHeaderContract, ResponseStatus, SecurityRequirement, SecurityScheme,
+    ServiceInfo, WebhookContract, WebhookOrigin,
 };
 
 use crate::{Error, Result};
@@ -282,6 +282,7 @@ fn operation(
                     status: status.clone(),
                 })?,
                 definition: definition.clone(),
+                headers: response_headers(document, definition, &response_field)?,
                 body: response_body(document, definition, &response_field)?,
             })
         })
@@ -558,6 +559,37 @@ fn response_body(
     let content_field = format!("{field}.content");
     let content = media_types(object(content, &content_field)?, &content_field)?;
     Ok((!content.is_empty()).then_some(ResponseBodyContract { content }))
+}
+
+fn response_headers(
+    document: &Value,
+    value: &Value,
+    field: &str,
+) -> Result<Vec<ResponseHeaderContract>> {
+    let resolved = resolve_local_reference(document, value, field, 0)?;
+    let response = object(resolved, field)?;
+    let Some(headers) = response.get("headers") else {
+        return Ok(Vec::new());
+    };
+    object(headers, &format!("{field}.headers"))?
+        .iter()
+        .map(|(name, definition)| {
+            let header_field = format!("{field}.headers.{name}");
+            let resolved = resolve_local_reference(document, definition, &header_field, 0)?;
+            let header = object(resolved, &header_field)?;
+            let schema = parameter_schema(header, &header_field)?;
+            let example = header.get("example").cloned().or_else(|| {
+                schema
+                    .as_ref()
+                    .and_then(|schema| schema.get("example").cloned())
+            });
+            Ok(ResponseHeaderContract {
+                name: name.clone(),
+                schema,
+                example,
+            })
+        })
+        .collect()
 }
 
 fn request_body(document: &Value, value: &Value, field: &str) -> Result<RequestBodyContract> {

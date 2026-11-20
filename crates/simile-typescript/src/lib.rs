@@ -316,6 +316,7 @@ fn response_contracts(
             Ok(ResponseContract {
                 status,
                 definition: json!({}),
+                headers: Vec::new(),
                 body,
             })
         })
