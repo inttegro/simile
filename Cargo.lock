@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "simile-artifact"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ciborium",
  "serde",
@@ -1439,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "simile-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1459,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "simile-compiler"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "simile-hcl",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "simile-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rand",
  "serde",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "simile-hcl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hcl-rs",
  "serde_json",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "simile-heuristics"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "simile-openapi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "semver",
  "serde_json",
@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "simile-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "form_urlencoded",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "simile-schema"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rand",
  "rand_regex",
@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "simile-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "form_urlencoded",
@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "simile-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rand",
  "serde",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "simile-smithy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "simile-spec",
@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "simile-spec"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1616,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "simile-stack"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "ciborium",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "simile-typescript"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",

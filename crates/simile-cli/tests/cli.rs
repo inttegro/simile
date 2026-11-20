@@ -65,7 +65,7 @@ fn prints_version_as_json() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"version\": \"0.2.0\",\n",
+            "  \"version\": \"0.3.0\",\n",
             "  \"architecture\": \"[..]\",\n",
             "  \"operatingSystem\": \"[..]\"\n",
             "}\n"
@@ -85,7 +85,7 @@ fn doctor_writes_machine_output_only_to_stdout() {
             "    {\n",
             "      \"name\": \"build\",\n",
             "      \"status\": \"pass\",\n",
-            "      \"detail\": \"simile 0.2.0\"\n",
+            "      \"detail\": \"simile 0.3.0\"\n",
             "    },\n",
             "    {\n",
             "      \"name\": \"current-directory\",\n",
@@ -752,7 +752,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .stdout_eq(concat!(
             "{\n",
             "  \"formatVersion\": 20,\n",
-            "  \"compilerVersion\": \"0.2.0\",\n",
+            "  \"compilerVersion\": \"0.3.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",

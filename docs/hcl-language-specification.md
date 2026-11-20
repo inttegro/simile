@@ -4,7 +4,7 @@ sidebarTitle: Spec
 description: The complete syntax and semantics of the Simile HCL language.
 ---
 
-This document defines the Simile HCL language implemented by Simile v0.2.0. It is the canonical
+This document defines the Simile HCL language implemented by Simile v0.3.0. It is the canonical
 reference for service configuration documents and behavior modules. Task-oriented pages explain
 when to use a feature; this specification defines what the feature means.
 

@@ -41,7 +41,7 @@ The bootstrap downloads the platform-specific release artifact, verifies its che
 `simile` under Cargo's binary directory. Set `SIMILE_VERSION` to install a specific release:
 
 ```bash
-SIMILE_VERSION=0.2.0 /bin/bash -c \
+SIMILE_VERSION=0.3.0 /bin/bash -c \
   "$(curl -fsSL https://raw.githubusercontent.com/inttegro/simile/HEAD/install.sh)"
 ```
 

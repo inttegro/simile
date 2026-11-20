@@ -4,6 +4,8 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-20
+
 - Add provider-authored principal contracts, principal-setup workflows, and durable named profiles,
   including interactive provisioning, private credential exports, dynamic request authentication,
   credential-scoped OAuth grants,
