@@ -21,7 +21,7 @@ Current checks include:
 - untyped or unsupported HTTP parameter styles;
 - inferred effects, so reviewers can distinguish convention from authorship;
 - backends that no action uses; and
-- protected operations with no matching local principal;
+- protected operations with no matching local profile;
 - contract mechanisms, such as mutual TLS, that the listener cannot exercise;
 - unsigned webhook delivery; and
 - public protocol failures without provider error mappings.

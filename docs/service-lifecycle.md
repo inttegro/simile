@@ -14,7 +14,8 @@ flowchart TD
   Run --> One[Compile in memory\nexecute once\nexit]
   Sources --> Register[simile register]
   Register --> Revision[Immutable registry revision]
-  Revision --> Start[simile start NAME]
+  Revision --> Setup[simile setup NAME]
+  Setup --> Start[simile start NAME]
   Start --> Server[Long-lived local HTTP server]
   Sources --> Update[simile update NAME]
   Update --> NewRevision[New immutable revision]
@@ -38,6 +39,20 @@ Registration performs the expensive and failure-prone work before installation:
 
 If the service already exists, registration fails unless `--force` is explicit. Routine refreshes
 should use `update` instead.
+
+## Setup
+
+```bash
+simile setup inttegro
+```
+
+When the registered configuration declares principal setup, this command collects provisioning
+values, runs its contract operation, and creates one durable profile of that principal. Issued credentials are stored
+in service state and exported to a private `.env` file without appearing in command output.
+
+Setup without `--profile` generates an unused human-readable name and creates another independent
+consumer identity. Passing an existing profile name updates its collected configuration while
+preserving its issued identity. See [Set up a service](/service-setup) for the authoring model.
 
 ## Start
 

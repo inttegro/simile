@@ -31,11 +31,19 @@
 							"smithy-contracts",
 							"typescript-contracts",
 							"service-configuration",
-							"authentication-emulation",
 							"describe-service",
 							"fidelity-audit",
 							"service-authoring-prompt",
 							"service-lifecycle"
+						]
+					},
+					{
+						"group": "Principals and profiles",
+						"pages": [
+							"service-profiles",
+							"principals",
+							"service-setup",
+							"authentication-emulation"
 						]
 					},
 					{

@@ -75,10 +75,10 @@ from HCL behavior. See [payload soundness](/payload-soundness).
 
 ### Credential
 
-A synthetic secret associated with one contract security scheme inside a
-[`principal`](/hcl-language-specification#principal). Simile compares an incoming request with the
-credential and omits its value from descriptions and audit output. Credentials in Simile exist for
-local and CI tests and must never reuse production secrets.
+A credential slot on a principal corresponds to one contract security scheme and carries any
+granted scopes. A profile fills the slot with a synthetic secret or HTTP Basic pair. Simile omits
+concrete values from descriptions and audit output. Local and CI profiles must never reuse
+production secrets.
 
 ## D
 
@@ -199,9 +199,22 @@ request body and its `equals` value must match exactly. Every predicate on an ou
 
 ### Principal
 
-A named local test identity declared in HCL. A principal contains one or more credentials, an
-active, revoked, or expired lifecycle state, and optional OAuth2/OpenID grants. Its credentials
-exercise the security schemes and requirements published by the contract.
+A named kind of service caller declared in HCL. A principal defines the credential slots and grants
+shared by all of its profiles. Its labels reference security schemes published by the contract.
+
+### Principal setup
+
+The provisioning workflow declared by a top-level `principal_setup` block. It collects caller
+configuration, runs one contract operation, issues identifiers or credentials, and creates or
+updates a named profile of the referenced principal. A service may declare one workflow for each
+principal kind it knows how to provision.
+
+### Profile
+
+One concrete instance of a principal. A durable setup-created profile groups collected inputs,
+issued identifiers and credentials, a webhook destination, and a webhook signing secret. HCL may
+also declare fixture profiles for deterministic authentication tests. Every active profile may
+authenticate concurrently; the current profile supplies a CLI default.
 
 ### Protocol error
 

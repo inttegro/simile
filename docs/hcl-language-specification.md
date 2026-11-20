@@ -70,8 +70,10 @@ local service configuration.
 | Block | Service config | Behavior module | Purpose |
 | --- | --- | --- | --- |
 | [`service`](#service) | exactly one | not allowed | Compose the listener, contract source, and imported modules. |
+| [`principal_setup`](#principal_setup) | once per principal | not allowed | Define how Simile provisions a principal profile. |
 | [`backend`](#backend) | optional | optional | Name an emulated backing system. |
-| [`principal`](#principal) | optional | optional | Declare a local test identity for contract authentication. |
+| [`principal`](#principal) | optional | optional | Declare a kind of contract-authenticated caller. |
+| [`profile`](#profile) | optional | optional | Declare a concrete fixture identity for one principal. |
 | [`async`](#async) | optional | optional | Declare planned follow-up work. |
 | [`behavior`](#behavior) | optional | optional | Refine one contract operation. |
 | [`error_set`](#error_set) | optional | optional | Define reusable named outcomes. |
@@ -114,7 +116,8 @@ expression that evaluates without external variables or functions and converts t
 
 ### Public descriptions
 
-Named semantic blocks accept an optional `description` attribute: `service`, `backend`, `principal`, `async`,
+Named semantic blocks accept an optional `description` attribute: `service`, `principal_setup`,
+principal-setup `collect` and `issue`, `backend`, `principal`, `profile`, `async`,
 `effect`, `behavior`, `outcome`, `error_set`, `protocol_error`, `scenario`, custom `fault`,
 `fault_profile`, and provider-authored `webhook`. Its value must be a non-empty string. Descriptions are presentation metadata
 retained in the compiled artifact and displayed by `simile describe service`; they never influence
@@ -208,6 +211,101 @@ typescript { path = "./typescript/commerce.d.ts" }
 service configuration loaded from a URL has no local base directory, so it must use a contract URL
 and inline behavior declarations. Split TypeScript packages require a local path; a TypeScript URL
 must identify a self-contained declaration document.
+
+## `principal_setup`
+
+```hcl
+principal_setup "application" {
+  description = "Create one local application identity."
+  operation   = "createApplication"
+
+  collect "name" {
+    description = "A name that identifies the integration."
+    required    = true
+    type        = "string"
+    to          = request.name
+  }
+
+  collect "webhook_url" {
+    type = "url"
+    to   = request.webhook_url
+    bind = webhook.target
+  }
+
+  issue "app_id" {
+    from = response.app.id
+  }
+
+  issue "access_token" {
+    from       = response.access_token
+    credential = "merchantOAuth"
+    sensitive  = true
+  }
+
+  issue "webhook_secret" {
+    generate  = "token"
+    prefix    = "whsec_simile_"
+    bind      = webhook.signing_secret
+    sensitive = true
+  }
+}
+```
+
+The block may repeat in a service configuration and is rejected in behavior modules. Its label
+names the declared `principal` it provisions. Each principal may have at most one
+`principal_setup` block. At
+least one `issue` block is required.
+
+| Member | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | declared principal name | — | Principal provisioned by this workflow. |
+| `description` | no | non-empty string | — | Public explanation shown by `simile describe service`. |
+| `operation` | yes | non-empty string | — | Exact operation ID executed when creating a profile. |
+| `collect` | no | repeated block | — | Caller-supplied setup input. Names must be unique. |
+| `issue` | yes | repeated block | — | Value retained and made available to the caller. Names must be unique. |
+
+The referenced operation must exist in the selected contract. Setup synthesizes its smallest valid
+request, applies collected values, and selects a declared successful response when one is
+available. The operation's synchronous effects and profile creation commit in one service-state
+checkpoint.
+
+### `collect`
+
+| Member | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | non-empty string | — | Input name used by prompts and `--set NAME=VALUE`. |
+| `description` | no | non-empty string | — | Public help text shown during interactive setup. |
+| `required` | no | boolean | `false` | Whether setup may proceed without the value. |
+| `type` | no | string enum | `"string"` | `string`, `url`, `boolean`, `integer`, or `json`. |
+| `to` | no | `request.FIELD...` traversal | `request.<label>` | Destination in the operation request body. |
+| `bind` | no | supported binding | — | Retain the value as runtime profile configuration. |
+
+Supported collect bindings are `webhook.target` and `webhook.signing_secret`. A URL value must
+begin with `http://` or `https://`. Traversal segments are compiled to JSON Pointer; quoted index
+syntax may address property names that are not HCL identifiers.
+
+### `issue`
+
+| Member | Required | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | non-empty string | — | Issued-value name and environment-variable source. |
+| `description` | no | non-empty string | — | Public explanation shown by service description. |
+| `from` | exactly one source | `response.FIELD...` traversal | — | Extract the value from the setup-operation response. |
+| `generate` | exactly one source | `"token"` | — | Generate a high-entropy local value. |
+| `prefix` | no | string | `""` | Prefix for a generated token; invalid with `from`. |
+| `credential` | no | principal credential name | — | Fill this credential slot on the resulting profile. |
+| `sensitive` | no | boolean | `false` | Mark the value as secret presentation data. |
+| `bind` | no | supported binding | — | Retain the value as runtime profile configuration. |
+
+`from` and `generate` are mutually exclusive. A `credential` must name a slot declared by the
+referenced principal, whose label in turn names a supported contract security scheme. API key,
+HTTP bearer, OAuth 2.0, and OpenID Connect credentials use one issued string;
+HTTP Basic credentials require a username/password pair and therefore cannot currently be issued
+by setup. Credential values must be strings.
+
+Supported issue bindings are `webhook.target` and `webhook.signing_secret`. Sensitive values are
+stored for runtime use and written to the profile's private environment file; describe, profile,
+and setup reports omit their contents.
 
 ## `webhook`
 
@@ -327,10 +425,37 @@ provider-neutral. Names such as `postgres`, `redis`, or `s3` are rejected.
 ### `principal`
 
 ```hcl
-principal "checkout_test" {
-  description = "A checkout client with permission to create orders."
-  status      = "active"
-  grants      = ["orders:write"]
+principal "application" {
+  description = "An application that can create orders."
+
+  credential "merchant_key" {
+    grants = ["orders:write"]
+  }
+
+  credential "operator_login" {}
+}
+```
+
+A principal describes one kind of service caller. Each credential label names a security scheme
+from the selected contract. `grants` belongs to the credential slot because an OpenAPI operation
+requests scopes through a particular scheme.
+
+| Member | Required | Type or multiplicity | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| label | yes | non-empty string | — | Stable caller-kind name shown by `simile describe service`. |
+| `description` | no | non-empty string | — | Public purpose of this caller kind. |
+| `credential` | no | repeated block | — | Credential slot named after a contract security scheme. |
+
+Each principal `credential` accepts an optional `grants` array. Credential values live on profiles.
+The compiler verifies that each credential label resolves to a contract security scheme. During
+authentication, Simile compares an operation's required scopes with the grants on that slot.
+
+### `profile`
+
+```hcl
+profile "checkout_test" {
+  description = "A checkout fixture with active credentials."
+  principal   = principal.application
 
   credential "merchant_key" {
     value = "sk_simile_checkout"
@@ -343,28 +468,28 @@ principal "checkout_test" {
 }
 ```
 
-A principal is a local test identity. Each credential label names a security scheme from the
-selected contract. One principal may satisfy several schemes, which lets a test exercise
-alternative authentication methods without duplicating identity metadata.
+A profile is one concrete instance of a principal. Profiles declared in HCL are fixture identities
+compiled into the artifact. `simile setup` creates durable profiles through a `principal_setup`
+workflow.
 
 | Member | Required | Type or multiplicity | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| label | yes | non-empty string | — | Stable identity name shown by `simile describe service`. |
-| `description` | no | non-empty string | — | Public purpose of the test identity. |
-| `status` | no | `"active"`, `"revoked"`, or `"expired"` | `"active"` | Authentication state returned for every credential on the identity. |
-| `grants` | no | array of strings | `[]` | OAuth2 and OpenID scopes granted to the identity. |
-| `credential` | yes | one or more blocks | — | Test credential for a contract security scheme. |
+| label | yes | non-empty string | — | Profile name shown by description and audit tools. |
+| `description` | no | non-empty string | — | Public purpose of the fixture. |
+| `principal` | yes | `principal.NAME` reference | — | Principal contract instantiated by the profile. |
+| `status` | no | `"active"`, `"revoked"`, or `"expired"` | `"active"` | Authentication state for this profile. |
+| `credential` | no | repeated block | — | Concrete value for a slot declared by the principal. |
 
-A `credential` accepts either `value`, or the pair `username` and `password`. API-key, bearer,
-OAuth2, and OpenID schemes use `value`; HTTP Basic uses the username/password pair. The compiler
-checks that each shape agrees with the referenced contract scheme. Credential values are retained
-in the local artifact for matching and are deliberately omitted from descriptions and audit
-output. Use synthetic credentials created solely for emulation.
+A profile `credential` accepts either `value`, or the pair `username` and `password`. API-key,
+bearer, OAuth2, and OpenID schemes use `value`; HTTP Basic uses the username/password pair. The
+compiler checks the credential form against the referenced security scheme. Use synthetic values
+created solely for emulation.
 
 OpenAPI security requirements preserve their native composition. Schemes inside one requirement
 are all required; separate requirements are alternatives. An operation with an empty security
-requirement remains public. Simile returns the operation's declared authentication or permission
-response when a credential is absent, invalid, revoked, expired, or lacks a required grant.
+requirement remains public. Simile authenticates an active profile, then evaluates grants through
+its principal contract. Missing, invalid, revoked, expired, or insufficient credentials select the
+operation's declared authentication or permission response.
 
 ### `async`
 

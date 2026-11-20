@@ -78,7 +78,7 @@ emulator.
 
 ### Request surface
 
-OpenAPI security requirements are enforced with local HCL test principals. Mutual TLS still needs
+OpenAPI security requirements are enforced with local HCL principal contracts and profiles. Mutual TLS still needs
 a TLS-aware listener capable of exposing verified client identity to the runtime. Unsupported
 parameter styles remain audit errors, and media types without a codec fail explicitly.
 

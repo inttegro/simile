@@ -10,7 +10,8 @@ runs. It is the human-facing companion to the technical `simile inspect` command
 $ simile describe service inttegro
 ```
 
-The default view shows the service description, listener, contract version, local principals,
+The default view shows the service description, listener, contract version, principal contracts,
+fixture profiles, principal-setup workflows,
 webhook contracts and effective delivery policy, scenario catalogue, faults and profiles,
 backends, and asynchronous operations. Credential values are omitted from the output. Catalog
 faults carry built-in descriptions automatically.
@@ -62,11 +63,12 @@ include credentials, private thresholds, internal system names, or production de
 The following named blocks accept `description`:
 
 - `service`
+- `principal_setup` and its `collect` and `issue` blocks
 - `behavior` and `outcome`
 - `error_set` and its outcomes
 - `protocol_error`
 - `scenario`
-- `backend`, `principal`, and `async`
+- `backend`, `principal`, `profile`, and `async`
 - `effect` and provider-authored `webhook`
 - custom `fault` and `fault_profile`
 

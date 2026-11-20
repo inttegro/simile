@@ -41,7 +41,7 @@ data, and text media types. See [Request encoding](/request-encoding) for the co
 ## Authentication boundary
 
 Route matching resolves the operation before authentication runs. The adapter then evaluates the
-operation's OpenAPI security alternatives against local HCL test principals. Accepted identities
+operation's OpenAPI security alternatives against local HCL principal contracts and profiles. Accepted identities
 continue to parameter and body validation; missing credentials return `401`, while known active
 identities without required grants return `403`.
 

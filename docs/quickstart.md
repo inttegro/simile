@@ -234,6 +234,19 @@ simile start orders
 Registration compiles the source and atomically installs a validated `.similec` artifact under
 `~/.simile`. Starting by name loads that artifact; it does not reopen the contract source.
 
+A service that declares `principal_setup` adds one command between registration and start:
+
+```bash
+simile register inttegro --config ./inttegro.simile.hcl
+simile setup inttegro
+simile start inttegro
+```
+
+The profile keeps that application's credentials and webhook configuration together while its
+principal owns the shared credential grants.
+See [Service profiles](/service-profiles) for the model and [Setup](/service-setup) for the complete
+workflow.
+
 Keep the server running and use another terminal for the request:
 
 ```bash

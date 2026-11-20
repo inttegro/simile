@@ -4,6 +4,11 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Add provider-authored principal contracts, principal-setup workflows, and durable named profiles,
+  including interactive provisioning, private credential exports, dynamic request authentication,
+  credential-scoped OAuth grants,
+  profile-scoped webhook destinations and signing, profile inspection, CLI selection, and
+  collision-safe human-readable profile names when `--profile` is omitted.
 - Rename the public HCL `resource` block to `backend`, including authoring diagnostics,
   descriptions, command output, and documentation. Compiled Stack resource addresses remain an
   internal runtime detail.
@@ -29,7 +34,7 @@ All notable changes to Simile will be documented in this file.
   probabilistic reordering, hard dependency protection, and reproducible runtime decisions.
 - Import OpenAPI callbacks and OpenAPI 3.1/3.2 top-level webhooks, allow provider-authored fallback
   contracts, and compile compact multi-webhook effect emissions into schema-checked occurrences.
-- Advance the compiled artifact format to version 17. Existing artifacts must be recompiled.
+- Advance the compiled artifact format to version 20. Existing artifacts must be recompiled.
 
 ## 0.2.0 - 2026-11-18
 

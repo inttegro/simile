@@ -44,6 +44,26 @@ webhooks {
     secret = "whsec_simile_local"
   }
 }
+
+principal "application" {
+  credential "secretKey" {}
+}
+
+principal_setup "application" {
+  description = "Create an application identity for this integration."
+  operation   = "createApplication"
+
+  collect "name" {
+    required = true
+    to       = request.name
+  }
+
+  issue "secret_key" {
+    from       = response.app.secret_key
+    credential = "secretKey"
+    sensitive  = true
+  }
+}
 ```
 
 The optional `webhooks` block controls service-wide delivery infrastructure. Its default models
@@ -60,6 +80,11 @@ $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
 $ simile update inttegro --config ./replacement.simile.hcl
 $ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile setup inttegro
+$ simile setup inttegro --profile checkout
+$ simile profiles inttegro
+$ simile profile inttegro checkout
+$ simile use inttegro --profile checkout
 $ simile remove inttegro --confirm inttegro
 $ simile start inttegro
 $ simile start inttegro --config ./inttegro.simile.hcl
@@ -106,6 +131,9 @@ registration is an immutable runtime snapshot:
 │   └── stack/
 │       └── KIND/
 │           └── RESOURCE_FINGERPRINT.redb
+├── profiles/
+│   └── inttegro/
+│       └── checkout.env
 ├── locks/
 └── tmp/
 ```
@@ -125,6 +153,19 @@ revision install. Stack component processes persist automatically under the root
 directory. The service supervisor checkpoints its complete Stack under `state/services/`; that
 state remains stable across immutable registry revisions and is identity-checked against the
 compiled artifact when the service starts.
+
+## Consumer setup
+
+An optional top-level `principal_setup` block describes how Simile provisions one declared
+`principal`. It names a contract operation, maps collected values into that operation's request,
+and declares which response or generated values Simile issues. Each run creates a durable named
+profile of that principal.
+
+Setup stays in the service configuration because it is a service-wide entry point. Imported
+behavior modules cannot declare it. The compiler verifies its operation and security-scheme
+references. Secrets are withheld from terminal and JSON output and written to a private profile
+environment file. See [Set up a service](/service-setup) and
+[Service profiles](/service-profiles).
 
 ## Listener
 
@@ -169,7 +210,7 @@ remote configuration are rejected rather than resolved against the process worki
 
 `behaviors` is an optional list of HCL module paths. Relative paths resolve from the configuration
 directory. The service document may also contain `backend`, `async`, `effect`, `behavior`,
-`scenario`, `faults`, `fault`, `fault_profile`, `principal`, `webhook`, and `webhooks` blocks after the
+`scenario`, `faults`, `fault`, `fault_profile`, `principal`, `profile`, `webhook`, and `webhooks` blocks after the
 `service` block:
 
 ```hcl
@@ -193,13 +234,16 @@ webhook "order.created" {
   description = "Sent after an order has committed."
 }
 
-principal "merchant_app" {
+principal "merchant_application" {
   description = "A local merchant integration with order write access."
-  grants      = ["orders:write"]
-
   credential "merchantOAuth" {
-    value = "sim_test_merchant"
+    grants = ["orders:write"]
   }
+}
+
+profile "merchant_app" {
+  principal = principal.merchant_application
+  credential "merchantOAuth" { value = "sim_test_merchant" }
 }
 
 behavior "createOrder" {
@@ -240,7 +284,7 @@ protocol-neutral runtime. It currently provides:
 - `404 Not Found` and `405 Method Not Allowed` responses at the transport boundary;
 - an 8 MiB request-body limit;
 - JSON, form URL-encoded, multipart form-data, and text request-body decoding through the runtime;
-- OpenAPI security enforcement through local test principals and declared grants;
+- OpenAPI security enforcement through principal contracts, profiles, and declared grants;
 - generated contract response status, media type, and body;
 - named contract and HCL outcomes, including an optional process-wide `--scenario NAME`;
 - deterministic scenario fault injection and an optional bounded stochastic

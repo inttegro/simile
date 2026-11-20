@@ -109,6 +109,11 @@ $ simile register inttegro --config inttegro.simile.hcl
 $ simile register inttegro --config https://example.com/inttegro.simile.hcl
 $ simile update inttegro
 $ simile update inttegro --config https://example.com/inttegro.simile.hcl
+$ simile setup inttegro
+$ simile setup inttegro --profile checkout
+$ simile profiles inttegro
+$ simile profile inttegro checkout
+$ simile use inttegro --profile checkout
 $ simile remove inttegro --confirm inttegro
 $ simile describe service inttegro
 $ simile describe service inttegro --verbose
@@ -182,6 +187,13 @@ runtime snapshot under `$HOME/.simile`. The positional name must match the servi
 registered artifact is loaded by `simile start NAME` without reopening local sources or refetching
 a remote contract. Pass `--config` to `start` for an ad-hoc, unregistered run. `--port` overrides
 either configuration for that invocation; the listener host remains configuration-owned.
+
+When a service configuration declares one `principal_setup`, `simile setup NAME` runs its
+provisioning operation and creates a durable profile of that principal. Simile gives the profile an
+unused lowercase `adjective-(noun|adjective)` name; pass `--profile PROFILE` when a stable name
+matters. Issued credentials are written to a private environment file without appearing in command
+output. Several active profiles can authenticate concurrently; `simile use NAME --profile PROFILE`
+selects only the CLI default.
 
 `simile update NAME` recompiles the registered HCL snapshot after reloading its contract and
 behavior sources. Pass `--config URL_OR_FILE` to replace the HCL configuration source at the same
