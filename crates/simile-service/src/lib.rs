@@ -6,6 +6,10 @@
 //! then applies synchronous consequences transactionally, checkpoints the
 //! complete Stack, and exposes asynchronous work for post-response dispatch.
 
+mod state;
+mod work;
+
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,13 +18,26 @@ use simile_artifact::Artifact;
 use simile_runtime::{
     ExecutionOptions, OperationCall, OperationExecution, OperationValueCall, Runtime,
 };
+use simile_spec::ResourceKind;
 use simile_stack::{
-    CommandMetadata, LogicalTime, MemoryStateStore, RedbStateStore, ResourceAddress, ResourceError,
-    Stack, StackCommand, StackSnapshot, StateIdentity, StateStore, StateStoreError,
+    CommandMetadata, DbCommand, JournalOutcome, LogicalTime, MemoryStateStore, QueueCommand,
+    QueueResult, RedbStateStore, ResourceAddress, ResourceError, Stack, StackCommand, StackResult,
+    StackSnapshot, StateIdentity, StateStore, StateStoreError, WriteCondition,
 };
 use thiserror::Error;
 
+use work::{DEAD_LETTERS, DEFAULT_VISIBILITY_TIMEOUT_MS, OUTBOX, WORK_STATE};
+pub use work::{DeadLetter, DeferredCommand, DeferredWork, WorkLease};
+
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Whether every hard prerequisite for one deferred item has completed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DependencyReadiness {
+    Ready,
+    Waiting,
+    Blocked,
+}
 
 /// One running service: public operations, declared backends, and durable state.
 pub struct Service {
@@ -48,14 +65,20 @@ impl Service {
     /// A durable caller normally supplies `RedbStateStore`; tests and one-shot
     /// tools can use `MemoryStateStore` without changing execution semantics.
     pub fn with_store(artifact: Artifact, store: Arc<dyn StateStore>) -> Result<Self> {
-        let resources = artifact
+        let mut resources = artifact
             .resources()
             .map(|resource| ResourceAddress::new(resource.kind(), resource.name()))
             .collect::<simile_stack::Result<Vec<_>>>()?;
+        resources.push(ResourceAddress::new(ResourceKind::Queue, OUTBOX)?);
+        resources.push(ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?);
+        resources.push(ResourceAddress::new(ResourceKind::Db, WORK_STATE)?);
         let initial = Stack::realtime(now()).resources(resources)?.build()?;
         let stack = match store.load()? {
             Some(snapshot) => {
-                let restored = Stack::from_snapshot(snapshot);
+                let mut restored = Stack::from_snapshot(snapshot);
+                restored.ensure_resource(ResourceAddress::new(ResourceKind::Queue, OUTBOX)?);
+                restored.ensure_resource(ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?);
+                restored.ensure_resource(ResourceAddress::new(ResourceKind::Db, WORK_STATE)?);
                 if restored.resources() != initial.resources() {
                     return Err(Error::ResourceSetChanged);
                 }
@@ -82,8 +105,31 @@ impl Service {
         call: OperationCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let execution = self.runtime.execute_with_options(call, options)?;
-        self.apply_synchronous(&execution)?;
+        let state = state::resolve(self, call.operation, options.parameters)?;
+        let response_body = match &state {
+            state::StateResolution::Found(value) => Some(value),
+            state::StateResolution::None | state::StateResolution::Missing => options.response_body,
+        };
+        let response_status = match state {
+            state::StateResolution::Missing
+                if self
+                    .artifact()
+                    .operation(call.operation)
+                    .is_some_and(state::declares_not_found) =>
+            {
+                Some(404)
+            }
+            _ => options.response_status,
+        };
+        let execution = self.runtime.execute_with_options(
+            call,
+            ExecutionOptions {
+                response_body,
+                response_status,
+                ..options
+            },
+        )?;
+        self.commit(&execution, options.parameters)?;
         Ok(execution)
     }
 
@@ -96,21 +142,234 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let execution = self.runtime.execute_value_with_options(call, options)?;
-        self.apply_synchronous(&execution)?;
+        let state = state::resolve(self, call.operation, options.parameters)?;
+        let response_body = match &state {
+            state::StateResolution::Found(value) => Some(value),
+            state::StateResolution::None | state::StateResolution::Missing => options.response_body,
+        };
+        let response_status = match state {
+            state::StateResolution::Missing
+                if self
+                    .artifact()
+                    .operation(call.operation)
+                    .is_some_and(state::declares_not_found) =>
+            {
+                Some(404)
+            }
+            _ => options.response_status,
+        };
+        let execution = self.runtime.execute_value_with_options(
+            call,
+            ExecutionOptions {
+                response_body,
+                response_status,
+                ..options
+            },
+        )?;
+        self.commit(&execution, options.parameters)?;
         Ok(execution)
     }
 
-    /// Dispatch work that must not contribute to immediate response latency.
-    ///
-    /// Transport adapters schedule this outside the response-critical path.
-    /// Every named async unit checkpoints atomically, so a failure cannot leave
-    /// half of that unit visible in durable state.
-    pub fn dispatch_asynchronous(&self, execution: &OperationExecution) -> Result<()> {
-        for operation in execution.effects().asynchronous() {
-            self.transition(execution.operation(), operation.actions())?;
+    /// Lease available deferred work. Unacknowledged items become visible again
+    /// after `visibility_timeout_milliseconds`.
+    pub fn lease_work(
+        &self,
+        limit: usize,
+        visibility_timeout_milliseconds: Option<u64>,
+    ) -> Result<Vec<WorkLease>> {
+        let receipt = self.execute_stack(
+            ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+            CommandMetadata::default(),
+            StackCommand::Queue(QueueCommand::Receive {
+                max_messages: limit,
+                visibility_timeout_ms: visibility_timeout_milliseconds
+                    .unwrap_or(DEFAULT_VISIBILITY_TIMEOUT_MS),
+            }),
+        )?;
+        match receipt.result {
+            StackResult::Queue(result) => match *result {
+                QueueResult::Messages(messages) => {
+                    messages.into_iter().map(work::decode_lease).collect()
+                }
+                _ => Err(Error::InvalidWork(
+                    "outbox receive returned an unexpected result".to_owned(),
+                )),
+            },
+            _ => Err(Error::InvalidWork(
+                "outbox receive returned a non-queue result".to_owned(),
+            )),
         }
-        Ok(())
+    }
+
+    /// Execute the typed commands carried by one asynchronous work item.
+    pub fn execute_work(&self, lease: &WorkLease) -> Result<()> {
+        let DeferredWork::Async {
+            operation,
+            commands,
+            ..
+        } = lease.work()
+        else {
+            return Ok(());
+        };
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        for command in commands {
+            let resource = command.resource.parse::<ResourceAddress>()?;
+            if let Err(error) = stack.execute(
+                resource,
+                CommandMetadata {
+                    operation_id: Some(operation.clone()),
+                    causation_id: Some(lease.id().to_owned()),
+                    ..CommandMetadata::default()
+                },
+                command.command.clone(),
+            ) {
+                *stack = Stack::from_snapshot(before);
+                return Err(error.into());
+            }
+        }
+        self.checkpoint(&mut stack, before)
+    }
+
+    /// Remove successfully completed work from the durable outbox.
+    pub fn acknowledge_work(&self, lease: &WorkLease) -> Result<()> {
+        self.finish_lease(lease, LeaseDisposition::Acknowledge)
+    }
+
+    /// Release failed work with a retry delay, or move it to dead letters once
+    /// its declared attempt budget is exhausted.
+    pub fn retry_work(&self, lease: &WorkLease, delay_milliseconds: u64) -> Result<bool> {
+        let exhausted = lease.attempt() >= lease.work().max_attempts();
+        self.finish_lease(
+            lease,
+            if exhausted {
+                LeaseDisposition::DeadLetter
+            } else {
+                LeaseDisposition::Retry(delay_milliseconds)
+            },
+        )?;
+        Ok(!exhausted)
+    }
+
+    /// Return leased work to the outbox without consuming a delivery attempt.
+    ///
+    /// The dispatcher uses this when a hard causal prerequisite is still in
+    /// flight. Queue receive counts remain transport diagnostics; the retry
+    /// budget tracks actual execution failures inside the work envelope.
+    pub fn defer_work(&self, lease: &WorkLease, delay_milliseconds: u64) -> Result<()> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        if let Err(error) = stack.execute(
+            ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+            CommandMetadata::default(),
+            StackCommand::Queue(QueueCommand::Nack {
+                receipt_handle: lease.receipt_handle.clone(),
+                delay_ms: delay_milliseconds,
+            }),
+        ) {
+            *stack = Stack::from_snapshot(before);
+            return Err(error.into());
+        }
+        self.checkpoint(&mut stack, before)
+    }
+
+    /// Move one item directly to dead letters because a hard prerequisite can
+    /// no longer complete.
+    pub fn dead_letter_work(&self, lease: &WorkLease) -> Result<()> {
+        self.finish_lease(lease, LeaseDisposition::DeadLetter)
+    }
+
+    /// Inspect durable causal markers for a webhook's hard prerequisites.
+    pub fn dependency_readiness(&self, lease: &WorkLease) -> Result<DependencyReadiness> {
+        let DeferredWork::Webhook {
+            correlation_id,
+            after,
+            ..
+        } = lease.work()
+        else {
+            return Ok(DependencyReadiness::Ready);
+        };
+        if after.is_empty() {
+            return Ok(DependencyReadiness::Ready);
+        }
+        let stack = lock(&self.stack)?;
+        let resource = ResourceAddress::new(ResourceKind::Db, WORK_STATE)?;
+        let mut readiness = DependencyReadiness::Ready;
+        for dependency in after {
+            let outcome = stack.journal().entries().iter().rev().find(|entry| {
+                entry.resource == resource
+                    && entry.correlation_id.as_deref() == Some(correlation_id.as_str())
+                    && entry.causation_id.as_deref() == Some(dependency.as_str())
+                    && matches!(entry.outcome, JournalOutcome::Succeeded)
+            });
+            match outcome.map(|entry| entry.action.as_str()) {
+                Some("put") => {}
+                Some("delete") => return Ok(DependencyReadiness::Blocked),
+                _ => readiness = DependencyReadiness::Waiting,
+            }
+        }
+        Ok(readiness)
+    }
+
+    /// Lease exhausted work for operator inspection. Items remain available
+    /// after the visibility timeout unless acknowledged through `redeliver`.
+    pub fn dead_letters(&self, limit: usize) -> Result<Vec<DeadLetter>> {
+        let receipt = self.execute_stack(
+            ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?,
+            CommandMetadata::default(),
+            StackCommand::Queue(QueueCommand::Receive {
+                max_messages: limit,
+                visibility_timeout_ms: DEFAULT_VISIBILITY_TIMEOUT_MS,
+            }),
+        )?;
+        match receipt.result {
+            StackResult::Queue(result) => match *result {
+                QueueResult::Messages(messages) => {
+                    messages.into_iter().map(work::decode_dead_letter).collect()
+                }
+                _ => Err(Error::InvalidWork(
+                    "dead-letter receive returned an unexpected result".to_owned(),
+                )),
+            },
+            _ => Err(Error::InvalidWork(
+                "dead-letter receive returned a non-queue result".to_owned(),
+            )),
+        }
+    }
+
+    /// Move one exhausted item back to the durable outbox with a fresh retry
+    /// budget, then acknowledge its dead-letter record atomically.
+    pub fn redeliver(&self, dead_letter: &DeadLetter) -> Result<()> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let result = (|| {
+            stack.execute(
+                ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+                CommandMetadata {
+                    causation_id: Some(dead_letter.id().to_owned()),
+                    operation_id: Some(dead_letter.work().operation().to_owned()),
+                    ..CommandMetadata::default()
+                },
+                StackCommand::Queue(QueueCommand::Publish {
+                    body: work::encode(&dead_letter.work().with_fresh_retry_budget())?,
+                    attributes: work::attributes(dead_letter.work()),
+                    delay_ms: 0,
+                }),
+            )?;
+            stack.execute(
+                ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?,
+                CommandMetadata::default(),
+                StackCommand::Queue(QueueCommand::Ack {
+                    receipt_handle: dead_letter.lease.receipt_handle.clone(),
+                }),
+            )?;
+            Ok::<(), Error>(())
+        })();
+        if let Err(error) = result {
+            *stack = Stack::from_snapshot(before);
+            return Err(error);
+        }
+        self.checkpoint(&mut stack, before)
     }
 
     #[must_use]
@@ -128,31 +387,157 @@ impl Service {
         Ok(lock(&self.stack)?.snapshot()?)
     }
 
-    fn apply_synchronous(&self, execution: &OperationExecution) -> Result<()> {
-        if execution.effects().synchronous().is_empty() {
-            return Ok(());
-        }
-        self.transition(execution.operation(), execution.effects().synchronous())
-    }
-
-    fn transition(&self, operation: &str, actions: &[simile_runtime::PlannedAction]) -> Result<()> {
+    fn commit(
+        &self,
+        execution: &OperationExecution,
+        parameters: Option<&simile_runtime::ValidatedParameters>,
+    ) -> Result<()> {
         let mut stack = lock(&self.stack)?;
         let before = stack.snapshot()?;
-        for action in actions {
-            let resource = action.resource().as_str().parse::<ResourceAddress>()?;
-            let command = StackCommand::from_effect(action.kind(), action.arguments())?;
-            if let Err(error) = stack.execute(
-                resource,
-                CommandMetadata {
-                    operation_id: Some(operation.to_owned()),
-                    ..CommandMetadata::default()
-                },
-                command,
-            ) {
-                *stack = Stack::from_snapshot(before.clone());
+        let result = (|| {
+            for action in execution.effects().synchronous() {
+                let resource = action.resource().as_str().parse::<ResourceAddress>()?;
+                let command = StackCommand::from_effect(action.kind(), action.arguments())?;
+                stack.execute(
+                    resource,
+                    CommandMetadata {
+                        operation_id: Some(execution.operation().to_owned()),
+                        ..CommandMetadata::default()
+                    },
+                    command,
+                )?;
+            }
+            let correlation_id = format!(
+                "work-{}",
+                stack
+                    .journal()
+                    .entries()
+                    .last()
+                    .map_or(1, |entry| entry.sequence.saturating_add(1))
+            );
+            for envelope in work::planned(execution, &correlation_id)? {
+                let command = QueueCommand::Publish {
+                    body: work::encode(&envelope.work)?,
+                    attributes: work::attributes(&envelope.work),
+                    delay_ms: envelope.delay_milliseconds,
+                };
+                stack.execute(
+                    ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+                    CommandMetadata {
+                        operation_id: Some(execution.operation().to_owned()),
+                        correlation_id: Some(correlation_id.clone()),
+                        ..CommandMetadata::default()
+                    },
+                    StackCommand::Queue(command),
+                )?;
+            }
+            if let Some((resource, command)) =
+                state::delete_command(self.artifact(), execution.operation(), parameters)
+            {
+                stack.execute(
+                    resource,
+                    CommandMetadata {
+                        operation_id: Some(execution.operation().to_owned()),
+                        ..CommandMetadata::default()
+                    },
+                    command,
+                )?;
+            }
+            Ok::<(), Error>(())
+        })();
+        if let Err(error) = result {
+            *stack = Stack::from_snapshot(before);
+            return Err(error);
+        }
+        self.checkpoint(&mut stack, before)
+    }
+
+    fn execute_stack(
+        &self,
+        resource: ResourceAddress,
+        metadata: CommandMetadata,
+        command: StackCommand,
+    ) -> Result<simile_stack::CommandReceipt> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let receipt = match stack.execute(resource, metadata, command) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                *stack = Stack::from_snapshot(before);
                 return Err(error.into());
             }
+        };
+        self.checkpoint(&mut stack, before)?;
+        Ok(receipt)
+    }
+
+    pub(crate) fn read_stack(
+        &self,
+        resource: ResourceAddress,
+        command: StackCommand,
+    ) -> Result<simile_stack::CommandReceipt> {
+        self.execute_stack(resource, CommandMetadata::default(), command)
+    }
+
+    fn finish_lease(&self, lease: &WorkLease, disposition: LeaseDisposition) -> Result<()> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let result = (|| {
+            if matches!(disposition, LeaseDisposition::Acknowledge) {
+                record_webhook_outcome(&mut stack, lease, true)?;
+            }
+            if matches!(disposition, LeaseDisposition::DeadLetter) {
+                stack.execute(
+                    ResourceAddress::new(ResourceKind::Queue, DEAD_LETTERS)?,
+                    CommandMetadata {
+                        causation_id: Some(lease.id().to_owned()),
+                        operation_id: Some(lease.work().operation().to_owned()),
+                        ..CommandMetadata::default()
+                    },
+                    StackCommand::Queue(QueueCommand::Publish {
+                        body: work::encode(lease.work())?,
+                        attributes: BTreeMap::from([
+                            ("attempts".to_owned(), lease.attempt().to_string()),
+                            ("name".to_owned(), lease.work().name().to_owned()),
+                        ]),
+                        delay_ms: 0,
+                    }),
+                )?;
+                record_webhook_outcome(&mut stack, lease, false)?;
+            }
+            if let LeaseDisposition::Retry(delay_ms) = disposition {
+                let failed = lease.work().after_failure();
+                stack.execute(
+                    ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+                    CommandMetadata {
+                        causation_id: Some(lease.id().to_owned()),
+                        operation_id: Some(lease.work().operation().to_owned()),
+                        ..CommandMetadata::default()
+                    },
+                    StackCommand::Queue(QueueCommand::Publish {
+                        body: work::encode(&failed)?,
+                        attributes: work::attributes(&failed),
+                        delay_ms,
+                    }),
+                )?;
+            }
+            stack.execute(
+                ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
+                CommandMetadata::default(),
+                StackCommand::Queue(QueueCommand::Ack {
+                    receipt_handle: lease.receipt_handle.clone(),
+                }),
+            )?;
+            Ok::<(), Error>(())
+        })();
+        if let Err(error) = result {
+            *stack = Stack::from_snapshot(before);
+            return Err(error);
         }
+        self.checkpoint(&mut stack, before)
+    }
+
+    fn checkpoint(&self, stack: &mut Stack, before: StackSnapshot) -> Result<()> {
         let after = match stack.snapshot() {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -166,6 +551,49 @@ impl Service {
         }
         Ok(())
     }
+}
+
+enum LeaseDisposition {
+    Acknowledge,
+    Retry(u64),
+    DeadLetter,
+}
+
+fn record_webhook_outcome(stack: &mut Stack, lease: &WorkLease, completed: bool) -> Result<()> {
+    let DeferredWork::Webhook {
+        name,
+        operation,
+        correlation_id,
+        ..
+    } = lease.work()
+    else {
+        return Ok(());
+    };
+    let command = if completed {
+        DbCommand::Put {
+            collection: "webhook_deliveries".to_owned(),
+            key: format!("{correlation_id}:{name}"),
+            value: serde_json::json!({ "completed": true }),
+            condition: WriteCondition::Any,
+        }
+    } else {
+        DbCommand::Delete {
+            collection: "webhook_deliveries".to_owned(),
+            key: format!("{correlation_id}:{name}"),
+            condition: WriteCondition::Any,
+        }
+    };
+    stack.execute(
+        ResourceAddress::new(ResourceKind::Db, WORK_STATE)?,
+        CommandMetadata {
+            operation_id: Some(operation.clone()),
+            causation_id: Some(name.clone()),
+            correlation_id: Some(correlation_id.clone()),
+            ..CommandMetadata::default()
+        },
+        StackCommand::Db(command),
+    )?;
+    Ok(())
 }
 
 fn now() -> LogicalTime {
@@ -193,4 +621,10 @@ pub enum Error {
     StateUnavailable,
     #[error("persisted resources do not match the compiled service")]
     ResourceSetChanged,
+    #[error("deferred work is invalid: {0}")]
+    InvalidWork(String),
+    #[error("state-backed response cannot be represented by the operation contract")]
+    StateResponseUnavailable,
+    #[error("state read returned an unexpected result for {0}")]
+    InvalidStateRead(&'static str),
 }

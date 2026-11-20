@@ -36,6 +36,11 @@ pub struct ExecutionOptions<'a> {
     pub fault_profile: Option<&'a str>,
     pub response_status: Option<u16>,
     pub response_content_type: Option<&'a str>,
+    /// An exact state-derived response candidate. Named outcomes retain
+    /// precedence when a request deliberately selects one.
+    pub response_body: Option<&'a Value>,
+    /// Parameters already decoded and proven by the transport adapter.
+    pub parameters: Option<&'a crate::ValidatedParameters>,
     pub replay: Option<ReplayIdentity<'a>>,
     /// Reproduce response synthesis exactly when present.
     pub response_seed: Option<u64>,

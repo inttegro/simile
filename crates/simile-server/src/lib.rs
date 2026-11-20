@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod delivery;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::Future;
@@ -20,7 +22,7 @@ use serde_json::json;
 use simile_artifact::Artifact;
 use simile_runtime::{
     ExecutionOptions, IncomingParameters, OperationCall, OperationExecution, ReplayIdentity,
-    Runtime, TransportPlan, validate_parameters,
+    Runtime, TransportPlan, authenticate, validate_parameters,
 };
 use simile_service::Service;
 use thiserror::Error;
@@ -64,12 +66,12 @@ pub struct ServerOptions {
     pub fault_profile: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct Server {
     listener: TcpListener,
     router: Router,
     address: SocketAddr,
     fault_seed: Option<u64>,
+    service: Arc<Service>,
 }
 
 struct ServerState {
@@ -201,8 +203,9 @@ impl Server {
                     })
             })
             .transpose()?;
+        let service = Arc::new(service);
         let state = Arc::new(ServerState {
-            service: Arc::new(service),
+            service: Arc::clone(&service),
             routes,
             body_limit: DEFAULT_BODY_LIMIT,
             scenario: options.scenario,
@@ -217,6 +220,7 @@ impl Server {
             router,
             address,
             fault_seed,
+            service,
         })
     }
 
@@ -243,14 +247,17 @@ impl Server {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        axum::serve(
+        let dispatcher = tokio::spawn(delivery::run(Arc::clone(&self.service)));
+        let result = axum::serve(
             self.listener,
             self.router
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown)
         .await
-        .map_err(Error::Serve)
+        .map_err(Error::Serve);
+        dispatcher.abort();
+        result
     }
 }
 
@@ -444,7 +451,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         }
     };
     let parameters = incoming_parameters(&request, path_parameters);
-    if let Err(error) = validate_parameters(state.service.artifact(), &operation, &parameters) {
+    if let Err(error) = authenticate(state.service.artifact(), &operation, &parameters) {
         return operation_error(
             state.service.runtime(),
             &operation,
@@ -452,6 +459,17 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             method == Method::HEAD,
         );
     }
+    let parameters = match validate_parameters(state.service.artifact(), &operation, &parameters) {
+        Ok(parameters) => parameters,
+        Err(error) => {
+            return operation_error(
+                state.service.runtime(),
+                &operation,
+                error,
+                method == Method::HEAD,
+            );
+        }
+    };
     let content_type = match header(request.headers(), CONTENT_TYPE.as_str()) {
         Ok(value) => value,
         Err(response) => return response,
@@ -484,6 +502,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             body: &body,
         },
         ExecutionOptions {
+            parameters: Some(&parameters),
             replay,
             scenario: state.scenario.as_deref(),
             fault_profile: state.fault_profile.as_deref(),
@@ -491,10 +510,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         },
     );
     match outcome {
-        Ok(execution) => {
-            dispatch_asynchronous(Arc::clone(&state.service), &execution);
-            operation_execution_response(execution, method == Method::HEAD).await
-        }
+        Ok(execution) => operation_execution_response(execution, method == Method::HEAD).await,
         Err(simile_service::Error::Runtime(error)) => operation_error(
             state.service.runtime(),
             &operation,
@@ -559,23 +575,6 @@ fn incoming_parameters(
         headers,
         cookies,
     }
-}
-
-fn dispatch_asynchronous(service: Arc<Service>, execution: &OperationExecution) {
-    if execution.effects().asynchronous().is_empty() {
-        return;
-    }
-    let execution = execution.clone();
-    tokio::task::spawn_blocking(move || {
-        if let Err(error) = service.dispatch_asynchronous(&execution) {
-            tracing::error!(
-                target: "simile::effect",
-                operation = execution.operation(),
-                %error,
-                "asynchronous effects failed"
-            );
-        }
-    });
 }
 
 async fn operation_execution_response(execution: OperationExecution, head: bool) -> Response {
@@ -696,6 +695,7 @@ fn service_error_cause(error: &simile_runtime::Error) -> Option<&'static str> {
     match error {
         RuntimeError::InvalidBody { .. } => Some("invalid_body"),
         RuntimeError::MalformedJson { .. }
+        | RuntimeError::MalformedBody { .. }
         | RuntimeError::InvalidParameters { .. }
         | RuntimeError::BodyRequired { .. }
         | RuntimeError::BodyNotDeclared { .. }
@@ -704,6 +704,8 @@ fn service_error_cause(error: &simile_runtime::Error) -> Option<&'static str> {
         | RuntimeError::UnsupportedMediaType { .. }
         | RuntimeError::UnsupportedEncoding { .. } => Some("unsupported_media_type"),
         RuntimeError::IdempotencyConflict { .. } => Some("idempotency_conflict"),
+        RuntimeError::AuthenticationRequired { .. } => Some("authentication_required"),
+        RuntimeError::PermissionDenied { .. } => Some("permission_denied"),
         _ => None,
     }
 }
@@ -740,6 +742,7 @@ fn runtime_error(error: simile_runtime::Error) -> Response {
 
     let (status, code) = match &error {
         RuntimeError::MalformedJson { .. } => (StatusCode::BAD_REQUEST, "malformed_json"),
+        RuntimeError::MalformedBody { .. } => (StatusCode::BAD_REQUEST, "malformed_body"),
         RuntimeError::InvalidParameters { .. } => (StatusCode::BAD_REQUEST, "invalid_parameters"),
         RuntimeError::MissingContentType { .. }
         | RuntimeError::UnsupportedMediaType { .. }
@@ -750,6 +753,10 @@ fn runtime_error(error: simile_runtime::Error) -> Response {
             (StatusCode::BAD_REQUEST, "invalid_body")
         }
         RuntimeError::IdempotencyConflict { .. } => (StatusCode::CONFLICT, "idempotency_conflict"),
+        RuntimeError::AuthenticationRequired { .. } => {
+            (StatusCode::UNAUTHORIZED, "authentication_required")
+        }
+        RuntimeError::PermissionDenied { .. } => (StatusCode::FORBIDDEN, "permission_denied"),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "emulation_failed"),
     };
     error_response(status, code, &error.to_string())
@@ -970,6 +977,42 @@ scenario "lost" {
         )
     }
 
+    fn artifact_with_authentication() -> Artifact {
+        compile_artifact_with_behavior(
+            r#"
+openapi: 3.1.0
+info: { title: Secured orders, version: 1.0.0 }
+paths:
+  /private:
+    get:
+      operationId: privateOrders
+      security:
+        - merchantKey: []
+      responses:
+        '200':
+          description: allowed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed]
+                properties:
+                  allowed: { const: true }
+components:
+  securitySchemes:
+    merchantKey:
+      type: apiKey
+      in: header
+      name: X-Merchant-Key
+"#,
+            r#"
+principal "merchant" {
+  credential "merchantKey" { value = "sim_test_merchant" }
+}
+"#,
+        )
+    }
+
     fn compile_artifact(source: &str) -> Artifact {
         compile_artifact_with_behavior(source, "")
     }
@@ -1183,6 +1226,25 @@ scenario "lost" {
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("content-type: application/json"));
         assert!(response.contains(r#""id":"#));
+    }
+
+    #[tokio::test]
+    async fn enforces_declared_authentication_before_operation_execution() {
+        let missing = serve_raw_with_artifact(
+            artifact_with_authentication(),
+            b"GET /private HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(missing.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(missing.contains(r#""code":"authentication_required""#));
+
+        let accepted = serve_raw_with_artifact(
+            artifact_with_authentication(),
+            b"GET /private HTTP/1.1\r\nHost: localhost\r\nX-Merchant-Key: sim_test_merchant\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(accepted.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(accepted.contains(r#""allowed":true"#));
     }
 
     #[tokio::test]

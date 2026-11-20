@@ -83,6 +83,15 @@ impl Stack {
         &self.resources
     }
 
+    /// Ensure a supervisor-owned resource exists.
+    ///
+    /// Service orchestration uses this narrow migration seam for internal
+    /// resources introduced after a durable Stack was first created. Public
+    /// service backends still come from the compiled artifact.
+    pub fn ensure_resource(&mut self, resource: ResourceAddress) {
+        self.resources.insert(resource);
+    }
+
     #[must_use]
     pub const fn journal(&self) -> &Journal {
         &self.journal

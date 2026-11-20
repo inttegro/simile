@@ -25,7 +25,10 @@ pub(crate) fn produce(
         status: response_status,
         content_type: response_content_type,
         request_body: request_body.as_ref(),
-        body: selected.as_ref().and_then(ArtifactOutcome::body),
+        body: selected
+            .as_ref()
+            .and_then(ArtifactOutcome::body)
+            .or(options.response_body),
     };
     let response = match options.response_seed {
         Some(seed) => synthesize_response_with_seed(artifact, synthesis, seed),

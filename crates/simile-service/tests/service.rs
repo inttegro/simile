@@ -2,10 +2,162 @@ use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_heuristics::Policy;
 use simile_runtime::{ExecutionOptions, OperationCall, ReplayIdentity};
-use simile_service::Service;
+use simile_runtime::{IncomingParameters, validate_parameters};
+use simile_service::{DependencyReadiness, Service};
 use simile_stack::{
     CommandMetadata, DbCommand, DbResult, ResourceAddress, Stack, StackCommand, StackResult,
 };
+
+#[test]
+fn durable_outbox_survives_restart_and_acknowledgement() {
+    let path = std::env::temp_dir().join(format!(
+        "simile-service-outbox-{}-{}.redb",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let artifact = deferred_work_artifact();
+    {
+        let service = Service::durable(artifact, &path).unwrap_or_else(|error| panic!("{error}"));
+        service
+            .execute(OperationCall {
+                operation: "POST /orders",
+                content_type: None,
+                body: &[],
+            })
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let artifact = deferred_work_artifact();
+    {
+        let service = Service::durable(artifact, &path).unwrap_or_else(|error| panic!("{error}"));
+        let leases = service
+            .lease_work(10, None)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].work().name(), "publish_order");
+        service
+            .execute_work(&leases[0])
+            .unwrap_or_else(|error| panic!("{error}"));
+        service
+            .acknowledge_work(&leases[0])
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let service =
+        Service::durable(deferred_work_artifact(), &path).unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        service
+            .lease_work(10, Some(0))
+            .unwrap_or_else(|error| panic!("{error}"))
+            .is_empty()
+    );
+    drop(service);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn hard_webhook_dependencies_wait_without_spending_the_retry_budget() {
+    let service =
+        Service::memory(webhook_dependency_artifact()).unwrap_or_else(|error| panic!("{error}"));
+    service
+        .execute(OperationCall {
+            operation: "POST /orders",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let leases = service
+        .lease_work(10, None)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let predecessor = leases
+        .iter()
+        .find(|lease| lease.work().name() == "payment.succeeded")
+        .cloned()
+        .unwrap_or_else(|| panic!("missing predecessor"));
+    let dependent = leases
+        .iter()
+        .find(|lease| lease.work().name() == "order.paid")
+        .cloned()
+        .unwrap_or_else(|| panic!("missing dependent"));
+    assert_eq!(
+        service
+            .dependency_readiness(&dependent)
+            .unwrap_or_else(|error| panic!("{error}")),
+        DependencyReadiness::Waiting
+    );
+    service
+        .defer_work(&dependent, 0)
+        .unwrap_or_else(|error| panic!("{error}"));
+    service
+        .acknowledge_work(&predecessor)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let dependent = service
+        .lease_work(10, None)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .find(|lease| lease.work().name() == "order.paid")
+        .unwrap_or_else(|| panic!("missing deferred dependent"));
+    assert_eq!(dependent.attempt(), 1);
+    assert_eq!(
+        service
+            .dependency_readiness(&dependent)
+            .unwrap_or_else(|error| panic!("{error}")),
+        DependencyReadiness::Ready
+    );
+    service
+        .acknowledge_work(&dependent)
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn failed_work_exhausts_its_budget_and_redelivery_starts_fresh() {
+    let service =
+        Service::memory(deferred_work_artifact()).unwrap_or_else(|error| panic!("{error}"));
+    service
+        .execute(OperationCall {
+            operation: "POST /orders",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    for expected_attempt in 1..=5 {
+        let lease = service
+            .lease_work(1, None)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("missing retry attempt {expected_attempt}"));
+        assert_eq!(lease.attempt(), expected_attempt);
+        let retrying = service
+            .retry_work(&lease, 0)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(retrying, expected_attempt < 5);
+    }
+
+    let dead_letter = service
+        .dead_letters(1)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("missing dead letter"));
+    assert_eq!(dead_letter.attempts(), 5);
+    service
+        .redeliver(&dead_letter)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let lease = service
+        .lease_work(1, None)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("missing redelivered work"));
+    assert_eq!(lease.attempt(), 1);
+}
 
 #[test]
 fn commits_declared_effects_and_does_not_repeat_them_on_replay() {
@@ -60,6 +212,170 @@ fn commits_declared_effects_and_does_not_repeat_them_on_replay() {
     );
 }
 
+#[test]
+fn inferred_entities_survive_create_read_list_and_delete() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Products, version: 1.0.0 }
+paths:
+  /products:
+    post:
+      operationId: createProduct
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+    get:
+      operationId: listProducts
+      responses:
+        "200":
+          description: listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Product' }
+  /products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getProduct
+      responses:
+        "200":
+          description: found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        "404": { description: missing }
+    delete:
+      operationId: deleteProduct
+      responses:
+        "204": { description: deleted }
+components:
+  schemas:
+    Product:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, pattern: '^prod_' }
+        name: { type: string }
+"#,
+        "backend \"db\" \"primary\" {}",
+    );
+
+    let created = service
+        .execute(OperationCall {
+            operation: "POST /products",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let entity = created
+        .response()
+        .value()
+        .cloned()
+        .unwrap_or_else(|| panic!("expected product"));
+    let id = entity
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("expected product id"));
+    let parameters = product_parameters(&service, "GET /products/{id}", id);
+
+    let found = service
+        .execute_with_options(
+            OperationCall {
+                operation: "GET /products/{id}",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                parameters: Some(&parameters),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(found.response().value(), Some(&entity));
+
+    let listed = service
+        .execute(OperationCall {
+            operation: "GET /products",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        listed.response().value(),
+        Some(&serde_json::json!([entity]))
+    );
+
+    let delete_parameters = product_parameters(&service, "DELETE /products/{id}", id);
+    service
+        .execute_with_options(
+            OperationCall {
+                operation: "DELETE /products/{id}",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                parameters: Some(&delete_parameters),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let missing = service
+        .execute_with_options(
+            OperationCall {
+                operation: "GET /products/{id}",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                parameters: Some(&parameters),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(missing.response().status(), 404);
+}
+
+fn product_parameters(
+    service: &simile_service::Service,
+    operation: &str,
+    id: &str,
+) -> simile_runtime::ValidatedParameters {
+    validate_parameters(
+        service.artifact(),
+        operation,
+        &IncomingParameters {
+            path: [("id".to_owned(), vec![id.to_owned()])]
+                .into_iter()
+                .collect(),
+            ..IncomingParameters::default()
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn service_with_contract(openapi: &str, behavior: &str) -> simile_service::Service {
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("service.yml", openapi),
+            behaviors: vec![Source::new("service.hcl", behavior)],
+            heuristic_policy: Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let encoded = simile_artifact::encode(&compiled).unwrap_or_else(|error| panic!("{error}"));
+    let artifact = simile_artifact::decode(&encoded).unwrap_or_else(|error| panic!("{error}"));
+    simile_service::Service::memory(artifact).unwrap_or_else(|error| panic!("{error}"))
+}
+
 fn artifact() -> simile_artifact::Artifact {
     let compiled = Compiler::new()
         .compile(CompileRequest {
@@ -111,6 +427,108 @@ effect "persist_order" {
 
 behavior "createOrder" {
   response { status = 201 }
+}
+"#,
+            )],
+            heuristic_policy: Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let encoded = encode(&compiled).unwrap_or_else(|error| panic!("{error}"));
+    decode(&encoded).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn deferred_work_artifact() -> simile_artifact::Artifact {
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new(
+                "orders.yml",
+                r#"
+openapi: 3.1.0
+info: { title: Durable orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, pattern: '^ord_' }
+"#,
+            ),
+            behaviors: vec![Source::new(
+                "orders.hcl",
+                r#"
+backend "event_bus" "events" {}
+
+async "publish_order" {
+  action "event_bus.events" "publish" {
+    topic = "orders.created"
+    body  = response
+  }
+}
+
+effect "publish_created_order" {
+  operations = ["createOrder"]
+  async      = ["publish_order"]
+}
+"#,
+            )],
+            heuristic_policy: Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let encoded = encode(&compiled).unwrap_or_else(|error| panic!("{error}"));
+    decode(&encoded).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn webhook_dependency_artifact() -> simile_artifact::Artifact {
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new(
+                "orders.yml",
+                r#"
+openapi: 3.1.0
+info: { title: Webhook orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, pattern: '^ord_' }
+"#,
+            ),
+            behaviors: vec![Source::new(
+                "orders.hcl",
+                r#"
+webhook "payment.succeeded" {}
+webhook "order.paid" {}
+
+effect "announce_order" {
+  operations = ["createOrder"]
+  emit = {
+    "payment.succeeded" = response
+    "order.paid"        = response
+  }
+  after = {
+    "order.paid" = ["payment.succeeded"]
+  }
+  to = {
+    "payment.succeeded" = "http://127.0.0.1:9/hooks"
+    "order.paid"        = "http://127.0.0.1:9/hooks"
+  }
 }
 "#,
             )],
