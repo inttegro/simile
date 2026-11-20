@@ -21,31 +21,77 @@
 				"pages": ["index", "why-simile", "downloads", "quickstart"]
 			},
 			{
-				"group": "Guides",
+				"group": "Build a service",
 				"pages": [
+					"define-a-service",
+					"contract-sources-and-hcl",
 					{
-						"group": "Define a service",
+						"group": "Contract sources",
 						"pages": [
-							"contract-sources-and-hcl",
 							"openapi-and-hcl",
 							"smithy-contracts",
-							"typescript-contracts",
-							"service-configuration",
-							"describe-service",
-							"fidelity-audit",
-							"service-authoring-prompt",
-							"service-lifecycle"
+							"typescript-contracts"
 						]
 					},
+					"service-configuration",
+					"describe-service",
+					"fidelity-audit",
+					"service-authoring-prompt"
+				]
+			},
+			{
+				"group": "Model behavior",
+				"pages": [
+					"outcome-fidelity",
+					"dependencies-and-effects",
+					"stateful-services",
+					"durable-work",
+					"webhook-delivery",
 					{
-						"group": "Principals and profiles",
+						"group": "Faults",
+						"pages": ["fault-injection", "fault-glossary"]
+					},
+					"payload-soundness",
+					"generation-heuristics"
+				]
+			},
+			{
+				"group": "Run and test",
+				"pages": [
+					"service-lifecycle",
+					{
+						"group": "Set up callers",
 						"pages": [
-							"service-profiles",
 							"principals",
 							"service-setup",
+							"service-profiles",
 							"authentication-emulation"
 						]
 					},
+					{
+						"group": "Exercise operations",
+						"pages": [
+							"run-operation",
+							"http-contract",
+							"request-encoding",
+							"request-validation",
+							"response-synthesis"
+						]
+					},
+					{
+						"group": "Inspect and reproduce",
+						"pages": [
+							"state-inspection",
+							"state-and-replay",
+							"reproduction-bundles",
+							"conformance-suites"
+						]
+					}
+				]
+			},
+			{
+				"group": "Reference",
+				"pages": [
 					{
 						"group": "Simile HCL",
 						"pages": ["hcl-language-specification", "hcl-glossary", "learn-simile-hcl"]
@@ -61,44 +107,27 @@
 							"constraint-conditional-derived",
 							"constraint-lifecycle-template"
 						]
-					},
-					{
-						"group": "Run operations",
-						"pages": [
-							"run-operation",
-							"http-contract",
-							"request-encoding",
-							"request-validation",
-							"response-synthesis",
-							"reproduction-bundles",
-							"conformance-suites"
-						]
-					},
-					{
-						"group": "Model behavior",
-						"pages": [
-							"outcome-fidelity",
-							{
-								"group": "Faults",
-								"pages": ["fault-injection", "fault-glossary"]
-							},
-							"state-and-replay",
-							"state-inspection",
-							"stateful-services",
-							"dependencies-and-effects",
-							"durable-work",
-							"webhook-delivery"
-						]
-					},
-					{
-						"group": "Prove payloads",
-						"pages": ["payload-soundness", "generation-heuristics"]
 					}
 				]
 			},
 			{
 				"group": "Internals",
 				"pages": [
+					{
+						"group": "Architecture",
+						"pages": [
+							"architecture",
+							"source-model",
+							"compilation-pipeline",
+							"schema-engine",
+							"compiled-artifact",
+							"operation-execution",
+							"http-server",
+							"application-registry",
+							"compatibility",
+							"current-boundaries"
+						]
+					},
 					{
 						"group": "Simile Stack",
 						"pages": [
@@ -115,21 +144,6 @@
 							"stack-queue",
 							"stack-scheduler",
 							"stack-time"
-						]
-					},
-					{
-						"group": "Architecture",
-						"pages": [
-							"architecture",
-							"source-model",
-							"compilation-pipeline",
-							"schema-engine",
-							"compiled-artifact",
-							"operation-execution",
-							"http-server",
-							"application-registry",
-							"compatibility",
-							"current-boundaries"
 						]
 					}
 				]
