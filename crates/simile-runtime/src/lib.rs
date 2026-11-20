@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod auth;
+mod codec;
 mod effect;
 mod execution;
 mod fault;
@@ -16,6 +18,7 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
+pub use auth::{AuthenticatedPrincipal, authenticate};
 pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation, PlannedWebhook};
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
@@ -216,6 +219,12 @@ pub enum Error {
     #[error("Content-Type `{content_type}` does not yet have a request decoder")]
     UnsupportedEncoding { content_type: String },
 
+    #[error("request body is not valid `{content_type}` data: {message}")]
+    MalformedBody {
+        content_type: String,
+        message: String,
+    },
+
     #[error("operation `{operation}` has no declared media type to synthesize")]
     NoSynthesisMediaType {
         operation: String,
@@ -284,6 +293,12 @@ pub enum Error {
     #[error("could not encode a synthesized JSON request body: {message}")]
     EncodeJson { message: String },
 
+    #[error("could not encode a synthesized `{content_type}` request body: {message}")]
+    EncodeBody {
+        content_type: String,
+        message: String,
+    },
+
     #[error("could not encode a synthesized JSON response body: {message}")]
     EncodeResponseJson { message: String },
 
@@ -302,6 +317,15 @@ pub enum Error {
 
     #[error("synthesized response body failed schema validation with {} issue(s)", .issues.len())]
     InvalidResponseBody { issues: Vec<ValidationIssue> },
+
+    #[error("authentication is required for operation `{operation}`")]
+    AuthenticationRequired { operation: String },
+
+    #[error("the authenticated principal cannot call operation `{operation}`")]
+    PermissionDenied { operation: String },
+
+    #[error("compiled authentication configuration is invalid: {message}")]
+    AuthenticationConfiguration { message: String },
 }
 
 impl Error {
@@ -353,16 +377,15 @@ pub fn validate_request_body(
             content_type: content_type.to_owned(),
             expected: plan.media_types().map(str::to_owned).collect(),
         })?;
-    if !is_json(selected.requested()) {
-        return Err(Error::UnsupportedEncoding {
-            content_type: selected.requested().to_owned(),
-        });
-    }
-    let value = serde_json::from_slice(request.bytes).map_err(|error| Error::MalformedJson {
-        line: error.line(),
-        column: error.column(),
-        message: error.to_string(),
-    })?;
+    let value = codec::decode(content_type, request.bytes)?;
+    let value = if matches!(
+        content_type.split(';').next().map(str::trim),
+        Some("application/x-www-form-urlencoded" | "multipart/form-data")
+    ) {
+        coerce_form_fields(value, &selected)
+    } else {
+        value
+    };
     let issues = selected.validate(&value);
     if !issues.is_empty() {
         return Err(Error::InvalidBody { issues });
@@ -372,6 +395,78 @@ pub fn validate_request_body(
         media_type: selected.requested().to_owned(),
         value,
     }))
+}
+
+fn coerce_form_fields(
+    mut value: serde_json::Value,
+    schema: &simile_schema::BoundMediaType<'_>,
+) -> serde_json::Value {
+    let Some(fields) = value.as_object_mut() else {
+        return value;
+    };
+    for (name, field) in fields {
+        let candidates = form_field_candidates(field);
+        if let Some(candidate) = candidates.into_iter().find(|candidate| {
+            schema
+                .validate_property(name, candidate)
+                .is_some_and(|issues| issues.is_empty())
+        }) {
+            *field = candidate;
+        }
+    }
+    value
+}
+
+fn form_field_candidates(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut candidates = vec![value.clone()];
+    match value {
+        serde_json::Value::String(value) => {
+            let scalar = wire_scalar(value);
+            if scalar != serde_json::Value::String(value.clone()) {
+                candidates.push(scalar);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            let scalars = serde_json::Value::Array(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        serde_json::Value::String(value) => wire_scalar(value),
+                        value => value.clone(),
+                    })
+                    .collect(),
+            );
+            if scalars != *value {
+                candidates.push(scalars);
+            }
+        }
+        _ => {}
+    }
+    candidates
+}
+
+fn wire_scalar(value: &str) -> serde_json::Value {
+    match value {
+        "true" => serde_json::Value::Bool(true),
+        "false" => serde_json::Value::Bool(false),
+        "null" => serde_json::Value::Null,
+        _ => {
+            if let Ok(value) = value.parse::<i64>() {
+                return serde_json::Value::from(value);
+            }
+            if let Ok(value) = value.parse::<u64>() {
+                return serde_json::Value::from(value);
+            }
+            if let Some(value) = value
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+            {
+                return serde_json::Value::Number(value);
+            }
+            serde_json::Value::String(value.to_owned())
+        }
+    }
 }
 
 /// Validate a transport-neutral request value against one declared OpenAPI media type.
@@ -490,12 +585,7 @@ pub fn synthesize_request_body_with_seed(
         .ok_or_else(|| Error::BodyNotDeclared {
             operation: request.operation.to_owned(),
         })?;
-    let content_type = request
-        .content_type
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .or_else(|| preferred_json_media_type(&plan));
+    let content_type = select_request_media_type(&plan, request.content_type);
     let content_type = content_type.ok_or_else(|| Error::NoSynthesisMediaType {
         operation: request.operation.to_owned(),
         expected: plan.media_types().map(str::to_owned).collect(),
@@ -507,11 +597,6 @@ pub fn synthesize_request_body_with_seed(
             content_type: content_type.clone(),
             expected: plan.media_types().map(str::to_owned).collect(),
         })?;
-    if !is_json(selected.requested()) {
-        return Err(Error::UnsupportedEncoding {
-            content_type: selected.requested().to_owned(),
-        });
-    }
     let value = selected
         .synthesize_fuzz(seed)
         .map_err(|source| Error::Synthesis { source })?;
@@ -519,11 +604,9 @@ pub fn synthesize_request_body_with_seed(
     if !issues.is_empty() {
         return Err(Error::InvalidBody { issues });
     }
-    let bytes = serde_json::to_vec(&value).map_err(|error| Error::EncodeJson {
-        message: error.to_string(),
-    })?;
+    let (media_type, bytes) = codec::encode(selected.requested(), &value)?;
     Ok(SynthesizedBody {
-        media_type: selected.requested().to_owned(),
+        media_type,
         bytes,
         value,
     })

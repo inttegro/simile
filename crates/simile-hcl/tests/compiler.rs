@@ -1,5 +1,48 @@
 use simile_hcl::Source;
-use simile_spec::{ResourceKind, ResourceRef};
+use simile_spec::{PrincipalCredential, PrincipalStatus, ResourceKind, ResourceRef};
+
+#[test]
+fn compiles_local_test_principals_against_openapi_security_schemes() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+principal "merchant_app" {
+  description = "A merchant integration with order write access."
+  grants      = ["orders:write"]
+
+  credential "merchantOAuth" {
+    value = "sim_test_merchant"
+  }
+}
+
+principal "revoked_key" {
+  status = "revoked"
+
+  credential "merchantKey" {
+    value = "revoked_test_key"
+  }
+}
+"#,
+        )],
+        &secured_contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let merchant = &compiled.principals["merchant_app"];
+    assert_eq!(merchant.status, PrincipalStatus::Active);
+    assert_eq!(merchant.grants.len(), 1);
+    assert!(merchant.grants.contains("orders:write"));
+    assert_eq!(
+        merchant.credentials["merchantOAuth"],
+        PrincipalCredential::Secret {
+            value: "sim_test_merchant".to_owned()
+        }
+    );
+    assert_eq!(
+        compiled.principals["revoked_key"].status,
+        PrincipalStatus::Revoked
+    );
+}
 
 #[test]
 fn parses_and_compiles_behavior_modules() {
@@ -598,6 +641,12 @@ webhooks {
   out_of_order_probability = 0.125
   reorder_window           = "4s"
   concurrency              = 6
+
+  signing {
+    secret           = "whsec_simile_local"
+    header           = "X-Service-Signature"
+    timestamp_header = "X-Service-Timestamp"
+  }
 }
 "#,
         )],
@@ -612,6 +661,11 @@ webhooks {
             out_of_order_probability_ppm: 125_000,
             reorder_window_milliseconds: 4_000,
             concurrency: 6,
+            signing: Some(simile_spec::WebhookSigning {
+                secret: "whsec_simile_local".to_owned(),
+                header: "X-Service-Signature".to_owned(),
+                timestamp_header: "X-Service-Timestamp".to_owned(),
+            }),
         }
     );
 
@@ -749,6 +803,34 @@ paths:
       operationId: createOrder
       responses:
         "201": { description: Created }
+"#,
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn secured_contract() -> simile_spec::ApiContract {
+    simile_openapi::parse(
+        r#"
+openapi: 3.1.0
+info: { title: Secured orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      security:
+        - merchantOAuth: [orders:write]
+        - merchantKey: []
+      responses:
+        "201": { description: Created }
+components:
+  securitySchemes:
+    merchantOAuth:
+      type: oauth2
+      flows: {}
+    merchantKey:
+      type: apiKey
+      in: header
+      name: X-Merchant-Key
 "#,
     )
     .unwrap_or_else(|error| panic!("{error}"))

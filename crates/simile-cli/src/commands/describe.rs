@@ -73,6 +73,19 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
         }
     }
 
+    if !report.principals.is_empty() {
+        terminal.line(format_args!("{HEADING}Test principals{HEADING:#}"))?;
+        for principal in &report.principals {
+            terminal.line(format_args!(
+                "{LABEL}{}{LABEL:#} · {} · {}{}",
+                principal.name,
+                principal.status,
+                principal.security_schemes.join(", "),
+                suffix(principal.description.as_deref())
+            ))?;
+        }
+    }
+
     if report.operations.is_empty() {
         terminal.line(format_args!(
             "{MUTED}operations{MUTED:#} use --verbose to list every operation and outcome"
@@ -80,7 +93,12 @@ fn render_service(report: &ops::DescribeServiceReport, terminal: &Terminal) -> R
     } else {
         terminal.line(format_args!("{HEADING}Operations{HEADING:#}"))?;
         for operation in &report.operations {
-            terminal.line(format_args!("{LABEL}{}{LABEL:#}", operation.key))?;
+            terminal.line(format_args!(
+                "{LABEL}{}{LABEL:#} · {}{}",
+                operation.key,
+                operation.behavior_source,
+                if operation.secured { " · secured" } else { "" }
+            ))?;
             if let Some(description) = &operation.description {
                 terminal.line(format_args!("  {description}"))?;
             }

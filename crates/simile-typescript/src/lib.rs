@@ -171,6 +171,7 @@ fn operation(
         request_body,
         request,
         responses,
+        security: Vec::new(),
     })
 }
 

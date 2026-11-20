@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 
 use serde::Serialize;
 use simile_artifact::Artifact;
-use simile_spec::{DescriptionKind, FaultAction, FaultPhase, WebhookOrigin};
+use simile_spec::{
+    BehaviorOrigin, DescriptionKind, FaultAction, FaultPhase, PrincipalStatus, WebhookOrigin,
+};
 
 use super::start::prepare_loaded_service;
 use crate::registry::Registry;
@@ -39,6 +41,7 @@ pub struct DescribeServiceReport {
     pub webhooks: DescribedWebhookPolicy,
     pub webhook_contracts: Vec<DescribedWebhook>,
     pub authoring_objects: Vec<DescribedObject>,
+    pub principals: Vec<DescribedPrincipal>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -48,6 +51,9 @@ pub struct DescribedWebhookPolicy {
     pub out_of_order_probability_ppm: u32,
     pub reorder_window_milliseconds: u64,
     pub concurrency: u16,
+    pub signed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_header: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -73,6 +79,8 @@ pub struct DescribedOperation {
     pub operation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    pub behavior_source: String,
+    pub secured: bool,
     pub outcomes: Vec<DescribedOutcome>,
 }
 
@@ -152,6 +160,17 @@ pub struct DescribedObject {
     pub description: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribedPrincipal {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub status: String,
+    pub security_schemes: Vec<String>,
+    pub grants: Vec<String>,
+}
+
 pub fn describe_service(
     ctx: &Context,
     request: &DescribeServiceRequest,
@@ -223,6 +242,18 @@ fn report(
                     key: operation.key().to_owned(),
                     operation_id,
                     description,
+                    behavior_source: match operation.origin() {
+                        BehaviorOrigin::OpenApi => "contract_derived",
+                        BehaviorOrigin::Hcl => "provider_authored",
+                    }
+                    .to_owned(),
+                    secured: {
+                        let requirements = operation.security_requirements().collect::<Vec<_>>();
+                        !requirements.is_empty()
+                            && requirements
+                                .iter()
+                                .all(|requirement| !requirement.is_empty())
+                    },
                     outcomes,
                 }
             })
@@ -332,6 +363,21 @@ fn report(
                 .unwrap_or_default(),
         })
         .collect();
+    let principals = artifact
+        .principals()
+        .map(|principal| DescribedPrincipal {
+            name: principal.name().to_owned(),
+            description: description(artifact, DescriptionKind::Principal, principal.name()),
+            status: match principal.status() {
+                PrincipalStatus::Active => "active",
+                PrincipalStatus::Revoked => "revoked",
+                PrincipalStatus::Expired => "expired",
+            }
+            .to_owned(),
+            security_schemes: principal.credential_schemes().map(str::to_owned).collect(),
+            grants: principal.granted_scopes().map(str::to_owned).collect(),
+        })
+        .collect();
 
     DescribeServiceReport {
         service: request.service.clone(),
@@ -357,9 +403,15 @@ fn report(
             out_of_order_probability_ppm: webhook_policy.out_of_order_probability_ppm,
             reorder_window_milliseconds: webhook_policy.reorder_window_milliseconds,
             concurrency: webhook_policy.concurrency,
+            signed: webhook_policy.signing.is_some(),
+            signature_header: webhook_policy
+                .signing
+                .as_ref()
+                .map(|signing| signing.header.clone()),
         },
         webhook_contracts,
         authoring_objects,
+        principals,
     }
 }
 
@@ -381,5 +433,6 @@ const fn kind_name(kind: DescriptionKind) -> &'static str {
         DescriptionKind::FaultProfile => "fault_profile",
         DescriptionKind::Effect => "effect",
         DescriptionKind::Webhook => "webhook",
+        DescriptionKind::Principal => "principal",
     }
 }

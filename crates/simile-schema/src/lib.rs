@@ -264,6 +264,20 @@ impl<'a> BoundValueSchema<'a> {
         self.schemas.synthesize_fuzz(self.plan.schema, seed)
     }
 
+    /// Names declared by an object-shaped parameter schema.
+    ///
+    /// OpenAPI's exploded `form` encoding places object properties beside the
+    /// parameter instead of beneath its name. Transport-neutral decoding needs
+    /// this small amount of shape information to collect only the fields that
+    /// belong to that parameter.
+    pub fn property_names(&self) -> impl Iterator<Item = &str> {
+        self.schemas
+            .nodes
+            .get(self.plan.schema.0 as usize)
+            .into_iter()
+            .flat_map(|node| node.properties.keys().map(String::as_str))
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
@@ -287,6 +301,18 @@ impl<'a> BoundMediaType<'a> {
         self.selected
             .schema()
             .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
+    }
+
+    /// Validate one direct object property against its compiled schema.
+    ///
+    /// Form codecs receive text for every ordinary field. The transport
+    /// adapter uses this narrow shape query to choose a schema-valid scalar
+    /// representation while preserving string fields such as postal codes.
+    pub fn validate_property(&self, name: &str, value: &Value) -> Option<Vec<ValidationIssue>> {
+        let schema = self.selected.schema()?;
+        let node = self.schemas.nodes.get(schema.0 as usize)?;
+        let property = *node.properties.get(name)?;
+        Some(self.schemas.validate(SchemaRef(property), value))
     }
 
     /// Whether this response media type declares a compiled request-to-response proof plan.

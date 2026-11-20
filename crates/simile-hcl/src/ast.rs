@@ -169,6 +169,22 @@ pub struct WebhookPolicyDeclaration {
     pub out_of_order_probability_ppm: Option<u32>,
     pub reorder_window_milliseconds: Option<u64>,
     pub concurrency: Option<u16>,
+    pub signing: Option<simile_spec::WebhookSigning>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrincipalDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub status: simile_spec::PrincipalStatus,
+    pub credentials: Vec<PrincipalCredentialDeclaration>,
+    pub grants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrincipalCredentialDeclaration {
+    pub scheme: String,
+    pub credential: simile_spec::PrincipalCredential,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,6 +203,7 @@ pub struct Module {
     pub effects: Vec<EffectDeclaration>,
     pub webhooks: Vec<WebhookDeclaration>,
     pub webhook_policies: Vec<WebhookPolicyDeclaration>,
+    pub principals: Vec<PrincipalDeclaration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

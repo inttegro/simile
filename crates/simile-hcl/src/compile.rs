@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind, Effect,
     EffectAction, EffectOrigin, ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase,
-    FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, ProtocolError,
-    RequestBodyContract, Resource, Scenario, WebhookContract, WebhookEmission, WebhookOrdering,
-    WebhookOrigin, WebhookPolicy,
+    FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, Principal, PrincipalCredential,
+    ProtocolError, RequestBodyContract, Resource, Scenario, SecurityScheme, WebhookContract,
+    WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Module, Result};
@@ -33,6 +33,7 @@ pub fn compile(
         collect_fault_profiles(&mut spec, module.fault_profiles)?;
         collect_scenarios(&mut spec, module.scenarios)?;
         collect_webhook_policy(&mut webhook_policy, module.webhook_policies)?;
+        collect_principals(&mut spec, module.principals, api)?;
     }
 
     if let Some(policy) = webhook_policy {
@@ -47,6 +48,77 @@ pub fn compile(
     validate_faults(&spec, api)?;
     validate_scenarios(&spec, api)?;
     Ok(spec)
+}
+
+fn collect_principals(
+    spec: &mut BehaviorSpec,
+    declarations: impl IntoIterator<Item = crate::PrincipalDeclaration>,
+    api: &ApiContract,
+) -> Result<()> {
+    for declaration in declarations {
+        let mut credentials = BTreeMap::new();
+        for declared in declaration.credentials {
+            let Some(scheme) = api.security_schemes.get(&declared.scheme) else {
+                return Err(Error::UnknownPrincipalSecurityScheme {
+                    principal: declaration.name.clone(),
+                    scheme: declared.scheme,
+                });
+            };
+            let compatible = match (&declared.credential, scheme) {
+                (PrincipalCredential::Basic { .. }, SecurityScheme::Http { scheme, .. }) => {
+                    scheme.eq_ignore_ascii_case("basic")
+                }
+                (PrincipalCredential::Secret { .. }, SecurityScheme::Http { scheme, .. }) => {
+                    !scheme.eq_ignore_ascii_case("basic")
+                }
+                (
+                    PrincipalCredential::Secret { .. },
+                    SecurityScheme::ApiKey { .. }
+                    | SecurityScheme::OAuth2
+                    | SecurityScheme::OpenIdConnect,
+                ) => true,
+                _ => false,
+            };
+            if !compatible {
+                return Err(Error::InvalidPrincipalCredential {
+                    principal: declaration.name.clone(),
+                    scheme: declared.scheme,
+                });
+            }
+            if credentials
+                .insert(declared.scheme.clone(), declared.credential)
+                .is_some()
+            {
+                return Err(Error::DuplicatePrincipalCredential {
+                    principal: declaration.name.clone(),
+                    scheme: declared.scheme,
+                });
+            }
+        }
+        let principal = Principal {
+            name: declaration.name.clone(),
+            status: declaration.status,
+            credentials,
+            grants: declaration.grants.into_iter().collect(),
+        };
+        insert_description(
+            spec,
+            DescriptionKind::Principal,
+            None,
+            &declaration.name,
+            declaration.description,
+        );
+        if spec
+            .principals
+            .insert(declaration.name.clone(), principal)
+            .is_some()
+        {
+            return Err(Error::DuplicatePrincipal {
+                name: declaration.name,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn collect_webhook_policy(
@@ -76,6 +148,7 @@ fn collect_webhook_policy(
                 },
             ),
             concurrency: declaration.concurrency.unwrap_or(defaults.concurrency),
+            signing: declaration.signing,
         });
     }
     Ok(())

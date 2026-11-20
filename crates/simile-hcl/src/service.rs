@@ -5,6 +5,7 @@ use crate::ast::{
     ContractDeclaration, ListenDeclaration, Module, ServiceDeclaration, ServiceDocument, Source,
     SourceDeclaration,
 };
+use crate::auth::principal;
 use crate::parse::{
     apply_error_set, async_operation, attribute, backend, behavior, effect, error_set, fault,
     fault_profile, fault_uses, labels, optional_description, protocol_error, reject_attributes,
@@ -37,6 +38,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
         effects: Vec::new(),
         webhooks: Vec::new(),
         webhook_policies: Vec::new(),
+        principals: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -89,6 +91,9 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "webhooks" => inline_behavior
                     .webhook_policies
                     .push(webhook_policy(block, source.name)?),
+                "principal" => inline_behavior
+                    .principals
+                    .push(principal(block, source.name)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: source.name.to_owned(),
@@ -364,6 +369,7 @@ webhooks {
                 out_of_order_probability_ppm: Some(200_000),
                 reorder_window_milliseconds: Some(3_000),
                 concurrency: Some(4),
+                signing: None,
             }
         );
     }

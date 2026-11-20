@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod ast;
+mod auth;
 mod compile;
 mod error;
 mod parse;
@@ -11,7 +12,8 @@ pub use ast::{
     ActionDeclaration, AsyncDeclaration, BackendDeclaration, BehaviorDeclaration,
     ContractDeclaration, EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration,
     FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
-    OutcomeDeclaration, ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
+    OutcomeDeclaration, PrincipalCredentialDeclaration, PrincipalDeclaration,
+    ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, Source, SourceDeclaration,
     WebhookDeclaration, WebhookEmissionDeclaration, WebhookPolicyDeclaration,
 };

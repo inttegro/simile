@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hcl::expr::{Expression, ObjectKey};
 use hcl::{Block, Body};
-use simile_spec::{EffectValue, HttpMethod, WebhookOrdering, WebhookPolicy};
+use simile_spec::{EffectValue, HttpMethod, WebhookOrdering, WebhookPolicy, WebhookSigning};
 
 use crate::ast::{WebhookDeclaration, WebhookEmissionDeclaration, WebhookPolicyDeclaration};
 use crate::parse::{
@@ -19,7 +19,6 @@ use crate::{Error, Result};
 /// occurrences overtake one another.
 pub(crate) fn webhook_policy(block: &Block, source: &str) -> Result<WebhookPolicyDeclaration> {
     labels(block, source, 0)?;
-    reject_blocks(block.body(), source, "webhooks")?;
     reject_attributes(
         block.body(),
         source,
@@ -71,6 +70,29 @@ pub(crate) fn webhook_policy(block: &Block, source: &str) -> Result<WebhookPolic
         ),
         None => None,
     };
+    let signing_blocks = block
+        .body()
+        .blocks()
+        .filter(|child| child.identifier() == "signing")
+        .collect::<Vec<_>>();
+    if let Some(unknown) = block
+        .body()
+        .blocks()
+        .find(|child| child.identifier() != "signing")
+    {
+        return Err(Error::UnknownNestedBlock {
+            file: source.to_owned(),
+            block: "webhooks".to_owned(),
+            nested: unknown.identifier().to_owned(),
+        });
+    }
+    if signing_blocks.len() > 1 {
+        return Err(invalid(source, "signing", "at most one signing block"));
+    }
+    let signing = signing_blocks
+        .first()
+        .map(|block| webhook_signing(block, source))
+        .transpose()?;
 
     if ordering == WebhookOrdering::Strict {
         if out_of_order_probability_ppm.is_some_and(|probability| probability > 0) {
@@ -104,6 +126,34 @@ pub(crate) fn webhook_policy(block: &Block, source: &str) -> Result<WebhookPolic
         out_of_order_probability_ppm,
         reorder_window_milliseconds,
         concurrency,
+        signing,
+    })
+}
+
+fn webhook_signing(block: &Block, source: &str) -> Result<WebhookSigning> {
+    labels(block, source, 0)?;
+    reject_blocks(block.body(), source, "signing")?;
+    reject_attributes(
+        block.body(),
+        source,
+        "signing",
+        &["secret", "header", "timestamp_header"],
+    )?;
+    let secret = attribute(block.body(), "secret")
+        .ok_or_else(|| invalid(source, "secret", "a non-empty test signing secret"))
+        .and_then(|value| non_empty_string(value, source, "signing", "secret"))?;
+    let header = attribute(block.body(), "header")
+        .map(|value| non_empty_string(value, source, "signing", "header"))
+        .transpose()?
+        .unwrap_or_else(|| "X-Simile-Signature".to_owned());
+    let timestamp_header = attribute(block.body(), "timestamp_header")
+        .map(|value| non_empty_string(value, source, "signing", "timestamp_header"))
+        .transpose()?
+        .unwrap_or_else(|| "X-Simile-Timestamp".to_owned());
+    Ok(WebhookSigning {
+        secret,
+        header,
+        timestamp_header,
     })
 }
 

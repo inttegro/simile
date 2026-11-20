@@ -40,6 +40,17 @@ fn render(report: &ops::AuditReport, terminal: &Terminal) -> Result<()> {
         report.convention_inferred_effects
     ))?;
     terminal.line(format_args!(
+        "{MUTED}surfaces{MUTED:#} {} secured operations · {} test principals · {} webhooks · signing {}",
+        report.secured_operations,
+        report.principals,
+        report.webhooks,
+        if report.signed_webhooks {
+            "configured"
+        } else {
+            "absent"
+        }
+    ))?;
+    terminal.line(format_args!(
         "{MUTED}findings{MUTED:#} {} errors · {} warnings",
         report.errors, report.warnings
     ))?;

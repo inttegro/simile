@@ -30,6 +30,19 @@ impl IncomingParameters {
             ParameterLocation::Cookie => &self.cookies,
         }
     }
+
+    #[must_use]
+    pub fn first(&self, location: ParameterLocation, name: &str) -> Option<&str> {
+        let name = if location == ParameterLocation::Header {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_owned()
+        };
+        self.values(location)
+            .get(&name)
+            .and_then(|values| values.first())
+            .map(String::as_str)
+    }
 }
 
 /// Parameters proven against one operation's compiled contract.
@@ -48,6 +61,15 @@ impl ValidatedParameters {
                 values.get(name)
             }
         })
+    }
+
+    /// Iterate over decoded parameters in one OpenAPI location.
+    pub fn at(&self, location: ParameterLocation) -> impl Iterator<Item = (&str, &Value)> {
+        self.values
+            .get(&location)
+            .into_iter()
+            .flat_map(|values| values.iter())
+            .map(|(name, value)| (name.as_str(), value))
     }
 }
 
@@ -127,12 +149,31 @@ fn parameter_values(
             .collect();
     }
     let identity = parameter_identity(parameter.location(), parameter.name());
-    values
+    let direct = values
         .get(&identity)
         .into_iter()
         .flatten()
         .cloned()
-        .collect()
+        .collect::<Vec<_>>();
+    if !direct.is_empty() || parameter.style() != "form" || !parameter.explode() {
+        return direct;
+    }
+
+    // Exploded form objects have no outer parameter key: `role=admin&active=true`.
+    // Schema property names make the collection precise even when the request
+    // contains unrelated query or cookie values.
+    parameter.schema().map_or_else(Vec::new, |schema| {
+        schema
+            .property_names()
+            .flat_map(|property| {
+                values
+                    .get(property)
+                    .into_iter()
+                    .flatten()
+                    .map(move |value| format!("{property}\0{value}"))
+            })
+            .collect()
+    })
 }
 
 fn decode_parameter(
@@ -176,6 +217,9 @@ fn candidates(parameter: &ArtifactParameter<'_>, raw: &[String]) -> Vec<Value> {
         return vec![deep_object(raw)];
     }
     let mut values = Vec::new();
+    if raw.iter().any(|value| value.contains('\0')) {
+        values.push(deep_object(raw));
+    }
     if raw.len() > 1 {
         values.push(Value::Array(
             raw.iter().map(|value| scalar(value)).collect(),
@@ -187,6 +231,20 @@ fn candidates(parameter: &ArtifactParameter<'_>, raw: &[String]) -> Vec<Value> {
         ));
     }
     let first = raw.first().map(String::as_str).unwrap_or_default();
+    match parameter.style() {
+        "matrix" => values.extend(matrix_candidates(
+            parameter.name(),
+            first,
+            parameter.explode(),
+        )),
+        "label" => values.extend(label_candidates(first, parameter.explode())),
+        "simple" if parameter.explode() => {
+            if let Some(object) = exploded_object(first.split(',')) {
+                values.push(object);
+            }
+        }
+        _ => {}
+    }
     values.extend(scalar_candidates(first));
     let delimiter = match parameter.style() {
         "spaceDelimited" => ' ',
@@ -208,6 +266,78 @@ fn candidates(parameter: &ArtifactParameter<'_>, raw: &[String]) -> Vec<Value> {
         }
     }
     values
+}
+
+fn matrix_candidates(name: &str, raw: &str, explode: bool) -> Vec<Value> {
+    let entries = raw
+        .strip_prefix(';')
+        .unwrap_or(raw)
+        .split(';')
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    if explode {
+        let named = entries
+            .iter()
+            .filter_map(|entry| entry.strip_prefix(&format!("{name}=")))
+            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        if !named.is_empty() {
+            candidates.push(Value::Array(named.into_iter().map(scalar).collect()));
+        }
+        if let Some(object) = exploded_object(entries.iter().copied()) {
+            candidates.push(object);
+        }
+        candidates
+    } else {
+        entries
+            .first()
+            .and_then(|entry| entry.strip_prefix(&format!("{name}=")))
+            .map(delimited_candidates)
+            .unwrap_or_default()
+    }
+}
+
+fn label_candidates(raw: &str, explode: bool) -> Vec<Value> {
+    let value = raw.strip_prefix('.').unwrap_or(raw);
+    if !explode {
+        return delimited_candidates(value);
+    }
+    let parts = value.split('.').collect::<Vec<_>>();
+    let mut candidates = vec![Value::Array(
+        parts.iter().map(|part| scalar(part)).collect(),
+    )];
+    if let Some(object) = exploded_object(parts.iter().copied()) {
+        candidates.push(object);
+    }
+    candidates
+}
+
+fn delimited_candidates(value: &str) -> Vec<Value> {
+    let parts = value.split(',').collect::<Vec<_>>();
+    let mut candidates = vec![Value::Array(
+        parts.iter().map(|part| scalar(part)).collect(),
+    )];
+    if parts.len() % 2 == 0 {
+        candidates.push(Value::Object(
+            parts
+                .chunks_exact(2)
+                .map(|pair| (pair[0].to_owned(), scalar(pair[1])))
+                .collect(),
+        ));
+    }
+    candidates
+}
+
+fn exploded_object<'a>(entries: impl IntoIterator<Item = &'a str>) -> Option<Value> {
+    let object = entries
+        .into_iter()
+        .filter_map(|entry| entry.split_once('='))
+        .map(|(key, value)| (key.to_owned(), scalar(value)))
+        .collect::<Map<_, _>>();
+    (!object.is_empty()).then_some(Value::Object(object))
 }
 
 fn scalar_candidates(value: &str) -> Vec<Value> {

@@ -525,7 +525,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "webhooks 0 contracts · 0 emissions\n",
                 "faults 0 definitions · 0 profiles\n",
                 "heuristics standard\n",
-                "artifact {} · format 17 · [..] bytes\n",
+                "artifact {} · format 18 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -537,7 +537,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"formatVersion\": 17,\n",
+            "  \"formatVersion\": 18,\n",
             "  \"compilerVersion\": \"0.2.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -588,7 +588,9 @@ fn writes_and_inspects_a_compiled_artifact() {
             "    \"outOfOrderProbabilityPpm\": 100000,\n",
             "    \"reorderWindowMilliseconds\": 5000,\n",
             "    \"concurrency\": 8\n",
-            "  }\n",
+            "  },\n",
+            "  \"securitySchemes\": 0,\n",
+            "  \"principals\": 0\n",
             "}\n"
         ));
 

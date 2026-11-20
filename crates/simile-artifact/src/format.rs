@@ -14,13 +14,13 @@ use simile_schema::{
 use simile_spec::{
     BehaviorOrigin, CompiledService, DescriptionKind, EffectAction, EffectActionKind, EffectOrigin,
     EffectValue, FaultAction, FaultPhase, HttpMethod, OpenApiFeature, OutcomeProvenance,
-    ParameterLocation, ResourceKind, ResourceRef, ResponseStatus, WebhookEmission, WebhookOrdering,
-    WebhookOrigin, WebhookPolicy,
+    ParameterLocation, PrincipalCredential, PrincipalStatus, ResourceKind, ResourceRef,
+    ResponseStatus, SecurityScheme, WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 17;
+pub const FORMAT_VERSION: u16 = 18;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -70,6 +70,8 @@ pub struct ArtifactSummary {
     pub encoded_bytes: usize,
     pub payload_sha256: String,
     pub webhook_policy: WebhookPolicy,
+    pub security_schemes: usize,
+    pub principals: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -111,6 +113,35 @@ pub struct ArtifactOperation<'a> {
     strings: &'a [String],
     values: &'a [ValueRecord],
     schemas: &'a SchemaCatalog,
+    security: &'a [SecurityRequirementRecord],
+    origin: BehaviorOrigin,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactSecurityRequirement<'a> {
+    entries: &'a [(StringId, Vec<StringId>)],
+    strings: &'a [String],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactSecurityScheme<'a> {
+    record: &'a SecuritySchemeRecord,
+    strings: &'a [String],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactPrincipal<'a> {
+    record: &'a PrincipalRecord,
+    strings: &'a [String],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactCredential<'a> {
+    Secret(&'a str),
+    Basic {
+        username: &'a str,
+        password: &'a str,
+    },
 }
 
 /// One compiled HTTP parameter available to transport adapters.
@@ -298,6 +329,12 @@ impl<'a> ArtifactOperation<'a> {
         self.behavior_response_status
     }
 
+    /// Source of the operation's behavioral refinement.
+    #[must_use]
+    pub const fn origin(&self) -> BehaviorOrigin {
+        self.origin
+    }
+
     pub fn outcomes(&self) -> impl Iterator<Item = ArtifactOutcome> + '_ {
         self.outcomes.iter().map(|outcome| ArtifactOutcome {
             name: self.strings[outcome.0 as usize].clone(),
@@ -318,10 +355,106 @@ impl<'a> ArtifactOperation<'a> {
         })
     }
 
+    pub fn security_requirements(
+        &self,
+    ) -> impl Iterator<Item = ArtifactSecurityRequirement<'a>> + 'a {
+        self.security
+            .iter()
+            .map(|requirement| ArtifactSecurityRequirement {
+                entries: &requirement.0,
+                strings: self.strings,
+            })
+    }
+
     fn values(&self) -> &[ValueRecord] {
         // The value arena is stored on the artifact rather than the operation;
         // this field is injected by `operation_at` through the schema-adjacent slot.
         self.values
+    }
+}
+
+impl<'a> ArtifactSecurityRequirement<'a> {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn schemes(&self) -> impl Iterator<Item = (&'a str, impl Iterator<Item = &'a str>)> + 'a {
+        self.entries.iter().map(|(scheme, scopes)| {
+            (
+                self.strings[*scheme as usize].as_str(),
+                scopes
+                    .iter()
+                    .map(|scope| self.strings[*scope as usize].as_str()),
+            )
+        })
+    }
+}
+
+impl<'a> ArtifactSecurityScheme<'a> {
+    #[must_use]
+    pub fn name(&self) -> &'a str {
+        &self.strings[self.record.0 as usize]
+    }
+
+    #[must_use]
+    pub fn scheme(&self) -> SecurityScheme {
+        decode_security_scheme(self.record, self.strings)
+    }
+}
+
+impl<'a> ArtifactPrincipal<'a> {
+    #[must_use]
+    pub fn name(&self) -> &'a str {
+        &self.strings[self.record.0 as usize]
+    }
+
+    #[must_use]
+    pub fn status(&self) -> PrincipalStatus {
+        decode_principal_status(self.record.1)
+    }
+
+    #[must_use]
+    pub fn credential(&self, scheme: &str) -> Option<ArtifactCredential<'a>> {
+        self.record
+            .2
+            .iter()
+            .find(|credential| self.strings[credential.0 as usize] == scheme)
+            .map(|credential| match credential.1 {
+                0 => ArtifactCredential::Secret(&self.strings[credential.2 as usize]),
+                1 => {
+                    let Some(password) = credential.3 else {
+                        unreachable!("artifact validation requires a basic password")
+                    };
+                    ArtifactCredential::Basic {
+                        username: &self.strings[credential.2 as usize],
+                        password: &self.strings[password as usize],
+                    }
+                }
+                _ => unreachable!("artifact validation rejects unknown credential kinds"),
+            })
+    }
+
+    #[must_use]
+    pub fn grants(&self, scope: &str) -> bool {
+        self.record
+            .3
+            .iter()
+            .any(|grant| self.strings[*grant as usize] == scope)
+    }
+
+    pub fn credential_schemes(&self) -> impl Iterator<Item = &'a str> + 'a {
+        self.record
+            .2
+            .iter()
+            .map(|credential| self.strings[credential.0 as usize].as_str())
+    }
+
+    pub fn granted_scopes(&self) -> impl Iterator<Item = &'a str> + 'a {
+        self.record
+            .3
+            .iter()
+            .map(|grant| self.strings[*grant as usize].as_str())
     }
 }
 
@@ -788,17 +921,31 @@ impl Artifact {
             encoded_bytes: self.encoded_bytes,
             payload_sha256: encode_hex(&self.digest),
             webhook_policy: self.webhook_policy(),
+            security_schemes: self.payload.10.len(),
+            principals: self.payload.11.len(),
         }
     }
 
     /// Return the service-wide webhook delivery infrastructure policy.
     #[must_use]
     pub fn webhook_policy(&self) -> WebhookPolicy {
+        let signing = match (self.payload.2.15, self.payload.2.16, self.payload.2.17) {
+            (Some(secret), Some(header), Some(timestamp_header)) => {
+                Some(simile_spec::WebhookSigning {
+                    secret: self.string(secret).to_owned(),
+                    header: self.string(header).to_owned(),
+                    timestamp_header: self.string(timestamp_header).to_owned(),
+                })
+            }
+            (None, None, None) => None,
+            _ => unreachable!("artifact validation requires a complete webhook signing policy"),
+        };
         WebhookPolicy {
             ordering: decode_webhook_ordering(self.payload.2.11),
             out_of_order_probability_ppm: self.payload.2.12,
             reorder_window_milliseconds: self.payload.2.13,
             concurrency: self.payload.2.14,
+            signing,
         }
     }
 
@@ -835,6 +982,32 @@ impl Artifact {
     /// Iterate over every compiled operation in stable structural-key order.
     pub fn operations(&self) -> impl Iterator<Item = ArtifactOperation<'_>> {
         (0..self.payload.3.len()).map(|index| self.operation_at(index))
+    }
+
+    pub fn security_schemes(&self) -> impl Iterator<Item = ArtifactSecurityScheme<'_>> {
+        self.payload.10.iter().map(|record| ArtifactSecurityScheme {
+            record,
+            strings: &self.payload.1,
+        })
+    }
+
+    #[must_use]
+    pub fn security_scheme(&self, name: &str) -> Option<ArtifactSecurityScheme<'_>> {
+        self.payload
+            .10
+            .binary_search_by(|record| self.string(record.0).cmp(name))
+            .ok()
+            .map(|index| ArtifactSecurityScheme {
+                record: &self.payload.10[index],
+                strings: &self.payload.1,
+            })
+    }
+
+    pub fn principals(&self) -> impl Iterator<Item = ArtifactPrincipal<'_>> {
+        self.payload.11.iter().map(|record| ArtifactPrincipal {
+            record,
+            strings: &self.payload.1,
+        })
     }
 
     /// Return the compiled mapping for a transport/runtime failure cause.
@@ -1127,6 +1300,8 @@ impl Artifact {
             strings: &self.payload.1,
             values: &self.payload.4,
             schemas: &self.payload.7,
+            security: &operation.12,
+            origin: decode_origin(operation.8),
         }
     }
 
@@ -1296,6 +1471,8 @@ struct Payload(
     SchemaCatalog,
     Vec<EffectRecord>,
     Vec<WebhookRecord>,
+    Vec<SecuritySchemeRecord>,
+    Vec<PrincipalRecord>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1315,6 +1492,9 @@ struct ServiceRecord(
     u32,
     u64,
     u16,
+    Option<StringId>,
+    Option<StringId>,
+    Option<StringId>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1334,7 +1514,27 @@ struct OperationRecord(
     Option<u16>,
     Vec<OutcomeRecord>,
     Vec<ParameterRecord>,
+    Vec<SecurityRequirementRecord>,
 );
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SecurityRequirementRecord(Vec<(StringId, Vec<StringId>)>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SecuritySchemeRecord(
+    StringId,
+    u8,
+    u8,
+    Option<StringId>,
+    Option<StringId>,
+    Option<StringId>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct PrincipalRecord(StringId, u8, Vec<CredentialRecord>, Vec<StringId>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CredentialRecord(StringId, u8, StringId, Option<StringId>);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ParameterRecord(
@@ -1685,6 +1885,27 @@ impl Payload {
             service.webhook_policy.out_of_order_probability_ppm,
             service.webhook_policy.reorder_window_milliseconds,
             service.webhook_policy.concurrency,
+            strings.optional(
+                service
+                    .webhook_policy
+                    .signing
+                    .as_ref()
+                    .map(|signing| signing.secret.as_str()),
+            )?,
+            strings.optional(
+                service
+                    .webhook_policy
+                    .signing
+                    .as_ref()
+                    .map(|signing| signing.header.as_str()),
+            )?,
+            strings.optional(
+                service
+                    .webhook_policy
+                    .signing
+                    .as_ref()
+                    .map(|signing| signing.timestamp_header.as_str()),
+            )?,
         );
 
         let mut operations = Vec::with_capacity(service.operations.len());
@@ -1727,6 +1948,26 @@ impl Payload {
                         parameter.allow_reserved,
                         schema,
                     ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let security = operation
+                .security
+                .iter()
+                .map(|requirement| {
+                    let schemes = requirement
+                        .schemes
+                        .iter()
+                        .map(|(scheme, scopes)| {
+                            Ok((
+                                strings.id(scheme)?,
+                                scopes
+                                    .iter()
+                                    .map(|scope| strings.id(scope))
+                                    .collect::<Result<Vec<_>>>()?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(SecurityRequirementRecord(schemes))
                 })
                 .collect::<Result<Vec<_>>>()?;
             let mut ordered_responses = operation.responses.iter().collect::<Vec<_>>();
@@ -1800,6 +2041,7 @@ impl Payload {
                 behavior_response_status,
                 outcomes,
                 parameters,
+                security,
             ));
         }
 
@@ -1921,6 +2163,47 @@ impl Payload {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let security_schemes = service
+            .contract
+            .security_schemes
+            .iter()
+            .map(|(name, scheme)| encode_security_scheme(name, scheme, &strings))
+            .collect::<Result<Vec<_>>>()?;
+        let principals = service
+            .principals
+            .values()
+            .map(|principal| {
+                let credentials = principal
+                    .credentials
+                    .iter()
+                    .map(|(scheme, credential)| match credential {
+                        PrincipalCredential::Secret { value } => Ok(CredentialRecord(
+                            strings.id(scheme)?,
+                            0,
+                            strings.id(value)?,
+                            None,
+                        )),
+                        PrincipalCredential::Basic { username, password } => Ok(CredentialRecord(
+                            strings.id(scheme)?,
+                            1,
+                            strings.id(username)?,
+                            Some(strings.id(password)?),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(PrincipalRecord(
+                    strings.id(&principal.name)?,
+                    encode_principal_status(principal.status),
+                    credentials,
+                    principal
+                        .grants
+                        .iter()
+                        .map(|grant| strings.id(grant))
+                        .collect::<Result<Vec<_>>>()?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let schemas = schema_compiler.finish()?;
         validate_outcome_bodies(&operations, &values.records, &strings.values, &schemas)?;
 
@@ -1935,6 +2218,8 @@ impl Payload {
             schemas,
             effects,
             webhooks,
+            security_schemes,
+            principals,
         ))
     }
 
@@ -1952,6 +2237,11 @@ impl Payload {
             .8
             .iter()
             .map(|fault| fault.0)
+            .collect::<BTreeSet<_>>();
+        let security_scheme_names = self
+            .10
+            .iter()
+            .map(|scheme| scheme.0)
             .collect::<BTreeSet<_>>();
         validate_index(self.0, strings, "compiler version")?;
         validate_index(self.2.0, strings, "service title")?;
@@ -2031,7 +2321,7 @@ impl Payload {
             }
         }
         for description in &self.2.10 {
-            if description.0 > 11 {
+            if description.0 > 12 {
                 return Err(Error::Invalid("description kind"));
             }
             validate_optional_index(description.1, strings, "description parent")?;
@@ -2049,6 +2339,13 @@ impl Payload {
         }
         if self.2.12 > 0 && (self.2.13 == 0 || self.2.14 < 2) {
             return Err(Error::Invalid("webhook reordering policy"));
+        }
+        validate_optional_index(self.2.15, strings, "webhook signing secret")?;
+        validate_optional_index(self.2.16, strings, "webhook signing header")?;
+        validate_optional_index(self.2.17, strings, "webhook signing timestamp header")?;
+        if self.2.15.is_some() != self.2.16.is_some() || self.2.15.is_some() != self.2.17.is_some()
+        {
+            return Err(Error::Invalid("webhook signing policy"));
         }
 
         for operation in &self.3 {
@@ -2119,6 +2416,17 @@ impl Payload {
                     .is_some_and(|schema| !BoundValueSchema::new(schema, &self.7).is_well_formed())
                 {
                     return Err(Error::Invalid("parameter schema"));
+                }
+            }
+            for requirement in &operation.12 {
+                for (scheme, scopes) in &requirement.0 {
+                    validate_index(*scheme, strings, "security requirement scheme")?;
+                    if !security_scheme_names.contains(scheme) {
+                        return Err(Error::Invalid("security requirement reference"));
+                    }
+                    for scope in scopes {
+                        validate_index(*scope, strings, "security requirement scope")?;
+                    }
                 }
             }
         }
@@ -2254,6 +2562,54 @@ impl Payload {
             let right = &self.1[webhooks[1].0 as usize];
             if left >= right {
                 return Err(Error::Invalid("webhook ordering"));
+            }
+        }
+        for scheme in &self.10 {
+            validate_index(scheme.0, strings, "security scheme name")?;
+            if scheme.1 > 4 || scheme.2 > 3 {
+                return Err(Error::Invalid("security scheme"));
+            }
+            validate_optional_index(scheme.3, strings, "API key name")?;
+            validate_optional_index(scheme.4, strings, "HTTP auth scheme")?;
+            validate_optional_index(scheme.5, strings, "HTTP bearer format")?;
+            if (scheme.1 == 0 && (scheme.3.is_none() || scheme.4.is_some() || scheme.5.is_some()))
+                || (scheme.1 == 1 && (scheme.3.is_some() || scheme.4.is_none()))
+                || (scheme.1 > 1
+                    && (scheme.3.is_some() || scheme.4.is_some() || scheme.5.is_some()))
+            {
+                return Err(Error::Invalid("security scheme payload"));
+            }
+        }
+        for schemes in self.10.windows(2) {
+            if self.1[schemes[0].0 as usize] >= self.1[schemes[1].0 as usize] {
+                return Err(Error::Invalid("security scheme ordering"));
+            }
+        }
+        for principal in &self.11 {
+            validate_index(principal.0, strings, "principal name")?;
+            if principal.1 > 2 || principal.2.is_empty() {
+                return Err(Error::Invalid("principal"));
+            }
+            for credential in &principal.2 {
+                validate_index(credential.0, strings, "principal credential scheme")?;
+                if !security_scheme_names.contains(&credential.0) || credential.1 > 1 {
+                    return Err(Error::Invalid("principal credential"));
+                }
+                validate_index(credential.2, strings, "principal credential value")?;
+                validate_optional_index(credential.3, strings, "principal credential password")?;
+                if (credential.1 == 0 && credential.3.is_some())
+                    || (credential.1 == 1 && credential.3.is_none())
+                {
+                    return Err(Error::Invalid("principal credential payload"));
+                }
+            }
+            for grant in &principal.3 {
+                validate_index(*grant, strings, "principal grant")?;
+            }
+        }
+        for principals in self.11.windows(2) {
+            if self.1[principals[0].0 as usize] >= self.1[principals[1].0 as usize] {
+                return Err(Error::Invalid("principal ordering"));
             }
         }
         Ok(())
@@ -2489,6 +2845,12 @@ impl StringTable {
                 values.insert(parameter.name.clone());
                 values.insert(parameter.style.clone());
             }
+            for requirement in &operation.security {
+                for (scheme, scopes) in &requirement.schemes {
+                    values.insert(scheme.clone());
+                    values.extend(scopes.iter().cloned());
+                }
+            }
             for response in &operation.responses {
                 collect_value_strings(&response.definition, &mut values);
             }
@@ -2579,6 +2941,45 @@ impl StringTable {
             if let Some(target) = &webhook.target {
                 values.insert(target.clone());
             }
+        }
+        for (name, scheme) in &service.contract.security_schemes {
+            values.insert(name.clone());
+            match scheme {
+                SecurityScheme::ApiKey { name, .. } => {
+                    values.insert(name.clone());
+                }
+                SecurityScheme::Http {
+                    scheme,
+                    bearer_format,
+                } => {
+                    values.insert(scheme.clone());
+                    values.extend(bearer_format.iter().cloned());
+                }
+                SecurityScheme::OAuth2
+                | SecurityScheme::OpenIdConnect
+                | SecurityScheme::MutualTls => {}
+            }
+        }
+        for principal in service.principals.values() {
+            values.insert(principal.name.clone());
+            values.extend(principal.grants.iter().cloned());
+            for (scheme, credential) in &principal.credentials {
+                values.insert(scheme.clone());
+                match credential {
+                    PrincipalCredential::Secret { value } => {
+                        values.insert(value.clone());
+                    }
+                    PrincipalCredential::Basic { username, password } => {
+                        values.insert(username.clone());
+                        values.insert(password.clone());
+                    }
+                }
+            }
+        }
+        if let Some(signing) = &service.webhook_policy.signing {
+            values.insert(signing.secret.clone());
+            values.insert(signing.header.clone());
+            values.insert(signing.timestamp_header.clone());
         }
 
         let values = values.into_iter().collect::<Vec<_>>();
@@ -2947,6 +3348,14 @@ const fn encode_origin(origin: BehaviorOrigin) -> u8 {
     }
 }
 
+fn decode_origin(origin: u8) -> BehaviorOrigin {
+    match origin {
+        0 => BehaviorOrigin::OpenApi,
+        1 => BehaviorOrigin::Hcl,
+        _ => unreachable!("artifact validation rejects unknown behavior origins"),
+    }
+}
+
 const fn encode_effect_origin(origin: EffectOrigin) -> u8 {
     match origin {
         EffectOrigin::ProviderAuthored => 0,
@@ -2995,6 +3404,7 @@ const fn encode_description_kind(kind: DescriptionKind) -> u8 {
         DescriptionKind::FaultProfile => 9,
         DescriptionKind::Effect => 10,
         DescriptionKind::Webhook => 11,
+        DescriptionKind::Principal => 12,
     }
 }
 
@@ -3012,6 +3422,7 @@ fn decode_description_kind(kind: u8) -> DescriptionKind {
         9 => DescriptionKind::FaultProfile,
         10 => DescriptionKind::Effect,
         11 => DescriptionKind::Webhook,
+        12 => DescriptionKind::Principal,
         _ => unreachable!("artifact validation rejects unknown description kinds"),
     }
 }
@@ -3135,6 +3546,89 @@ fn decode_parameter_location(location: u8) -> ParameterLocation {
     }
 }
 
+fn encode_security_scheme(
+    name: &str,
+    scheme: &SecurityScheme,
+    strings: &StringTable,
+) -> Result<SecuritySchemeRecord> {
+    let record = match scheme {
+        SecurityScheme::ApiKey {
+            location,
+            name: key,
+        } => SecuritySchemeRecord(
+            strings.id(name)?,
+            0,
+            encode_parameter_location(*location),
+            Some(strings.id(key)?),
+            None,
+            None,
+        ),
+        SecurityScheme::Http {
+            scheme,
+            bearer_format,
+        } => SecuritySchemeRecord(
+            strings.id(name)?,
+            1,
+            0,
+            None,
+            Some(strings.id(scheme)?),
+            strings.optional(bearer_format.as_deref())?,
+        ),
+        SecurityScheme::OAuth2 => SecuritySchemeRecord(strings.id(name)?, 2, 0, None, None, None),
+        SecurityScheme::OpenIdConnect => {
+            SecuritySchemeRecord(strings.id(name)?, 3, 0, None, None, None)
+        }
+        SecurityScheme::MutualTls => {
+            SecuritySchemeRecord(strings.id(name)?, 4, 0, None, None, None)
+        }
+    };
+    Ok(record)
+}
+
+fn decode_security_scheme(record: &SecuritySchemeRecord, strings: &[String]) -> SecurityScheme {
+    match record.1 {
+        0 => {
+            let Some(name) = record.3 else {
+                unreachable!("artifact validation requires an API key name")
+            };
+            SecurityScheme::ApiKey {
+                location: decode_parameter_location(record.2),
+                name: strings[name as usize].clone(),
+            }
+        }
+        1 => {
+            let Some(scheme) = record.4 else {
+                unreachable!("artifact validation requires an HTTP scheme")
+            };
+            SecurityScheme::Http {
+                scheme: strings[scheme as usize].clone(),
+                bearer_format: record.5.map(|id| strings[id as usize].clone()),
+            }
+        }
+        2 => SecurityScheme::OAuth2,
+        3 => SecurityScheme::OpenIdConnect,
+        4 => SecurityScheme::MutualTls,
+        _ => unreachable!("artifact validation rejects unknown security schemes"),
+    }
+}
+
+const fn encode_principal_status(status: PrincipalStatus) -> u8 {
+    match status {
+        PrincipalStatus::Active => 0,
+        PrincipalStatus::Revoked => 1,
+        PrincipalStatus::Expired => 2,
+    }
+}
+
+fn decode_principal_status(status: u8) -> PrincipalStatus {
+    match status {
+        0 => PrincipalStatus::Active,
+        1 => PrincipalStatus::Revoked,
+        2 => PrincipalStatus::Expired,
+        _ => unreachable!("artifact validation rejects unknown principal statuses"),
+    }
+}
+
 fn validate_index(id: u32, length: usize, field: &'static str) -> Result<()> {
     if usize::try_from(id).map_or(true, |id| id >= length) {
         return Err(Error::Invalid(field));
@@ -3180,6 +3674,9 @@ mod tests {
                 100_000,
                 5_000,
                 8,
+                None,
+                None,
+                None,
             ),
             vec![OperationRecord(
                 99,
@@ -3194,11 +3691,14 @@ mod tests {
                 None,
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
             )],
             Vec::new(),
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );
@@ -3236,12 +3736,17 @@ mod tests {
                 100_000,
                 5_000,
                 8,
+                None,
+                None,
+                None,
             ),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             SchemaCatalog::default(),
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );

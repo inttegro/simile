@@ -145,6 +145,20 @@ pub enum Error {
     #[error("webhook infrastructure policy is declared more than once")]
     DuplicateWebhookPolicy,
 
+    #[error("principal `{name}` is declared more than once")]
+    DuplicatePrincipal { name: String },
+
+    #[error("principal `{principal}` declares credential `{scheme}` more than once")]
+    DuplicatePrincipalCredential { principal: String, scheme: String },
+
+    #[error("principal `{principal}` references unknown OpenAPI security scheme `{scheme}`")]
+    UnknownPrincipalSecurityScheme { principal: String, scheme: String },
+
+    #[error(
+        "principal `{principal}` credential `{scheme}` does not match its OpenAPI security scheme"
+    )]
+    InvalidPrincipalCredential { principal: String, scheme: String },
+
     #[error("fault profile `{profile}` lists fault `{fault}` more than once")]
     DuplicateFaultProfileFault { profile: String, fault: String },
 

@@ -2,8 +2,8 @@ use serde_json::json;
 use simile_artifact::{Artifact, decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_runtime::{
-    Error, ExecutionOptions, OperationCall, OperationValueCall, ReplayIdentity, Runtime,
-    TransportPlan,
+    Error, ExecutionOptions, IncomingParameters, OperationCall, OperationValueCall, ReplayIdentity,
+    Runtime, TransportPlan, authenticate,
 };
 
 #[test]
@@ -138,6 +138,8 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
                 response_content_type: None,
                 replay: None,
                 response_seed: None,
+                response_body: None,
+                parameters: None,
             },
         )
         .unwrap_or_else(|error| panic!("{error}"));
@@ -458,6 +460,127 @@ fn runs_a_decoded_form_value_without_coupling_runtime_to_http_encoding() {
     );
 }
 
+#[test]
+fn form_decoding_uses_the_schema_without_corrupting_numeric_strings() {
+    let artifact = artifact();
+    let result = Runtime::new(&artifact)
+        .execute(OperationCall {
+            operation: "POST /customers",
+            content_type: Some("application/x-www-form-urlencoded"),
+            body: b"postal_code=00123&quantity=2",
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let request = result
+        .request_body()
+        .map(simile_runtime::ValidatedBody::value)
+        .unwrap_or_else(|| panic!("missing decoded form"));
+
+    assert_eq!(request.get("postal_code"), Some(&json!("00123")));
+    assert_eq!(request.get("quantity"), Some(&json!(2)));
+}
+
+#[test]
+fn authenticates_test_principals_and_enforces_oauth_scopes() {
+    let artifact = authentication_artifact();
+    let mut incoming = IncomingParameters::default();
+    incoming.headers.insert(
+        "authorization".to_owned(),
+        vec!["Bearer sk_test_merchant".to_owned()],
+    );
+    let principal = authenticate(&artifact, "GET /orders", &incoming)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|| panic!("principal missing"));
+    assert_eq!(principal.name(), "merchant_app");
+
+    incoming.headers.insert(
+        "authorization".to_owned(),
+        vec!["Bearer sk_test_readonly".to_owned()],
+    );
+    assert!(matches!(
+        authenticate(&artifact, "GET /orders", &incoming),
+        Err(Error::PermissionDenied { .. })
+    ));
+}
+
+#[test]
+fn rejects_revoked_and_unknown_credentials() {
+    let artifact = authentication_artifact();
+    for token in ["sk_test_revoked", "sk_test_unknown"] {
+        let mut incoming = IncomingParameters::default();
+        incoming
+            .headers
+            .insert("authorization".to_owned(), vec![format!("Bearer {token}")]);
+        assert!(matches!(
+            authenticate(&artifact, "GET /orders", &incoming),
+            Err(Error::AuthenticationRequired { .. })
+        ));
+    }
+}
+
+#[test]
+fn treats_an_empty_security_alternative_as_public_access() {
+    let artifact = authentication_artifact();
+    let principal = authenticate(&artifact, "GET /optional", &IncomingParameters::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(principal.is_none());
+}
+
+fn authentication_artifact() -> Artifact {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Authenticated orders, version: 1.0.0 }
+components:
+  securitySchemes:
+    merchantOAuth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://example.test/oauth/token
+          scopes:
+            orders:read: Read orders
+paths:
+  /orders:
+    get:
+      security:
+        - merchantOAuth: [orders:read]
+      responses:
+        "200": { description: Orders }
+  /optional:
+    get:
+      security:
+        - {}
+        - merchantOAuth: [orders:read]
+      responses:
+        "200": { description: Public or authenticated }
+"#;
+    let behavior = r#"
+principal "merchant_app" {
+  description = "A merchant application with order access."
+  grants = ["orders:read"]
+  credential "merchantOAuth" { value = "sk_test_merchant" }
+}
+
+principal "readonly_app" {
+  credential "merchantOAuth" { value = "sk_test_readonly" }
+}
+
+principal "revoked_app" {
+  status = "revoked"
+  grants = ["orders:read"]
+  credential "merchantOAuth" { value = "sk_test_revoked" }
+}
+"#;
+    let service = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("auth.yaml", openapi),
+            behaviors: vec![Source::new("auth.hcl", behavior)],
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
 fn artifact() -> Artifact {
     let openapi = r#"
 openapi: 3.1.2
@@ -553,6 +676,8 @@ paths:
               properties:
                 email: { type: string }
                 name: { type: string }
+                postal_code: { type: string }
+                quantity: { type: integer }
       responses:
         "200":
           description: Customer

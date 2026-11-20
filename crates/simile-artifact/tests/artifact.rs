@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::json;
-use simile_artifact::{Error, decode, encode};
+use simile_artifact::{Error, FORMAT_VERSION, decode, encode};
 use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorOrigin, CompiledOperation, CompiledService,
     DescriptionCatalog, DescriptionEntry, DescriptionKind, HttpMethod, MediaTypeContract,
@@ -19,7 +19,7 @@ fn encoding_is_deterministic_and_round_trips_metadata() {
 
     let artifact = decode(&first).unwrap_or_else(|error| panic!("{error}"));
     let summary = artifact.summary();
-    assert_eq!(summary.format_version, 17);
+    assert_eq!(summary.format_version, FORMAT_VERSION);
     assert_eq!(summary.parameters, 0);
     assert_eq!(summary.service, "Orders");
     assert_eq!(summary.service_version, "2026-11-15");
@@ -402,6 +402,7 @@ fn example_service() -> CompiledService {
                 )]),
             }),
         }],
+        security: Vec::new(),
     };
     let resource = Resource {
         kind: ResourceKind::Db,
@@ -446,6 +447,7 @@ fn example_service() -> CompiledService {
                 description: None,
             },
             operations: BTreeMap::from([(key.clone(), operation)]),
+            security_schemes: BTreeMap::new(),
             webhooks: BTreeMap::new(),
             schemas: BTreeMap::new(),
         },
@@ -460,5 +462,6 @@ fn example_service() -> CompiledService {
         effects: BTreeMap::new(),
         webhooks: BTreeMap::new(),
         webhook_policy: simile_spec::WebhookPolicy::default(),
+        principals: BTreeMap::new(),
     }
 }

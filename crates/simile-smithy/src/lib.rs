@@ -370,6 +370,7 @@ fn operation(model: &Model, shape: &Shape) -> Result<Operation> {
         request_body: raw_request_body,
         request,
         responses,
+        security: Vec::new(),
     })
 }
 

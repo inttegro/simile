@@ -1,4 +1,71 @@
-use simile_spec::{HttpMethod, OpenApiFeature, ParameterLocation, ResponseStatus};
+use simile_spec::{HttpMethod, OpenApiFeature, ParameterLocation, ResponseStatus, SecurityScheme};
+
+#[test]
+fn preserves_security_schemes_requirement_alternatives_and_public_overrides() {
+    let source = r#"
+openapi: 3.1.0
+info: { title: Secured orders, version: 1.0.0 }
+security:
+  - merchantKey: []
+    merchantOAuth: [orders:write]
+  - bearerAuth: []
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      responses:
+        "201": { description: Created }
+    get:
+      operationId: listOrders
+      security: []
+      responses:
+        "200": { description: Listed }
+components:
+  securitySchemes:
+    merchantKey:
+      type: apiKey
+      in: header
+      name: X-Merchant-Key
+    merchantOAuth:
+      type: oauth2
+      flows: {}
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+"#;
+    let contract = simile_openapi::parse(source).unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        contract.security_schemes["merchantKey"],
+        SecurityScheme::ApiKey {
+            location: ParameterLocation::Header,
+            name: "X-Merchant-Key".to_owned(),
+        }
+    );
+    assert_eq!(
+        contract.security_schemes["bearerAuth"],
+        SecurityScheme::Http {
+            scheme: "bearer".to_owned(),
+            bearer_format: Some("JWT".to_owned()),
+        }
+    );
+    let secured = contract
+        .operation_by_id("createOrder")
+        .unwrap_or_else(|| panic!("create operation"));
+    assert_eq!(secured.security.len(), 2);
+    assert_eq!(
+        secured.security[0].schemes["merchantOAuth"],
+        ["orders:write"]
+    );
+    assert!(
+        contract
+            .operation_by_id("listOrders")
+            .unwrap_or_else(|| panic!("list operation"))
+            .security
+            .is_empty()
+    );
+}
 
 #[test]
 fn normalizes_the_three_supported_feature_lines() {

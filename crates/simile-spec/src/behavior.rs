@@ -28,6 +28,7 @@ pub enum DescriptionKind {
     Webhook,
     FaultProfile,
     Effect,
+    Principal,
 }
 
 /// One human-readable description retained in a compiled service artifact.
@@ -252,13 +253,24 @@ impl fmt::Display for WebhookOrdering {
 /// remains deterministic and does not make floating-point decisions at
 /// runtime. The default represents a concurrent, best-effort delivery system,
 /// not an unrealistically ordered queue.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebhookPolicy {
     pub ordering: WebhookOrdering,
     pub out_of_order_probability_ppm: u32,
     pub reorder_window_milliseconds: u64,
     pub concurrency: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signing: Option<WebhookSigning>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookSigning {
+    #[serde(skip_serializing)]
+    pub secret: String,
+    pub header: String,
+    pub timestamp_header: String,
 }
 
 impl Default for WebhookPolicy {
@@ -268,6 +280,7 @@ impl Default for WebhookPolicy {
             out_of_order_probability_ppm: 100_000,
             reorder_window_milliseconds: 5_000,
             concurrency: 8,
+            signing: None,
         }
     }
 }
@@ -399,6 +412,7 @@ pub struct BehaviorSpec {
     pub effects: BTreeMap<String, Effect>,
     pub webhooks: BTreeMap<String, crate::WebhookContract>,
     pub webhook_policy: WebhookPolicy,
+    pub principals: BTreeMap<String, crate::Principal>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -434,4 +448,5 @@ pub struct CompiledService {
     pub effects: BTreeMap<String, Effect>,
     pub webhooks: BTreeMap<String, crate::WebhookContract>,
     pub webhook_policy: WebhookPolicy,
+    pub principals: BTreeMap<String, crate::Principal>,
 }

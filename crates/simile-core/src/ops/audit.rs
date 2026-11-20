@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::Serialize;
-use simile_spec::{EffectOrigin, ParameterLocation};
+use simile_spec::{EffectOrigin, ParameterLocation, PrincipalStatus, SecurityScheme};
 
 use crate::{Error, Result};
 
@@ -40,6 +40,10 @@ pub struct AuditReport {
     pub provider_authored_outcomes: usize,
     pub provider_authored_effects: usize,
     pub convention_inferred_effects: usize,
+    pub secured_operations: usize,
+    pub principals: usize,
+    pub webhooks: usize,
+    pub signed_webhooks: bool,
     pub errors: usize,
     pub warnings: usize,
     pub findings: Vec<AuditFinding>,
@@ -63,8 +67,48 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         .iter()
         .flat_map(|effect| effect.operations().iter().cloned())
         .collect::<BTreeSet<_>>();
+    let principals = artifact.principals().collect::<Vec<_>>();
+    let mut secured_operations = 0;
+    for scheme in artifact.security_schemes() {
+        if matches!(scheme.scheme(), SecurityScheme::MutualTls) {
+            findings.push(finding(
+                AuditSeverity::Error,
+                "auth.mutual_tls_transport_unsupported",
+                scheme.name(),
+                "The HTTP listener has no verified client-certificate input.",
+                "Use another declared security alternative until TLS identity reaches the server adapter.",
+            ));
+        }
+    }
 
     for operation in artifact.operations() {
+        let requirements = operation.security_requirements().collect::<Vec<_>>();
+        let requires_authentication = !requirements.is_empty()
+            && requirements
+                .iter()
+                .all(|requirement| !requirement.is_empty());
+        if requires_authentication {
+            secured_operations += 1;
+            let exercised = requirements.iter().any(|requirement| {
+                requirement.schemes().all(|(scheme, scopes)| {
+                    let scopes = scopes.collect::<Vec<_>>();
+                    principals.iter().any(|principal| {
+                        principal.status() == PrincipalStatus::Active
+                            && principal.credential(scheme).is_some()
+                            && scopes.iter().all(|scope| principal.grants(scope))
+                    })
+                })
+            });
+            if !exercised {
+                findings.push(finding(
+                    AuditSeverity::Warning,
+                    "auth.unexercised",
+                    operation.key(),
+                    "No active test principal can satisfy any declared security alternative.",
+                    "Declare a local principal with the required credential schemes and grants.",
+                ));
+            }
+        }
         if operation.operation_id().is_none() {
             findings.push(finding(
                 AuditSeverity::Warning,
@@ -115,7 +159,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
                     "parameter.unsupported_style",
                     &format!("{} {}", operation.key(), parameter.name()),
                     &format!(
-                        "The runtime does not yet decode the {} style for this parameter location.",
+                        "The runtime cannot decode the {} style at this parameter location.",
                         parameter.style()
                     ),
                     "Use a currently supported style or retain this finding until the decoder supports it.",
@@ -149,10 +193,10 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         if !used_resources.contains(&name) {
             findings.push(finding(
                 AuditSeverity::Warning,
-                "resource.unused",
+                "backend.unused",
                 &name,
-                "The resource is declared but no synchronous or asynchronous action uses it.",
-                "Remove the resource or connect it through an inferred or authored effect.",
+                "The backend is declared but no synchronous or asynchronous action uses it.",
+                "Remove the backend or connect it through an inferred or authored effect.",
             ));
         }
     }
@@ -162,6 +206,8 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         "invalid_body",
         "unsupported_media_type",
         "idempotency_conflict",
+        "authentication_required",
+        "permission_denied",
     ] {
         if artifact.protocol_error(cause).is_none() {
             findings.push(finding(
@@ -172,6 +218,18 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
                 "Map the cause to a public service error when provider-faithful errors matter.",
             ));
         }
+    }
+
+    let webhook_policy = artifact.webhook_policy();
+    let webhook_count = artifact.webhooks().count();
+    if webhook_count > 0 && webhook_policy.signing.is_none() {
+        findings.push(finding(
+            AuditSeverity::Info,
+            "webhook.unsigned",
+            "webhooks",
+            "Webhook deliveries carry no configured signature.",
+            "Configure webhook signing when consumers verify provider authenticity.",
+        ));
     }
 
     findings.sort_by(|left, right| {
@@ -197,6 +255,10 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         provider_authored_outcomes: summary.provider_authored_outcomes,
         provider_authored_effects: summary.provider_authored_effects,
         convention_inferred_effects: summary.convention_inferred_effects,
+        secured_operations,
+        principals: principals.len(),
+        webhooks: webhook_count,
+        signed_webhooks: webhook_policy.signing.is_some(),
         errors,
         warnings,
         findings,
@@ -227,7 +289,7 @@ fn supported_style(location: ParameterLocation, style: &str) -> bool {
     match location {
         // The runtime currently decodes the common OpenAPI styles below. The
         // audit must describe executable support, not merely spec validity.
-        ParameterLocation::Path => style == "simple",
+        ParameterLocation::Path => matches!(style, "simple" | "label" | "matrix"),
         ParameterLocation::Query => {
             matches!(
                 style,

@@ -150,6 +150,7 @@ impl Compiler {
             effects: behaviors.effects,
             webhooks,
             webhook_policy: behaviors.webhook_policy,
+            principals: behaviors.principals,
         })
     }
 }

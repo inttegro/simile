@@ -4,7 +4,8 @@ use serde_json::{Map, Value};
 use simile_spec::{
     ApiContract, HttpMethod, MediaTypeContract, OpenApiVersion, Operation, OperationKey,
     ParameterContract, ParameterLocation, RequestBodyContract, ResponseBodyContract,
-    ResponseContract, ResponseStatus, ServiceInfo, WebhookContract, WebhookOrigin,
+    ResponseContract, ResponseStatus, SecurityRequirement, SecurityScheme, ServiceInfo,
+    WebhookContract, WebhookOrigin,
 };
 
 use crate::{Error, Result};
@@ -23,6 +24,8 @@ pub(crate) fn contract(
         description: optional_string(info, "description", "info.description")?,
     };
     let paths = object(required(root, "paths")?, "paths")?;
+    let security_schemes = security_schemes(root)?;
+    let global_security = security_requirements(root.get("security"), "security")?;
     let mut operations = BTreeMap::new();
     let mut webhooks = BTreeMap::new();
     let mut operation_ids: HashMap<String, OperationKey> = HashMap::new();
@@ -35,7 +38,15 @@ pub(crate) fn contract(
             entries.extend(additional_operation_entries(path_item)?);
         }
         for (method_name, method, value) in entries {
-            let operation = operation(document, path, path_item, method_name, method, value)?;
+            let operation = operation(
+                document,
+                path,
+                path_item,
+                method_name,
+                method,
+                value,
+                &global_security,
+            )?;
             collect_callback_webhooks(
                 document,
                 &operation,
@@ -56,6 +67,7 @@ pub(crate) fn contract(
         openapi: version,
         info,
         operations,
+        security_schemes,
         webhooks,
         schemas: component_schemas(root)?,
     })
@@ -235,6 +247,7 @@ fn operation(
     method_name: &str,
     method: HttpMethod,
     value: &Value,
+    global_security: &[SecurityRequirement],
 ) -> Result<Operation> {
     let field = format!("paths.{path}.{method_name}");
     let body = object(value, &field)?;
@@ -279,6 +292,11 @@ fn operation(
         .map(|value| request_body(document, value, &format!("{field}.requestBody")))
         .transpose()?;
     let parameters = operation_parameters(document, path_item, body, &field)?;
+    let security = if body.contains_key("security") {
+        security_requirements(body.get("security"), &format!("{field}.security"))?
+    } else {
+        global_security.to_vec()
+    };
 
     Ok(Operation {
         key: OperationKey::new(&method, path),
@@ -291,7 +309,85 @@ fn operation(
         request_body: raw_request_body,
         request,
         responses,
+        security,
     })
+}
+
+fn security_schemes(root: &Map<String, Value>) -> Result<BTreeMap<String, SecurityScheme>> {
+    let Some(components) = root.get("components") else {
+        return Ok(BTreeMap::new());
+    };
+    let components = object(components, "components")?;
+    let Some(schemes) = components.get("securitySchemes") else {
+        return Ok(BTreeMap::new());
+    };
+    object(schemes, "components.securitySchemes")?
+        .iter()
+        .map(|(name, raw)| {
+            let field = format!("components.securitySchemes.{name}");
+            let scheme = object(raw, &field)?;
+            let kind = string(required(scheme, "type")?, &format!("{field}.type"))?;
+            let scheme = match kind {
+                "apiKey" => SecurityScheme::ApiKey {
+                    location: parameter_location(string(
+                        required(scheme, "in")?,
+                        &format!("{field}.in"),
+                    )?)
+                    .filter(|location| *location != ParameterLocation::Path)
+                    .ok_or_else(|| Error::InvalidField {
+                        field: format!("{field}.in"),
+                        expected: "one of query, header, or cookie",
+                    })?,
+                    name: string(required(scheme, "name")?, &format!("{field}.name"))?.to_owned(),
+                },
+                "http" => SecurityScheme::Http {
+                    scheme: string(required(scheme, "scheme")?, &format!("{field}.scheme"))?
+                        .to_ascii_lowercase(),
+                    bearer_format: optional_string(
+                        scheme,
+                        "bearerFormat",
+                        &format!("{field}.bearerFormat"),
+                    )?,
+                },
+                "oauth2" => SecurityScheme::OAuth2,
+                "openIdConnect" => SecurityScheme::OpenIdConnect,
+                "mutualTLS" => SecurityScheme::MutualTls,
+                _ => {
+                    return Err(Error::InvalidField {
+                        field: format!("{field}.type"),
+                        expected: "apiKey, http, oauth2, openIdConnect, or mutualTLS",
+                    });
+                }
+            };
+            Ok((name.clone(), scheme))
+        })
+        .collect()
+}
+
+fn security_requirements(raw: Option<&Value>, field: &str) -> Result<Vec<SecurityRequirement>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let alternatives = raw.as_array().ok_or_else(|| Error::InvalidField {
+        field: field.to_owned(),
+        expected: "an array",
+    })?;
+    alternatives
+        .iter()
+        .enumerate()
+        .map(|(index, alternative)| {
+            let schemes = object(alternative, &format!("{field}.{index}"))?
+                .iter()
+                .map(|(name, scopes)| {
+                    Ok((
+                        name.clone(),
+                        string_list(scopes, &format!("{field}.{index}.{name}"))?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            Ok(SecurityRequirement { schemes })
+        })
+        .collect()
 }
 
 fn operation_parameters(

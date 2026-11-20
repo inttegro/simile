@@ -14,6 +14,7 @@ use crate::ast::{
     ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, Source,
 };
+use crate::auth::principal;
 use crate::webhook::{webhook_contract, webhook_emissions, webhook_policy};
 use crate::{Error, Result};
 
@@ -37,6 +38,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
         effects: Vec::new(),
         webhooks: Vec::new(),
         webhook_policies: Vec::new(),
+        principals: Vec::new(),
     };
 
     for structure in body.iter() {
@@ -73,6 +75,7 @@ pub fn parse(source: Source<'_>) -> Result<Module> {
                 "webhooks" => module
                     .webhook_policies
                     .push(webhook_policy(block, &module.source)?),
+                "principal" => module.principals.push(principal(block, &module.source)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: module.source,

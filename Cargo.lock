@@ -1525,6 +1525,8 @@ dependencies = [
 name = "simile-runtime"
 version = "0.2.0"
 dependencies = [
+ "base64",
+ "form_urlencoded",
  "rand",
  "serde",
  "serde_json",
@@ -1561,25 +1563,30 @@ dependencies = [
  "futures-util",
  "percent-encoding",
  "serde_json",
+ "sha2",
  "simile-artifact",
  "simile-compiler",
  "simile-heuristics",
  "simile-runtime",
  "simile-service",
+ "simile-spec",
  "thiserror",
  "tokio",
  "tracing",
+ "ureq",
 ]
 
 [[package]]
 name = "simile-service"
 version = "0.2.0"
 dependencies = [
+ "serde",
  "serde_json",
  "simile-artifact",
  "simile-compiler",
  "simile-heuristics",
  "simile-runtime",
+ "simile-spec",
  "simile-stack",
  "thiserror",
 ]

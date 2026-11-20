@@ -10,13 +10,15 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 simile-artifact.workspace = true
 simile-runtime.workspace = true
+simile-spec.workspace = true
 simile-stack.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 simile-compiler.workspace = true
 simile-heuristics.workspace = true
 
