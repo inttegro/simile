@@ -10,20 +10,49 @@ runs. It is the human-facing companion to the technical `simile inspect` command
 $ simile describe service inttegro
 ```
 
-The default view shows the service description, listener, contract version, principal contracts,
-fixture profiles, principal-setup workflows,
-webhook contracts and effective delivery policy, scenario catalogue, faults and profiles,
-backends, and asynchronous operations. Credential values are omitted from the output. Catalog
-faults carry built-in descriptions automatically.
+The default view is a compact inventory. It groups runtime identity, contract facts, and service
+model counts so that a large service still fits comfortably in one terminal screen:
 
-Add `--verbose` to include every operation, its compiled outcomes, its authentication surface, and
-whether its behavior came from the contract or provider-authored HCL:
+```text
+orders 1.0.0
+An emulator for order integration tests.
+
+Runtime
+  Listen               http://127.0.0.1:4242
+  Source               registry
+
+Contract
+  Format               OpenAPI 3.1.2
+  Operations           37
+  Webhook contracts    2
+
+Service model
+  Principals           1
+  Service profiles     2
+  Setup workflows      1
+  Scenarios            6
+  Faults               4
+  Fault profiles       1
+  Protocol errors      7
+  Backends             3
+  Async operations     2
+  Error/outcome docs   12
+```
+
+Credential values are omitted from every human-readable view.
+
+Add `--verbose` to expand the inventory into named, indented entries. This includes every
+operation, its compiled outcomes, its authentication surface, whether its behavior came from the
+contract or provider-authored HCL, service profiles, setup workflows, webhook contracts,
+scenarios, faults, backends, asynchronous operations, and public error or outcome descriptions.
+Catalog faults carry their built-in descriptions automatically:
 
 ```console
 $ simile describe service inttegro --verbose
 ```
 
-Use stable JSON when another tool needs the description:
+Use stable JSON when another tool needs to parse the description. Human output may evolve to make
+terminal reading clearer; JSON field names and structure form the automation interface:
 
 ```console
 $ simile --output json describe service inttegro

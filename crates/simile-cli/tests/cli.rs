@@ -322,6 +322,65 @@ fn describes_a_transient_service_from_the_compiled_artifact() {
 }
 
 #[test]
+fn describes_a_service_as_a_compact_human_overview() {
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--color",
+            "never",
+            "describe",
+            "service",
+            "orders",
+            "--config",
+            &fixture("service-described.hcl"),
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap_or_else(|error| panic!("{error}"));
+
+    for expected in [
+        "Runtime\n",
+        "Contract\n",
+        "Service model\n",
+        "Operations           3\n",
+        "Scenarios            1\n",
+        "Protocol errors      7\n",
+        "Use --verbose to list named objects and operation outcomes.\n",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing `{expected}` in:\n{stdout}"
+        );
+    }
+    assert!(!stdout.contains("slow_order"));
+
+    let verbose = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--color",
+            "never",
+            "--verbose",
+            "describe",
+            "service",
+            "orders",
+            "--config",
+            &fixture("service-described.hcl"),
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        verbose.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verbose.stderr)
+    );
+    let stdout = String::from_utf8(verbose.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert!(stdout.contains("Scenarios (1)\n  slow_order\n    0 outcomes · 1 fault\n"));
+}
+
+#[test]
 fn setup_generates_a_readable_profile_name_for_one_principal() {
     let home = registry_home();
     drop(fs::remove_dir_all(&home));
