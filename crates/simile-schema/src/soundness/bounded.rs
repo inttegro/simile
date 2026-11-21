@@ -11,11 +11,12 @@
 //! ```
 //!
 //! Every participant must use the same numeric or RFC 3339 date-time kind. Bound sources are
-//! required and non-null so proof and synthesis always have an operand. Establishment changes only
-//! the bounded field: an inclusive violation copies the boundary, while an exclusive violation
-//! chooses the next representable integer, finite float, or date-time beyond that boundary. All
-//! bounds are established transactionally, so contradictory dynamic bounds do not partially
-//! mutate the payload.
+//! required and non-null so proof and synthesis always have an operand. A missing or null target is
+//! vacuously sound; OpenAPI remains responsible for declaring the target required or non-null.
+//! When the target is present, establishment changes only that field: an inclusive violation copies
+//! the boundary, while an exclusive violation chooses the next representable integer, finite float,
+//! or date-time beyond that boundary. All bounds are established transactionally, so contradictory
+//! dynamic bounds do not partially mutate the payload.
 
 use std::cmp::Ordering;
 
@@ -152,7 +153,7 @@ pub(super) fn prove(constraint: &Constraint, value: &Value) -> Vec<Violation> {
         .pointer(&constraint.path)
         .filter(|value| !value.is_null())
     else {
-        return violation(constraint, "bounded value is missing or null");
+        return Vec::new();
     };
     constraint
         .bounds
@@ -181,6 +182,9 @@ pub(super) fn prove(constraint: &Constraint, value: &Value) -> Vec<Violation> {
 
 /// Repairs the bounded field against every source and commits only a completely sound candidate.
 pub(super) fn establish(constraint: &Constraint, value: &mut Value) -> bool {
+    if value.pointer(&constraint.path).is_none_or(Value::is_null) {
+        return false;
+    }
     if prove(constraint, value).is_empty() {
         return false;
     }
@@ -265,14 +269,6 @@ fn operand(value: &Value, field: &str) -> Result<String> {
         return Err(invalid(field, "bound requires exactly `path`"));
     }
     pointer(operand.get("path"), &format!("{field}.path"))
-}
-
-fn violation(constraint: &Constraint, message: &str) -> Vec<Violation> {
-    vec![Violation {
-        kind: ViolationKind::Bounded,
-        path: constraint.path.clone(),
-        message: message.to_owned(),
-    }]
 }
 
 impl Direction {

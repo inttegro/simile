@@ -1,7 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde_json::{Map, Number, Value};
-use thiserror::Error;
 
 use crate::{
     AdditionalProperties, JsonType, SchemaCatalog, SchemaId, SchemaNode, SchemaRef,
@@ -14,17 +16,50 @@ const REPRESENTATIVE_DEPTH: usize = 2;
 const REPRESENTATIVE_PROPERTIES: usize = 24;
 
 /// A deterministic JSON value could not be produced from the compiled schema.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SynthesisError {
-    #[error("compiled schema contains an invalid node")]
     InvalidSchema,
 
-    #[error("could not synthesize a valid finite value within the deterministic search limits")]
     Exhausted { issues: Vec<ValidationIssue> },
 
-    #[error("request-to-response relation could not be proven: {reason}")]
     Unreachable { reason: String },
 }
+
+impl fmt::Display for SynthesisError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSchema => formatter.write_str("compiled schema contains an invalid node"),
+            Self::Exhausted { issues } if issues.is_empty() => formatter.write_str(
+                "could not synthesize a valid finite value within the deterministic search limits; no complete candidate was constructible",
+            ),
+            Self::Exhausted { issues } => {
+                formatter.write_str(
+                    "could not synthesize a valid finite value within the deterministic search limits; closest candidate failed",
+                )?;
+                for issue in issues.iter().take(3) {
+                    let path = if issue.path.is_empty() {
+                        "/"
+                    } else {
+                        issue.path.as_str()
+                    };
+                    write!(formatter, " at `{path}` ({}) — {}", issue.rule, issue.message)?;
+                }
+                if issues.len() > 3 {
+                    write!(formatter, " (and {} more issues)", issues.len() - 3)?;
+                }
+                Ok(())
+            }
+            Self::Unreachable { reason } => {
+                write!(
+                    formatter,
+                    "request-to-response relation could not be proven: {reason}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SynthesisError {}
 
 impl SchemaCatalog {
     pub(crate) fn synthesize(&self, root: SchemaRef) -> std::result::Result<Value, SynthesisError> {
@@ -109,26 +144,27 @@ impl SchemaCatalog {
         if !self.contains(root) {
             return Err(SynthesisError::InvalidSchema);
         }
-        let mut closest = Vec::new();
+        let mut closest = None::<Vec<ValidationIssue>>;
         for variant in 0..MAX_VARIANTS {
             let mut active = Vec::new();
-            if let Some(mut value) = (Synthesizer {
+            let synthesizer = Synthesizer {
                 catalog: self,
                 mode,
-            })
-            .node(root.0, variant, 0, &mut active)
-            {
+            };
+            if let Some(mut value) = synthesizer.node(root.0, variant, 0, &mut active) {
                 self.establish(root, &mut value);
                 let issues = validate::value(self, root, &value);
                 if issues.is_empty() && predicate(&value) {
                     return Ok(value);
                 }
-                if closest.is_empty() || issues.len() < closest.len() {
-                    closest = issues;
-                }
+                remember_closest(&mut closest, issues);
+            } else {
+                remember_closest(&mut closest, synthesizer.closest_issues(root.0, variant));
             }
         }
-        Err(SynthesisError::Exhausted { issues: closest })
+        Err(SynthesisError::Exhausted {
+            issues: closest.unwrap_or_default(),
+        })
     }
 
     pub(crate) fn project(&self, root: SchemaRef, baseline: &Value, request: &Value) -> Value {
@@ -390,6 +426,28 @@ impl Projector<'_> {
 }
 
 impl Synthesizer<'_> {
+    fn closest_issues(&self, id: SchemaId, variant: usize) -> Vec<ValidationIssue> {
+        let Some(node) = self.catalog.nodes.get(id as usize) else {
+            return Vec::new();
+        };
+        let mut active = vec![id];
+        let candidates = self.candidates(node, variant, 0, &mut active);
+        let mut closest = None;
+        for mut candidate in candidates {
+            let mut completion_active = Vec::new();
+            if self.mode == SynthesisMode::Minimal {
+                let _ =
+                    self.complete_required(id, &mut candidate, variant, 0, &mut completion_active);
+            }
+            self.catalog.establish(SchemaRef(id), &mut candidate);
+            remember_closest(
+                &mut closest,
+                validate::value(self.catalog, SchemaRef(id), &candidate),
+            );
+        }
+        closest.unwrap_or_default()
+    }
+
     fn node(
         &self,
         id: SchemaId,
@@ -410,11 +468,129 @@ impl Synthesizer<'_> {
         active.pop();
 
         candidates.into_iter().find_map(|mut candidate| {
-            soundness::establish(node, &mut candidate);
+            let mut completion_active = Vec::new();
+            // Representative synthesis is also used while constraint witnesses are compiled,
+            // before the catalog is complete enough to traverse sibling object fragments.
+            if self.mode == SynthesisMode::Minimal
+                && !self.complete_required(
+                    id,
+                    &mut candidate,
+                    variant,
+                    depth,
+                    &mut completion_active,
+                )
+            {
+                return None;
+            }
+            // A composed candidate can change a discriminator introduced by one of its children.
+            // Re-establish the complete subtree after merging so inherited constraints observe the
+            // final object rather than the child-local value that existed before composition.
+            self.catalog.establish(SchemaRef(id), &mut candidate);
             validate::value(self.catalog, SchemaRef(id), &candidate)
                 .is_empty()
                 .then_some(candidate)
         })
+    }
+
+    /// Complete requirements contributed by `allOf` branches after their object values merge.
+    ///
+    /// OpenAPI permits one branch to require a property declared by a sibling. Each branch is only
+    /// a fragment in that case, so trying to synthesize it independently cannot succeed. The
+    /// composed shape supplies the missing property's schema and lets the final validator prove the
+    /// intersection as a whole.
+    fn complete_required(
+        &self,
+        id: SchemaId,
+        value: &mut Value,
+        variant: usize,
+        depth: usize,
+        active: &mut Vec<SchemaId>,
+    ) -> bool {
+        if depth >= MAX_DEPTH || active.contains(&id) || !value.is_object() {
+            return true;
+        }
+        let mut required = BTreeSet::new();
+        let mut properties = BTreeMap::<String, Vec<SchemaId>>::new();
+        let mut visited = BTreeSet::new();
+        self.object_shape(id, &mut required, &mut properties, &mut visited);
+
+        active.push(id);
+        for name in required {
+            if value.get(&name).is_some() {
+                continue;
+            }
+            let Some(schemas) = properties.get(&name) else {
+                active.pop();
+                return false;
+            };
+            let replacement = schemas.iter().rev().find_map(|schema| {
+                let mut synthesis_active = Vec::new();
+                let candidate = self.node(
+                    *schema,
+                    variant,
+                    depth.saturating_add(1),
+                    &mut synthesis_active,
+                )?;
+                schemas
+                    .iter()
+                    .all(|schema| {
+                        validate::value(self.catalog, SchemaRef(*schema), &candidate).is_empty()
+                    })
+                    .then_some(candidate)
+            });
+            let Some(replacement) = replacement else {
+                active.pop();
+                return false;
+            };
+            if let Some(object) = value.as_object_mut() {
+                object.insert(name, replacement);
+            }
+        }
+
+        for (name, schemas) in properties {
+            let Some(property) = value.get_mut(&name) else {
+                continue;
+            };
+            for schema in schemas {
+                if !self.complete_required(
+                    schema,
+                    property,
+                    variant,
+                    depth.saturating_add(1),
+                    active,
+                ) {
+                    active.pop();
+                    return false;
+                }
+            }
+        }
+        active.pop();
+        true
+    }
+
+    fn object_shape(
+        &self,
+        id: SchemaId,
+        required: &mut BTreeSet<String>,
+        properties: &mut BTreeMap<String, Vec<SchemaId>>,
+        visited: &mut BTreeSet<SchemaId>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        let Some(node) = self.catalog.nodes.get(id as usize) else {
+            return;
+        };
+        required.extend(node.required.iter().cloned());
+        for (name, schema) in &node.properties {
+            let schemas = properties.entry(name.clone()).or_default();
+            if !schemas.contains(schema) {
+                schemas.push(*schema);
+            }
+        }
+        for child in &node.all_of {
+            self.object_shape(*child, required, properties, visited);
+        }
     }
 
     fn candidates(
@@ -570,7 +746,11 @@ impl Synthesizer<'_> {
         active: &mut Vec<SchemaId>,
     ) -> Option<Value> {
         let mut length = node.min_items.unwrap_or(0);
-        if length == 0 && node.items.is_some() && node.max_items != Some(0) {
+        if self.mode == SynthesisMode::Representative
+            && length == 0
+            && node.items.is_some()
+            && node.max_items != Some(0)
+        {
             length = 1;
         }
         if node.max_items.is_some_and(|maximum| length > maximum) {
@@ -587,6 +767,18 @@ impl Synthesizer<'_> {
             values.push(value);
         }
         Some(Value::Array(values))
+    }
+}
+
+fn remember_closest(closest: &mut Option<Vec<ValidationIssue>>, issues: Vec<ValidationIssue>) {
+    if issues.is_empty() {
+        return;
+    }
+    if closest
+        .as_ref()
+        .is_none_or(|closest| issues.len() < closest.len())
+    {
+        *closest = Some(issues);
     }
 }
 

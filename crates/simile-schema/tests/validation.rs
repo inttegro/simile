@@ -1404,12 +1404,205 @@ fn proves_and_constructs_relative_bounds() {
     let optional = BoundRequestBody::new(&optional_plan, &optional_schemas)
         .select("application/json")
         .unwrap_or_else(|| panic!("media type should be present"));
+    assert!(optional.validate(&json!({"lower": 4})).is_empty());
+    assert!(
+        optional
+            .validate(&json!({"lower": 4, "value": null}))
+            .is_empty()
+    );
     for seed in 0..16 {
         let value = optional
-            .synthesize_fuzz(seed)
+            .synthesize_fuzz_minimal(seed)
             .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert!(value.get("value").is_none(), "seed {seed}: {value}");
         assert!(optional.validate(&value).is_empty(), "seed {seed}: {value}");
     }
+}
+
+#[test]
+fn minimal_synthesis_keeps_optional_aggregate_targets_absent() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["values"],
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {"type": "integer"}
+                },
+                "sum": {"type": ["integer", "null"]}
+            },
+            "x-simile-constraints": [{
+                "aggregate": {
+                    "target": "/sum",
+                    "operation": "sum",
+                    "source": "/values/*"
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    assert!(media.validate(&json!({"values": []})).is_empty());
+    assert!(
+        media
+            .validate(&json!({"values": [], "sum": null}))
+            .is_empty()
+    );
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz_minimal(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert_eq!(value["values"], json!([]), "seed {seed}: {value}");
+        assert!(value.get("sum").is_none(), "seed {seed}: {value}");
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn minimal_synthesis_can_avoid_an_optional_array_item_union() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "required": ["size", "purchase_intents"],
+            "properties": {
+                "size": {"type": "integer", "minimum": 0},
+                "purchase_intents": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "product": {"type": "object"},
+                            "bundle": {"type": "object"}
+                        },
+                        "oneOf": [
+                            {"required": ["product"]},
+                            {"required": ["bundle"]}
+                        ],
+                        "x-simile-constraints": [
+                            {
+                                "implies": {
+                                    "when": {"path": "/product", "state": "present"},
+                                    "then": {"all": [{"path": "/bundle", "state": "absent"}]}
+                                }
+                            },
+                            {
+                                "implies": {
+                                    "when": {"path": "/bundle", "state": "present"},
+                                    "then": {"all": [{"path": "/product", "state": "absent"}]}
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            "x-simile-constraints": [{
+                "aggregate": {
+                    "target": "/size",
+                    "operation": "count",
+                    "source": "/purchase_intents/*"
+                }
+            }]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let value = media
+        .synthesize_fuzz_minimal(1)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(value, json!({"size": 0, "purchase_intents": []}));
+    assert!(media.validate(&value).is_empty());
+}
+
+#[test]
+fn all_of_overlays_reestablish_inherited_constraints() {
+    let (plan, schemas) = plan(
+        json!({
+            "allOf": [
+                {
+                    "type": "object",
+                    "required": ["status", "initiated_at"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["scheduled", "canceled"]},
+                        "initiated_at": {"type": "string", "format": "date-time"},
+                        "canceled_at": {"type": "string", "format": "date-time"},
+                        "cancellation": {
+                            "type": "object",
+                            "required": ["reason"],
+                            "properties": {"reason": {"type": "string"}}
+                        }
+                    },
+                    "x-simile-constraints": [
+                        {"ordered": {"paths": ["/initiated_at", "/canceled_at"]}},
+                        {
+                            "implies": {
+                                "when": {"path": "/status", "equals": "canceled"},
+                                "then": {"all": [
+                                    {"path": "/canceled_at", "state": "non-null"},
+                                    {"path": "/cancellation", "state": "non-null"}
+                                ]}
+                            }
+                        }
+                    ]
+                },
+                {
+                    "type": "object",
+                    "required": ["canceled_at", "cancellation"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["canceled"]}
+                    }
+                }
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    for seed in 0..16 {
+        let value = media
+            .synthesize_fuzz_minimal(seed)
+            .unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert_eq!(value["status"], "canceled", "seed {seed}: {value}");
+        assert!(media.validate(&value).is_empty(), "seed {seed}: {value}");
+    }
+}
+
+#[test]
+fn synthesis_exhaustion_reports_the_closest_branch_failure() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "string",
+            "oneOf": [
+                {"type": "string"},
+                {"type": "string"}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let error = match media.synthesize_fuzz_minimal(1) {
+        Ok(value) => panic!("identical oneOf branches synthesized an invalid value: {value}"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    assert!(message.contains("closest candidate failed"), "{message}");
+    assert!(message.contains("`/` (oneOf)"), "{message}");
+    assert!(message.contains("matched 2"), "{message}");
 }
 
 #[test]

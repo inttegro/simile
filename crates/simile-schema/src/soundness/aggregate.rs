@@ -15,7 +15,9 @@
 //! and is not repaired. The source must contain an array wildcard. `sum`, `min`, and `max` select
 //! non-null numbers; `count` may select any value. `sum` and `count` fold an empty selection to
 //! zero, while `min` and `max` require at least one selected value. Proof compares the aggregate
-//! with the target; establishment writes the computed number only when the guard matches.
+//! with the target when that target is present. A missing or null target is vacuously sound;
+//! OpenAPI controls whether the property must exist. Establishment therefore repairs a present
+//! target but never invents an optional aggregate field.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -164,6 +166,9 @@ pub(super) fn prove(constraint: &Constraint, value: &Value) -> Vec<Violation> {
     {
         return Vec::new();
     }
+    if value.pointer(&constraint.target).is_none_or(Value::is_null) {
+        return Vec::new();
+    }
     let expected = evaluate(constraint, value);
     let actual = value
         .pointer(&constraint.target)
@@ -190,6 +195,9 @@ pub(super) fn establish(constraint: &Constraint, value: &mut Value) -> bool {
         .as_ref()
         .is_some_and(|when| !when.matches(value))
     {
+        return false;
+    }
+    if value.pointer(&constraint.target).is_none_or(Value::is_null) {
         return false;
     }
     let Some(expected) = evaluate(constraint, value).and_then(scalar::Numeric::into_value) else {
