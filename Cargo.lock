@@ -1448,6 +1448,7 @@ dependencies = [
  "serde_json",
  "simile-core",
  "simile-heuristics",
+ "simile-learning",
  "simile-server",
  "simile-spec",
  "snapbox",
@@ -1513,6 +1514,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "simile-learning"
+version = "0.3.0"
+dependencies = [
+ "form_urlencoded",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "simile-openapi",
+ "thiserror",
+]
+
+[[package]]
 name = "simile-openapi"
 version = "0.3.0"
 dependencies = [
@@ -1569,6 +1582,7 @@ dependencies = [
  "simile-artifact",
  "simile-compiler",
  "simile-heuristics",
+ "simile-learning",
  "simile-runtime",
  "simile-service",
  "simile-spec",

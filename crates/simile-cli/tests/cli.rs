@@ -214,6 +214,109 @@ fn start_rejects_port_zero_before_reading_the_configuration() {
 }
 
 #[test]
+fn supervises_a_test_command_against_the_current_simfile() {
+    let project = simfile_project();
+    let home = registry_home();
+    let binary = snapbox::cmd::cargo_bin!("simile");
+
+    Command::new(binary)
+        .current_dir(&project)
+        .env("SIMILE_HOME", &home)
+        .args([
+            std::ffi::OsStr::new("test"),
+            std::ffi::OsStr::new("--"),
+            binary.as_os_str(),
+            std::ffi::OsStr::new("version"),
+        ])
+        .assert()
+        .success()
+        .stdout_eq(concat!("simile 0.3.0\n", "target [..]\n"))
+        .stderr_eq("Testing orders at http://127.0.0.1:[..]\n");
+
+    fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[cfg(unix)]
+#[test]
+fn injects_the_selected_profile_and_bound_service_address() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "payments",
+            "--config",
+            &fixture("setup-service.hcl"),
+        ])
+        .assert()
+        .success();
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "setup",
+            "payments",
+            "--profile",
+            "ci",
+            "--set",
+            "name=CI integration",
+        ])
+        .assert()
+        .success();
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "test",
+            "payments",
+            "--profile",
+            "ci",
+            "--",
+            "sh",
+            "-c",
+            concat!(
+                "test \"$SIMILE_SERVICE\" = payments && ",
+                "test \"$SIMILE_PROFILE\" = ci && ",
+                "test -n \"$API_KEY\" && ",
+                "case \"$SIMILE_BASE_URL\" in http://127.0.0.1:*) exit 0;; *) exit 9;; esac"
+            ),
+        ])
+        .assert()
+        .success()
+        .stdout_eq("")
+        .stderr_eq(concat!(
+            "Testing payments at http://127.0.0.1:[..]\n",
+            "profile ci\n"
+        ));
+
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[cfg(unix)]
+#[test]
+fn returns_the_test_commands_exit_code() {
+    let home = registry_home();
+    let output = std::process::Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "test",
+            "--config",
+            &fixture("service-orders.hcl"),
+            "--",
+            "sh",
+            "-c",
+            "exit 7",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(output.status.code(), Some(7));
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
 fn registers_a_service_in_simile_home() {
     let home = registry_home();
     drop(fs::remove_dir_all(&home));
@@ -1325,6 +1428,27 @@ fn rejects_multiple_spec_sources_and_operation_selectors() {
             "request.json",
             "--content-type",
             "application/json",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn validates_proxy_origins_before_starting_a_listener() {
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["proxy", "acme", "--to", "not-a-url"])
+        .assert()
+        .failure()
+        .stderr_eq("invalid upstream URL `not-a-url`: expected an absolute HTTP or HTTPS URL\n");
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "proxy",
+            "acme",
+            "--to",
+            "https://api.acme.test",
+            "--webhook-destination",
+            "http://127.0.0.1:4000/hooks/acme",
         ])
         .assert()
         .failure();

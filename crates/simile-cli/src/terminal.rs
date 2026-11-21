@@ -20,11 +20,12 @@ pub struct Terminal {
     output: OutputFormat,
     color: anstream::ColorChoice,
     verbose: bool,
+    quiet: bool,
 }
 
 impl Terminal {
     #[must_use]
-    pub fn new(output: OutputFormat, color: ColorChoice, verbose: bool) -> Self {
+    pub fn new(output: OutputFormat, color: ColorChoice, verbose: bool, quiet: bool) -> Self {
         let color = match color {
             ColorChoice::Auto => anstream::ColorChoice::Auto,
             ColorChoice::Always => anstream::ColorChoice::Always,
@@ -34,6 +35,7 @@ impl Terminal {
             output,
             color,
             verbose,
+            quiet,
         }
     }
 
@@ -50,6 +52,18 @@ impl Terminal {
     pub fn line(&self, arguments: fmt::Arguments<'_>) -> Result<()> {
         let stdout = io::stdout();
         let mut stream = AutoStream::new(stdout.lock(), self.color);
+        stream
+            .write_fmt(arguments)
+            .and_then(|()| stream.write_all(b"\n"))
+            .map_err(Error::Output)
+    }
+
+    pub fn status_line(&self, arguments: fmt::Arguments<'_>) -> Result<()> {
+        if self.quiet {
+            return Ok(());
+        }
+        let stderr = io::stderr();
+        let mut stream = AutoStream::new(stderr.lock(), self.color);
         stream
             .write_fmt(arguments)
             .and_then(|()| stream.write_all(b"\n"))

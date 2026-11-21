@@ -16,11 +16,12 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let terminal = Terminal::new(cli.output, cli.color, cli.verbose > 0);
+    let terminal = Terminal::new(cli.output, cli.color, cli.verbose > 0, cli.quiet);
 
     match run(cli, &terminal) {
         Ok(commands::Status::Success) => ExitCode::SUCCESS,
         Ok(commands::Status::Failure) => ExitCode::FAILURE,
+        Ok(commands::Status::Code(code)) => ExitCode::from(code),
         Err(error) if error.is_broken_pipe() => ExitCode::SUCCESS,
         Err(error) => {
             drop(terminal.error(&error));
@@ -30,7 +31,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
-    let runs_server = matches!(&cli.command, cli::Command::Start(_));
+    let runs_server = matches!(
+        &cli.command,
+        cli::Command::Proxy(_) | cli::Command::Start(_) | cli::Command::Test(_)
+    );
     init_tracing(cli.verbose, cli.quiet, runs_server);
     let build = BuildInfo::new(
         env!("CARGO_PKG_VERSION"),

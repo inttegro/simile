@@ -41,6 +41,9 @@ pub enum Error {
 
     #[error(transparent)]
     Server(#[from] simile_server::Error),
+
+    #[error(transparent)]
+    Learning(#[from] simile_learning::Error),
 }
 
 impl Error {
@@ -57,7 +60,8 @@ impl Error {
             | Self::Prompt(_)
             | Self::Core(_)
             | Self::AsyncRuntime(_)
-            | Self::Server(_) => false,
+            | Self::Server(_)
+            | Self::Learning(_) => false,
         }
     }
 }

@@ -41,7 +41,7 @@ pub fn register(ctx: &Context, request: &RegisterRequest) -> Result<Registration
         }
         None => LoadedServiceConfig::load_simfile(ctx)?,
     };
-    let configured = prepare_loaded_service(request.service.as_deref(), None, &config)?;
+    let configured = prepare_loaded_service(request.service.as_deref(), None, None, &config)?;
     let service = configured.service.report.service.clone();
     if request.service.is_none() {
         registry.ensure_registration_available(&service, request.force)?;
@@ -157,6 +157,7 @@ mod tests {
             &StartRequest {
                 service: Some("orders".to_owned()),
                 config: None,
+                host: None,
                 port: Some(8484),
             },
         )

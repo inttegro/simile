@@ -18,6 +18,7 @@ use crate::{Context, Error, Result};
 pub struct StartRequest {
     pub service: Option<String>,
     pub config: Option<PathBuf>,
+    pub host: Option<IpAddr>,
     pub port: Option<u16>,
 }
 
@@ -60,21 +61,25 @@ pub fn prepare_service(ctx: &Context, request: &StartRequest) -> Result<Prepared
                 crate::registry::validate_service_name(service)?;
             }
             let loaded = LoadedServiceConfig::load(ctx, ServiceConfigSource::Path(config.clone()))?;
-            Ok(prepare_loaded_service(requested.as_deref(), request.port, &loaded)?.service)
+            Ok(
+                prepare_loaded_service(requested.as_deref(), request.host, request.port, &loaded)?
+                    .service,
+            )
         }
         (Some(service), None) => {
             crate::registry::validate_service_name(service)?;
-            prepare_registered_service(ctx, service, request.port)
+            prepare_registered_service(ctx, service, request.host, request.port)
         }
         (None, None) => {
             let loaded = LoadedServiceConfig::load_simfile(ctx)?;
-            Ok(prepare_loaded_service(None, request.port, &loaded)?.service)
+            Ok(prepare_loaded_service(None, request.host, request.port, &loaded)?.service)
         }
     }
 }
 
 pub(crate) fn prepare_loaded_service(
     requested_service: Option<&str>,
+    override_host: Option<IpAddr>,
     port: Option<u16>,
     config: &LoadedServiceConfig,
 ) -> Result<PreparedConfiguration> {
@@ -155,7 +160,10 @@ pub(crate) fn prepare_loaded_service(
             host: document.service.listen.host.clone(),
             source,
         })?;
-    let listen = SocketAddr::new(host, port.unwrap_or(document.service.listen.port));
+    let listen = SocketAddr::new(
+        override_host.unwrap_or(host),
+        port.unwrap_or(document.service.listen.port),
+    );
     let summary = artifact.summary();
     let report = ServiceReport {
         service: document.service.name,
@@ -184,12 +192,13 @@ pub(crate) fn prepare_loaded_service(
 fn prepare_registered_service(
     ctx: &Context,
     service: &str,
+    host: Option<IpAddr>,
     port: Option<u16>,
 ) -> Result<PreparedService> {
     let registered = Registry::new(ctx.simile_home()?).load(service)?;
     let summary = registered.artifact.summary();
     let listen = SocketAddr::new(
-        registered.manifest.listen.host,
+        host.unwrap_or(registered.manifest.listen.host),
         port.unwrap_or(registered.manifest.listen.port),
     );
     let report = ServiceReport {
@@ -294,6 +303,7 @@ mod tests {
             &StartRequest {
                 service: None,
                 config: None,
+                host: None,
                 port: Some(8484),
             },
         )
@@ -307,12 +317,13 @@ mod tests {
     }
 
     #[test]
-    fn prepares_a_service_and_applies_the_port_override() {
+    fn prepares_a_service_and_applies_listener_overrides() {
         let prepared = prepare_service(
             &context(),
             &StartRequest {
                 service: Some("orders".to_owned()),
                 config: Some(fixture("service-orders.hcl")),
+                host: Some(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)),
                 port: Some(8484),
             },
         )
@@ -321,7 +332,7 @@ mod tests {
         assert_eq!(prepared.report.service, "orders");
         assert_eq!(
             prepared.report.listen,
-            SocketAddr::from(([127, 0, 0, 1], 8484))
+            SocketAddr::from(([0, 0, 0, 0], 8484))
         );
         assert_eq!(prepared.report.operations, 3);
         assert_eq!(prepared.report.backends, 1);
@@ -336,6 +347,7 @@ mod tests {
             &StartRequest {
                 service: Some("payments".to_owned()),
                 config: Some(fixture("service-orders.hcl")),
+                host: None,
                 port: None,
             },
         );

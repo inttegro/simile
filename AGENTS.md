@@ -10,6 +10,7 @@ boundaries.
 - `crates/simile-compiler`: orchestration of all source adapters into one compiled service.
 - `crates/simile-core`: application context, domain types and operations.
 - `crates/simile-hcl`: HCL syntax parsing and semantic validation of behavior overlays.
+- `crates/simile-learning`: sanitized exchange evidence and conservative learned-contract inference.
 - `crates/simile-openapi`: JSON/YAML OpenAPI parsing and feature-line adapters.
 - `crates/simile-smithy`: Smithy 2.0 IDL parsing and canonical-contract lowering.
 - `crates/simile-typescript`: declarations-only semantic TypeScript parsing and lowering.
@@ -36,6 +37,7 @@ boundaries.
 | Change loaded-artifact execution | `crates/simile-runtime/` |
 | Change HTTP routing or listener behavior | `crates/simile-server/` |
 | Change the HCL language or validation | `crates/simile-hcl/` |
+| Change proxy evidence or learned-contract inference | `crates/simile-learning/` |
 | Change source coordination | `crates/simile-compiler/` |
 | Add shared application state | `crates/simile-core/src/context.rs` |
 | Change human or JSON rendering | `crates/simile-cli/src/terminal.rs` and the relevant command |

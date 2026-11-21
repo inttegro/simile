@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
 mod delivery;
+mod process;
+mod proxy;
+
+pub use process::CommandResult;
+pub use proxy::{ProxyOptions, ProxyServer};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -58,6 +63,28 @@ pub enum Error {
 
     #[error("could not initialize service state: {0}")]
     Service(#[from] simile_service::Error),
+
+    #[error("a test command is required")]
+    CommandMissing,
+
+    #[error("could not start test command `{command}`")]
+    CommandSpawn {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("could not wait for the test command")]
+    CommandWait(#[source] std::io::Error),
+
+    #[error("could not listen for test interruption")]
+    CommandSignal(#[source] std::io::Error),
+
+    #[error("the service stopped before the test command completed")]
+    CommandServiceStopped,
+
+    #[error("the supervised service task failed")]
+    CommandServiceTask(#[source] tokio::task::JoinError),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

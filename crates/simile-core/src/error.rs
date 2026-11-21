@@ -233,6 +233,22 @@ pub enum Error {
     #[error("service `{service}` has no profile named `{profile}`")]
     ProfileNotFound { service: String, profile: String },
 
+    #[error("a test profile requires a registered service without a configuration override")]
+    TestProfileRequiresRegistration,
+
+    #[error("a test command is required")]
+    TestCommandMissing,
+
+    #[error("invalid {field} `{value}`: {reason}")]
+    InvalidProxyUrl {
+        field: &'static str,
+        value: String,
+        reason: &'static str,
+    },
+
+    #[error("--webhook-destination requires --public-url")]
+    WebhookDestinationRequiresPublicUrl,
+
     #[error("could not {action} profile credentials `{path}`: {source}")]
     ProfileCredentialsIo {
         action: &'static str,

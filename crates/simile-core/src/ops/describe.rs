@@ -230,7 +230,8 @@ pub fn describe_service(
         (requested, Some(config)) => {
             let loaded =
                 LoadedServiceConfig::load(ctx, ServiceConfigSource::from_argument(config.clone()))?;
-            let prepared = prepare_loaded_service(requested.as_deref(), None, &loaded)?.service;
+            let prepared =
+                prepare_loaded_service(requested.as_deref(), None, None, &loaded)?.service;
             (
                 prepared.report.service,
                 prepared.artifact,
@@ -255,7 +256,7 @@ pub fn describe_service(
         }
         (None, None) => {
             let loaded = LoadedServiceConfig::load_simfile(ctx)?;
-            let prepared = prepare_loaded_service(None, None, &loaded)?.service;
+            let prepared = prepare_loaded_service(None, None, None, &loaded)?.service;
             (
                 prepared.report.service,
                 prepared.artifact,

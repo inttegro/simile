@@ -6,6 +6,7 @@ mod doctor;
 mod inspect;
 mod profile;
 mod profiles;
+mod proxy;
 mod register;
 mod remove;
 mod replay;
@@ -13,6 +14,7 @@ mod run;
 mod setup;
 mod start;
 mod state;
+mod test;
 mod update;
 mod use_profile;
 mod version;
@@ -27,6 +29,7 @@ use crate::terminal::Terminal;
 pub enum Status {
     Success,
     Failure,
+    Code(u8),
 }
 
 pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<Status> {
@@ -39,6 +42,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
         Command::Profile(arguments) => profile::execute(arguments, ctx, terminal),
         Command::Profiles(arguments) => profiles::execute(arguments, ctx, terminal),
+        Command::Proxy(arguments) => proxy::execute(arguments, ctx, terminal),
         Command::Register(arguments) => register::execute(arguments, ctx, terminal),
         Command::Replay(arguments) => replay::execute(arguments, terminal),
         Command::Remove(arguments) => remove::execute(arguments, ctx, terminal),
@@ -46,6 +50,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Setup(arguments) => setup::execute(arguments, ctx, terminal),
         Command::Start(arguments) => start::execute(arguments, ctx, terminal),
         Command::State(arguments) => state::execute(arguments, ctx, terminal),
+        Command::Test(arguments) => test::execute(arguments, ctx, terminal),
         Command::Update(arguments) => update::execute(arguments, ctx, terminal),
         Command::Use(arguments) => use_profile::execute(arguments, ctx, terminal),
         Command::Version => version::execute(ctx, terminal),

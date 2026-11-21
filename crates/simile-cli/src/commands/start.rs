@@ -18,6 +18,7 @@ pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Resu
         &ops::StartRequest {
             service: arguments.service,
             config: arguments.config,
+            host: arguments.host,
             port: arguments.port,
         },
     )?;

@@ -47,6 +47,16 @@ pub struct ProfileReport {
     pub credentials_file: PathBuf,
 }
 
+/// Environment supplied to a caller running against one service profile.
+///
+/// This value intentionally has no serialization implementation: issued values may contain
+/// secrets and belong only in the child process environment.
+#[derive(Clone, PartialEq)]
+pub(crate) struct ProfileEnvironment {
+    pub(crate) profile: String,
+    pub(crate) variables: BTreeMap<String, String>,
+}
+
 pub fn setup_contract(
     ctx: &Context,
     service: &str,
@@ -140,6 +150,33 @@ pub fn use_profile(ctx: &Context, service: &str, name: &str) -> Result<ProfileRe
     })
 }
 
+/// Resolve an explicit profile, or the service's current profile when `name` is absent.
+///
+/// The returned values are suitable for a supervised caller process. They must never be printed
+/// or included in a machine-readable command report.
+pub(crate) fn profile_environment(
+    ctx: &Context,
+    service: &str,
+    name: Option<&str>,
+) -> Result<Option<ProfileEnvironment>> {
+    let (runtime, listen) = open_service(ctx, service)?;
+    let profile = match name {
+        Some(name) => Some(
+            runtime
+                .profile(name)?
+                .ok_or_else(|| Error::ProfileNotFound {
+                    service: service.to_owned(),
+                    profile: name.to_owned(),
+                })?,
+        ),
+        None => runtime.current_profile()?,
+    };
+    Ok(profile.map(|profile| ProfileEnvironment {
+        profile: profile.name.clone(),
+        variables: caller_environment(service, &profile, listen),
+    }))
+}
+
 fn open_service(ctx: &Context, service: &str) -> Result<(Service, SocketAddr)> {
     validate_service_name(service)?;
     let registered = Registry::new(ctx.simile_home()?).load(service)?;
@@ -206,6 +243,27 @@ fn write_credentials(
         });
     }
     Ok(())
+}
+
+fn caller_environment(
+    service: &str,
+    profile: &ServiceProfile,
+    listen: SocketAddr,
+) -> BTreeMap<String, String> {
+    let mut variables = BTreeMap::from([
+        ("SIMILE_SERVICE".to_owned(), service.to_owned()),
+        ("SIMILE_PROFILE".to_owned(), profile.name.clone()),
+        ("SIMILE_PRINCIPAL".to_owned(), profile.principal.clone()),
+        ("SIMILE_BASE_URL".to_owned(), format!("http://{listen}")),
+    ]);
+    variables.extend(profile.issued.iter().map(|(name, issued)| {
+        let value = match &issued.value {
+            Value::String(value) => value.clone(),
+            value => value.to_string(),
+        };
+        (environment_name(name), value)
+    }));
+    variables
 }
 
 fn json_string(value: &str) -> String {

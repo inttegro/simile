@@ -25,7 +25,7 @@ pub fn update(ctx: &Context, request: &UpdateRequest) -> Result<RegistrationRepo
             LoadedServiceConfig::snapshot(current.manifest.config_source, current.config_contents)
         }
     };
-    let configured = prepare_loaded_service(Some(&request.service), None, &config)?;
+    let configured = prepare_loaded_service(Some(&request.service), None, None, &config)?;
     install(&registry, &request.service, &config, configured, true)
 }
 

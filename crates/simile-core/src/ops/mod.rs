@@ -5,12 +5,14 @@ mod describe;
 mod doctor;
 mod inspect;
 mod profile;
+mod proxy;
 mod register;
 mod remove;
 mod reproduce;
 mod run;
 mod start;
 mod state;
+mod test;
 mod update;
 mod version;
 
@@ -25,10 +27,12 @@ pub use describe::{
 };
 pub use doctor::{Check, CheckStatus, DoctorReport, doctor};
 pub use inspect::{InspectRequest, inspect};
+pub(crate) use profile::profile_environment;
 pub use profile::{
     ProfileReport, ProfilesReport, SetupProfileReport, SetupProfileRequest, profile, profiles,
     setup_contract, setup_profile, use_profile,
 };
+pub use proxy::{ProxyPlan, ProxyReport, ProxyRequest, prepare_proxy};
 pub use register::{RegisterRequest, RegistrationReport, register};
 pub use remove::{RemoveReport, RemoveRequest, remove};
 pub use reproduce::{ReplayReport, ReplayRequest, replay};
@@ -38,5 +42,6 @@ pub use run::{
 };
 pub use start::{PreparedService, ServiceReport, StartRequest, prepare_service};
 pub use state::{StateReport, StateRequest, inspect_state, service_state_path};
+pub use test::{TestPlan, TestRequest, prepare_test};
 pub use update::{UpdateRequest, update};
 pub use version::version;

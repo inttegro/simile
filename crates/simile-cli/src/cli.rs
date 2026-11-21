@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand, ValueEnum};
@@ -128,8 +130,12 @@ pub enum Command {
     Profiles(ProfilesArgs),
     /// Inspect one service profile without revealing its credentials.
     Profile(ProfileArgs),
+    /// Pass local application traffic through an external service and optionally learn from it.
+    Proxy(ProxyArgs),
     /// Start a configured service emulator.
     Start(StartArgs),
+    /// Run a test command against a supervised service emulator.
+    Test(TestArgs),
     /// Inspect persisted resources and causal history.
     State(StateArgs),
     /// Reload and recompile a registered service.
@@ -292,6 +298,10 @@ pub struct StartArgs {
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
+    /// Override the configured listener address for this invocation.
+    #[arg(long, value_name = "IP")]
+    pub host: Option<IpAddr>,
+
     /// Override the configured listener port for this invocation.
     #[arg(
         long,
@@ -307,6 +317,74 @@ pub struct StartArgs {
     /// Enable one bounded stochastic environmental-fault profile.
     #[arg(long, value_name = "NAME")]
     pub fault_profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TestArgs {
+    /// Registered service name. Omit to test against `./Simfile`.
+    pub service: Option<String>,
+
+    /// Run directly from this HCL configuration instead of the registry or `./Simfile`.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
+    /// Inject this registered caller profile into the test command.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+
+    /// Use a fixed listener port instead of an available ephemeral port.
+    #[arg(
+        long,
+        value_name = "PORT",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub port: Option<u16>,
+
+    /// Activate one opaque public scenario for the test run.
+    #[arg(long, value_name = "NAME")]
+    pub scenario: Option<String>,
+
+    /// Enable one bounded stochastic environmental-fault profile.
+    #[arg(long, value_name = "NAME")]
+    pub fault_profile: Option<String>,
+
+    /// Test command and arguments. Precede the command with `--`.
+    #[arg(last = true, required = true, num_args = 1.., value_name = "COMMAND")]
+    pub command: Vec<OsString>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProxyArgs {
+    /// Local name for the external service being proxied.
+    pub service: String,
+
+    /// External service origin that receives proxied API calls.
+    #[arg(long = "to", value_name = "URL")]
+    pub upstream: String,
+
+    /// Record exchanges and generate a draft Simfile and OpenAPI contract on shutdown.
+    #[arg(long)]
+    pub learn: bool,
+
+    /// Public origin already routed to this process; enables the derived webhook relay URL.
+    #[arg(long, value_name = "URL")]
+    pub public_url: Option<String>,
+
+    /// Forward received webhooks to this application endpoint.
+    #[arg(long, value_name = "URL", requires = "public_url")]
+    pub webhook_destination: Option<String>,
+
+    /// Listener address. Defaults to loopback for local development.
+    #[arg(long, value_name = "IP")]
+    pub host: Option<IpAddr>,
+
+    /// Listener port. Defaults to 8484.
+    #[arg(
+        long,
+        value_name = "PORT",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Args)]
