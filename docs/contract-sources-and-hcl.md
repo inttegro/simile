@@ -70,7 +70,7 @@ result, expose an opaque scenario that selects the result instead of reproducing
 
 ## Configure the source
 
-A service configuration selects exactly one contract block:
+A `Simfile` selects exactly one contract block:
 
 ```hcl
 service "orders" {

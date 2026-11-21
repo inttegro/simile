@@ -51,7 +51,7 @@ simile run openapi.yaml \
 ```
 
 Continue with the [Quickstart](https://os.inttegro.dev/simile/quickstart) to register and run a
-long-lived local service.
+long-lived local service from a conventional `Simfile`.
 
 ## What Simile models
 

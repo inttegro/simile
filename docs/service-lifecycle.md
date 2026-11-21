@@ -9,7 +9,7 @@ have different persistence and replay behavior.
 
 ```mermaid
 flowchart TD
-  Sources[HTTP contract + optional HCL]
+  Sources[Simfile + HTTP contract + optional HCL]
   Sources --> Run[simile run]
   Run --> One[Compile in memory\nexecute once\nexit]
   Sources --> Register[simile register]
@@ -25,8 +25,12 @@ flowchart TD
 ## Register
 
 ```bash
-simile register inttegro --config ./inttegro.simile.hcl
+simile register
 ```
+
+With no arguments, registration loads `./Simfile` and uses the name declared by its `service`
+block. An explicit name asserts the expected service name. `--config URL_OR_FILE` selects another
+definition.
 
 Registration performs the expensive and failure-prone work before installation:
 
@@ -68,11 +72,11 @@ revision that registration validated.
 For an ad-hoc local run, bypass the registry:
 
 ```bash
-simile start inttegro --config ./inttegro.simile.hcl --port 8484
+simile start --port 8484
 ```
 
-`--port` changes only that invocation. `start --config` currently accepts a local path; URL-based
-configuration loading belongs to `register` and `update`.
+This form loads `./Simfile`. `--port` changes only that invocation. `start --config` accepts an
+explicit local path; URL-based configuration loading belongs to `register` and `update`.
 
 ## Update
 

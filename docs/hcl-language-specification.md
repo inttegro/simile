@@ -33,7 +33,7 @@ Simile accepts two document forms.
 ### Service configuration
 
 A service configuration contains exactly one `service` block and may contain behavior declarations
-in the same file:
+in the same file. `Simfile` is the conventional filename for a local service configuration:
 
 ```hcl
 service "inttegro" {
@@ -48,7 +48,8 @@ behavior "createOrder" {
 ```
 
 The `behaviors` paths name additional behavior modules. Inline and imported declarations enter the
-same compiler and namespace.
+same compiler and namespace. `simile register`, `simile describe`, and `simile start` load
+`./Simfile` when invoked without a service name or explicit configuration.
 
 ### Behavior module
 
@@ -160,7 +161,7 @@ The block is the composition root for a runnable service.
 
 | Member | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| label | yes | non-empty string | — | Service name. It must match the name used by `register`, `update`, or `start`. |
+| label | yes | non-empty string | — | Service name. Local `Simfile` commands derive the name from this label; an explicitly supplied name must match it. |
 | `description` | no | non-empty string | — | Public human-readable service description retained for `simile describe`. |
 | `behaviors` | no | array of strings | `[]` | Local behavior-module paths, resolved relative to the configuration file. |
 | `listen` | yes | one block | — | Listener configuration. |

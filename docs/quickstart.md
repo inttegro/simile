@@ -186,7 +186,7 @@ There is no HCL file yet because this service has no additional public behavior 
 
 ## 2. Add the service composition
 
-Create `orders.simile.hcl` next to the selected contract. Use exactly one of these source blocks:
+Create `Simfile` next to the selected contract. Use exactly one of these source blocks:
 
 ```hcl
 service "orders" {
@@ -222,12 +222,12 @@ service "orders" {
 ```
 
 The configuration answers operational questions—what the service is called, where it listens,
-and where its contract comes from. It does not repeat routes or schemas.
+and where its contract comes from. Routes and schemas remain in the selected contract.
 
 ## 3. Register and start it
 
 ```bash
-simile register orders --config ./orders.simile.hcl
+simile register
 simile start orders
 ```
 

@@ -21,7 +21,7 @@ Inputs
 - Service source and public documentation: [PATHS_OR_URLS]
 - Existing contract, if any: [CONTRACT_PATH_OR_URL]
 - Desired contract output: [CONTRACT_OUTPUT]
-- Desired service config path: [CONFIG_PATH]
+- Desired service config path: [CONFIG_PATH, normally ./Simfile]
 - Desired listener: [HOST]:[PORT]
 - Intended users and primary workflows: [WORKFLOWS]
 
@@ -31,6 +31,9 @@ Produce the most accurate public contract in the selected format and the smalles
 service configuration. The contract must independently define the complete HTTP surface. It must
 let integrators validate requests, synthesize sound requests and responses, exercise meaningful
 public outcomes, and run the service locally without exposing private production logic.
+
+Use `Simfile` as the conventional configuration filename unless the repository already establishes
+another explicit path.
 
 Do not translate another contract format mechanically. Model the service's public meaning using
 the selected language's native types and Simile's public semantic constructs.

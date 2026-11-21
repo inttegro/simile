@@ -3,8 +3,14 @@ title: Describe a service
 description: Read the public meaning of a registered or transient service configuration.
 ---
 
-`simile describe service` explains the semantic objects in the same compiled artifact that Simile
-runs. It is the human-facing companion to the technical `simile inspect` command.
+`simile describe` explains the semantic objects compiled from the current `Simfile`. It is the
+human-facing companion to the technical `simile inspect` command.
+
+```console
+$ simile describe
+```
+
+To inspect an installed service from another directory, name its registry entry:
 
 ```console
 $ simile describe service inttegro
@@ -60,16 +66,17 @@ $ simile --output json describe service inttegro
 
 ## Describe without registering
 
-Pass a configuration path or URL to compile and describe it without changing the local registry:
+The default `simile describe` command compiles `./Simfile` without changing the local registry.
+Pass a configuration path or URL to select another definition:
 
 ```console
-$ simile describe service inttegro --config ./inttegro.simile.hcl
-$ simile describe service inttegro --config https://example.com/inttegro.simile.hcl
+$ simile describe service --config ./inttegro.simile.hcl
+$ simile describe service --config https://example.com/inttegro.simile.hcl
 ```
 
-The service label in the HCL must still match `inttegro`. Relative contract and behavior paths work
-for a local configuration. A remote configuration has no local base directory, so it must use a
-contract URL and inline behavior declarations.
+Supplying a service name verifies that the HCL label matches it. Relative contract and behavior
+paths work for a local configuration. A remote configuration has no local base directory, so it
+must use a contract URL and inline behavior declarations.
 
 ## `description` metadata
 

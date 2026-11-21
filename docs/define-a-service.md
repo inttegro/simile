@@ -27,7 +27,7 @@ Keep these files together while authoring:
 ```text
 orders/
 ├── orders.yaml
-├── orders.simile.hcl
+├── Simfile
 ├── behavior/
 │   └── orders.hcl
 └── requests/
@@ -118,7 +118,7 @@ Add public soundness declarations when fields depend on one another. Use
 
 ## 4. Compose the runnable service
 
-Create `orders.simile.hcl`:
+Create `Simfile`:
 
 ```hcl
 service "orders" {
@@ -184,8 +184,8 @@ public outcomes whose production decision rules remain private.
 Describe the transient configuration before changing the local registry:
 
 ```bash
-simile describe service orders --config ./orders.simile.hcl
-simile --verbose describe service orders --config ./orders.simile.hcl
+simile describe
+simile --verbose describe
 ```
 
 The description should read like a public service catalogue: listener, operations, principals,
@@ -216,7 +216,7 @@ cases as [reproduction bundles](/reproduction-bundles) and group them into a
 Install the validated definition in the local registry:
 
 ```bash
-simile register orders --config ./orders.simile.hcl
+simile register
 ```
 
 If the service declares one or more `principal_setup` workflows, create the caller profile before
