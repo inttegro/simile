@@ -2778,7 +2778,7 @@ impl Payload {
                     }
                     validate_optional_index(header.2, values, "response header example")?;
                     if let (Some(schema), Some(example)) = (&header.1, header.2) {
-                        let example = decode_value(example, strings, values);
+                        let example = decode_value(example, &self.1, &self.4);
                         if !BoundValueSchema::new(schema, &self.7)
                             .validate(&example)
                             .is_empty()
