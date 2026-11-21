@@ -8,8 +8,8 @@ use serde::Serialize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterRequest {
-    pub service: String,
-    pub config: String,
+    pub service: Option<String>,
+    pub config: Option<String>,
     pub force: bool,
 }
 
@@ -32,19 +32,21 @@ pub struct RegistrationReport {
 /// Compile and atomically install one named service into the local registry.
 pub fn register(ctx: &Context, request: &RegisterRequest) -> Result<RegistrationReport> {
     let registry = Registry::new(ctx.simile_home()?);
-    registry.ensure_registration_available(&request.service, request.force)?;
-    let config = LoadedServiceConfig::load(
-        ctx,
-        ServiceConfigSource::from_argument(request.config.clone()),
-    )?;
-    let configured = prepare_loaded_service(&request.service, None, &config)?;
-    install(
-        &registry,
-        &request.service,
-        &config,
-        configured,
-        request.force,
-    )
+    if let Some(service) = &request.service {
+        registry.ensure_registration_available(service, request.force)?;
+    }
+    let config = match &request.config {
+        Some(config) => {
+            LoadedServiceConfig::load(ctx, ServiceConfigSource::from_argument(config.clone()))?
+        }
+        None => LoadedServiceConfig::load_simfile(ctx)?,
+    };
+    let configured = prepare_loaded_service(request.service.as_deref(), None, &config)?;
+    let service = configured.service.report.service.clone();
+    if request.service.is_none() {
+        registry.ensure_registration_available(&service, request.force)?;
+    }
+    install(&registry, &service, &config, configured, request.force)
 }
 
 pub(crate) fn install(
@@ -126,11 +128,13 @@ mod tests {
         let report = register(
             &ctx,
             &RegisterRequest {
-                service: "orders".to_owned(),
-                config: inputs
-                    .join("service-orders.hcl")
-                    .to_string_lossy()
-                    .into_owned(),
+                service: Some("orders".to_owned()),
+                config: Some(
+                    inputs
+                        .join("service-orders.hcl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 force: false,
             },
         )
@@ -151,7 +155,7 @@ mod tests {
         let prepared = prepare_service(
             &ctx,
             &StartRequest {
-                service: "orders".to_owned(),
+                service: Some("orders".to_owned()),
                 config: None,
                 port: Some(8484),
             },
@@ -164,11 +168,13 @@ mod tests {
         let duplicate = register(
             &ctx,
             &RegisterRequest {
-                service: "orders".to_owned(),
-                config: inputs
-                    .join("service-orders.hcl")
-                    .to_string_lossy()
-                    .into_owned(),
+                service: Some("orders".to_owned()),
+                config: Some(
+                    inputs
+                        .join("service-orders.hcl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 force: false,
             },
         );

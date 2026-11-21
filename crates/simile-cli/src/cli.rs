@@ -110,7 +110,7 @@ pub enum Command {
     Conformance(ConformanceArgs),
     /// Check the local environment and report actionable problems.
     Doctor,
-    /// Explain the public semantics of a compiled service.
+    /// Explain the current Simfile or the public semantics of a compiled service.
     Describe(DescribeArgs),
     /// Verify and summarize a compiled Simile artifact.
     Inspect(InspectArgs),
@@ -118,7 +118,7 @@ pub enum Command {
     Run(RunArgs),
     /// Re-run and verify a self-contained reproduction bundle.
     Replay(ReplayArgs),
-    /// Compile and register a named service for later use.
+    /// Compile and register a service for later use.
     Register(RegisterArgs),
     /// Permanently remove a registered service and its local data.
     Remove(RemoveArgs),
@@ -160,7 +160,7 @@ pub struct ConformanceArgs {
 #[derive(Debug, Args)]
 pub struct DescribeArgs {
     #[command(subcommand)]
-    pub target: DescribeTarget,
+    pub target: Option<DescribeTarget>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -171,10 +171,10 @@ pub enum DescribeTarget {
 
 #[derive(Debug, Args)]
 pub struct DescribeServiceArgs {
-    /// Registered or configured service name.
-    pub service: String,
+    /// Registered service name. Omit to describe `./Simfile`.
+    pub service: Option<String>,
 
-    /// Describe this HCL configuration file or URL instead of the registry entry.
+    /// Describe this HCL configuration file or URL instead of the registry entry or `./Simfile`.
     #[arg(long, value_name = "URL_OR_FILE")]
     pub config: Option<String>,
 }
@@ -285,10 +285,10 @@ pub struct ReplayArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    /// Service name declared by the configuration.
-    pub service: String,
+    /// Registered service name. Omit to run `./Simfile`.
+    pub service: Option<String>,
 
-    /// Run directly from this HCL configuration instead of the registry.
+    /// Run directly from this HCL configuration instead of the registry or `./Simfile`.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
@@ -351,12 +351,12 @@ fn parse_state_limit(value: &str) -> Result<usize, String> {
 
 #[derive(Debug, Args)]
 pub struct RegisterArgs {
-    /// Service name declared by the configuration.
-    pub service: String,
+    /// Service name. Omit to use the name declared by the configuration.
+    pub service: Option<String>,
 
-    /// Runnable service HCL configuration file or URL to compile and register.
+    /// Runnable service HCL configuration file or URL. Defaults to `./Simfile`.
     #[arg(long, value_name = "URL_OR_FILE")]
-    pub config: String,
+    pub config: Option<String>,
 
     /// Replace the current registration when the service already exists.
     #[arg(long)]

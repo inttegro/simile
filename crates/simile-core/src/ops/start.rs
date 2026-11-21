@@ -16,7 +16,7 @@ use crate::{Context, Error, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartRequest {
-    pub service: String,
+    pub service: Option<String>,
     pub config: Option<PathBuf>,
     pub port: Option<u16>,
 }
@@ -54,24 +54,36 @@ pub(crate) struct PreparedConfiguration {
 
 /// Resolve, validate, and compile a runnable service without binding its socket.
 pub fn prepare_service(ctx: &Context, request: &StartRequest) -> Result<PreparedService> {
-    crate::registry::validate_service_name(&request.service)?;
-    match &request.config {
-        Some(config) => {
+    match (&request.service, &request.config) {
+        (requested, Some(config)) => {
+            if let Some(service) = requested {
+                crate::registry::validate_service_name(service)?;
+            }
             let loaded = LoadedServiceConfig::load(ctx, ServiceConfigSource::Path(config.clone()))?;
-            Ok(prepare_loaded_service(&request.service, request.port, &loaded)?.service)
+            Ok(prepare_loaded_service(requested.as_deref(), request.port, &loaded)?.service)
         }
-        None => prepare_registered_service(ctx, request),
+        (Some(service), None) => {
+            crate::registry::validate_service_name(service)?;
+            prepare_registered_service(ctx, service, request.port)
+        }
+        (None, None) => {
+            let loaded = LoadedServiceConfig::load_simfile(ctx)?;
+            Ok(prepare_loaded_service(None, request.port, &loaded)?.service)
+        }
     }
 }
 
 pub(crate) fn prepare_loaded_service(
-    requested_service: &str,
+    requested_service: Option<&str>,
     port: Option<u16>,
     config: &LoadedServiceConfig,
 ) -> Result<PreparedConfiguration> {
     let document =
         simile_hcl::parse_service(simile_hcl::Source::new(&config.name, &config.contents))?;
-    verify_service_name(requested_service, &document)?;
+    crate::registry::validate_service_name(&document.service.name)?;
+    if let Some(requested_service) = requested_service {
+        verify_service_name(requested_service, &document)?;
+    }
 
     let (declaration, format) = match &document.service.contract {
         ContractDeclaration::OpenApi(source) => (source, ContractFormat::OpenApi),
@@ -169,12 +181,16 @@ pub(crate) fn prepare_loaded_service(
     })
 }
 
-fn prepare_registered_service(ctx: &Context, request: &StartRequest) -> Result<PreparedService> {
-    let registered = Registry::new(ctx.simile_home()?).load(&request.service)?;
+fn prepare_registered_service(
+    ctx: &Context,
+    service: &str,
+    port: Option<u16>,
+) -> Result<PreparedService> {
+    let registered = Registry::new(ctx.simile_home()?).load(service)?;
     let summary = registered.artifact.summary();
     let listen = SocketAddr::new(
         registered.manifest.listen.host,
-        request.port.unwrap_or(registered.manifest.listen.port),
+        port.unwrap_or(registered.manifest.listen.port),
     );
     let report = ServiceReport {
         service: registered.manifest.name,
@@ -227,7 +243,9 @@ fn module_is_empty(module: &simile_hcl::Module) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn context() -> Context {
         Context::with_simile_home(
@@ -243,12 +261,57 @@ mod tests {
             .join(name)
     }
 
+    fn simfile_context() -> (Context, PathBuf) {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "simile-current-simfile-test-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        drop(fs::remove_dir_all(&root));
+        fs::create_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
+        for (source, destination) in [
+            ("service-orders.hcl", "Simfile"),
+            ("run-orders.yaml", "run-orders.yaml"),
+            ("orders.hcl", "orders.hcl"),
+        ] {
+            fs::copy(fixture(source), root.join(destination))
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        let context = Context::with_simile_home(
+            crate::BuildInfo::new("0.1.0", None::<String>, "test", "test"),
+            &root,
+            root.join(".simile"),
+        );
+        (context, root)
+    }
+
+    #[test]
+    fn prepares_the_current_simfile_without_a_repeated_service_name() {
+        let (context, root) = simfile_context();
+        let prepared = prepare_service(
+            &context,
+            &StartRequest {
+                service: None,
+                config: None,
+                port: Some(8484),
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(prepared.report.service, "orders");
+        assert_eq!(prepared.report.listen.port(), 8484);
+        assert_eq!(prepared.report.operations, 3);
+
+        fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
+    }
+
     #[test]
     fn prepares_a_service_and_applies_the_port_override() {
         let prepared = prepare_service(
             &context(),
             &StartRequest {
-                service: "orders".to_owned(),
+                service: Some("orders".to_owned()),
                 config: Some(fixture("service-orders.hcl")),
                 port: Some(8484),
             },
@@ -271,7 +334,7 @@ mod tests {
         let result = prepare_service(
             &context(),
             &StartRequest {
-                service: "payments".to_owned(),
+                service: Some("payments".to_owned()),
                 config: Some(fixture("service-orders.hcl")),
                 port: None,
             },

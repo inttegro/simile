@@ -78,8 +78,8 @@ mod tests {
         register(
             &ctx,
             &RegisterRequest {
-                service: "orders".to_owned(),
-                config: fixture("service-orders.hcl").to_string_lossy().into_owned(),
+                service: Some("orders".to_owned()),
+                config: Some(fixture("service-orders.hcl").to_string_lossy().into_owned()),
                 force: false,
             },
         )
@@ -119,8 +119,8 @@ mod tests {
             register(
                 &ctx,
                 &RegisterRequest {
-                    service: service.to_owned(),
-                    config: config_path.to_string_lossy().into_owned(),
+                    service: Some(service.to_owned()),
+                    config: Some(config_path.to_string_lossy().into_owned()),
                     force: false,
                 },
             )

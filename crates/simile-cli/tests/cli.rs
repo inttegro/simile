@@ -23,6 +23,20 @@ fn registry_home() -> PathBuf {
     ))
 }
 
+fn simfile_project() -> PathBuf {
+    let root = registry_home().with_extension("project");
+    drop(fs::remove_dir_all(&root));
+    fs::create_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
+    for (source, destination) in [
+        ("service-orders.hcl", "Simfile"),
+        ("run-orders.yaml", "run-orders.yaml"),
+        ("orders.hcl", "orders.hcl"),
+    ] {
+        fs::copy(fixture(source), root.join(destination)).unwrap_or_else(|error| panic!("{error}"));
+    }
+    root
+}
+
 fn remote_service_configuration() -> (String, thread::JoinHandle<()>) {
     let openapi =
         fs::read_to_string(fixture("run-orders.yaml")).unwrap_or_else(|error| panic!("{error}"));
@@ -261,6 +275,77 @@ fn registers_a_service_in_simile_home() {
         .success();
 
     fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn discovers_and_infers_the_service_from_the_current_simfile() {
+    let project = simfile_project();
+    let home = project.join(".simile");
+
+    let registration = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .current_dir(&project)
+        .env("SIMILE_HOME", &home)
+        .args(["--output", "json", "register"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        registration.status.success(),
+        "{}",
+        String::from_utf8_lossy(&registration.stderr)
+    );
+    let registration: serde_json::Value =
+        serde_json::from_slice(&registration.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(registration["service"], "orders");
+
+    assert!(home.join("services/orders/current").is_file());
+
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .current_dir(&project)
+        .args(["--output", "json", "describe"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(report["service"], "orders");
+    assert_eq!(
+        report["source"],
+        project
+            .canonicalize()
+            .unwrap_or_else(|error| panic!("{error}"))
+            .join("Simfile")
+            .to_string_lossy()
+            .as_ref()
+    );
+
+    fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn reports_a_missing_simfile_with_the_expected_recovery() {
+    let project = registry_home().with_extension("empty-project");
+    drop(fs::remove_dir_all(&project));
+    fs::create_dir_all(&project).unwrap_or_else(|error| panic!("{error}"));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .current_dir(&project)
+        .args(["describe"])
+        .assert()
+        .failure()
+        .stderr_eq(format!(
+            "no Simfile found at `{}`; create one or pass --config URL_OR_FILE\n",
+            project
+                .canonicalize()
+                .unwrap_or_else(|error| panic!("{error}"))
+                .join("Simfile")
+                .display()
+        ));
+
+    fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]

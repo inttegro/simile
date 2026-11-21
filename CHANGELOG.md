@@ -4,6 +4,9 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+- Adopt `Simfile` as the conventional local service definition so `register`, `describe`, and
+  `start` can discover and name a service from the current directory.
+
 - Treat request-to-response bindings as hard postconditions across body, path, query, header, and
   cookie sources, with explicit failures when a reachable response cannot be constructed.
 - Add request-derived concatenation, substring, masking, and conditional-default expressions.

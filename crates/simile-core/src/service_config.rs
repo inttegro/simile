@@ -6,6 +6,7 @@ use crate::registry::SourceLocation;
 use crate::{Context, Error, Result};
 
 const MAX_REMOTE_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+pub(crate) const SIMFILE_NAME: &str = "Simfile";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ServiceConfigSource {
@@ -33,6 +34,14 @@ pub(crate) struct LoadedServiceConfig {
 }
 
 impl LoadedServiceConfig {
+    pub(crate) fn load_simfile(ctx: &Context) -> Result<Self> {
+        let path = ctx.current_dir().join(SIMFILE_NAME);
+        if !path.is_file() {
+            return Err(Error::SimfileNotFound { path });
+        }
+        Self::load(ctx, ServiceConfigSource::Path(path))
+    }
+
     pub(crate) fn load(ctx: &Context, source: ServiceConfigSource) -> Result<Self> {
         match source {
             ServiceConfigSource::Path(path) => {

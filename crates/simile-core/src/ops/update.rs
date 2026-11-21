@@ -25,7 +25,7 @@ pub fn update(ctx: &Context, request: &UpdateRequest) -> Result<RegistrationRepo
             LoadedServiceConfig::snapshot(current.manifest.config_source, current.config_contents)
         }
     };
-    let configured = prepare_loaded_service(&request.service, None, &config)?;
+    let configured = prepare_loaded_service(Some(&request.service), None, &config)?;
     install(&registry, &request.service, &config, configured, true)
 }
 
@@ -72,11 +72,13 @@ mod tests {
         let original = register(
             &ctx,
             &RegisterRequest {
-                service: "orders".to_owned(),
-                config: inputs
-                    .join("service-orders.hcl")
-                    .to_string_lossy()
-                    .into_owned(),
+                service: Some("orders".to_owned()),
+                config: Some(
+                    inputs
+                        .join("service-orders.hcl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 force: false,
             },
         )
@@ -114,11 +116,13 @@ mod tests {
         let original = register(
             &ctx,
             &RegisterRequest {
-                service: "orders".to_owned(),
-                config: inputs
-                    .join("service-orders.hcl")
-                    .to_string_lossy()
-                    .into_owned(),
+                service: Some("orders".to_owned()),
+                config: Some(
+                    inputs
+                        .join("service-orders.hcl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 force: false,
             },
         )

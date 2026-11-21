@@ -14,7 +14,7 @@ use crate::{Context, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DescribeServiceRequest {
-    pub service: String,
+    pub service: Option<String>,
     pub config: Option<String>,
     pub verbose: bool,
 }
@@ -226,42 +226,66 @@ pub fn describe_service(
     ctx: &Context,
     request: &DescribeServiceRequest,
 ) -> Result<DescribeServiceReport> {
-    let (artifact, listen, source, revision) = if let Some(config) = &request.config {
-        let loaded =
-            LoadedServiceConfig::load(ctx, ServiceConfigSource::from_argument(config.clone()))?;
-        let prepared = prepare_loaded_service(&request.service, None, &loaded)?.service;
-        (
-            prepared.artifact,
-            prepared.report.listen,
-            config.clone(),
-            None,
-        )
-    } else {
-        let registered = Registry::new(ctx.simile_home()?).load(&request.service)?;
-        let listen = SocketAddr::new(
-            registered.manifest.listen.host,
-            registered.manifest.listen.port,
-        );
-        (
-            registered.artifact,
-            listen,
-            "registry".to_owned(),
-            Some(registered.revision),
-        )
+    let (service, artifact, listen, source, revision) = match (&request.service, &request.config) {
+        (requested, Some(config)) => {
+            let loaded =
+                LoadedServiceConfig::load(ctx, ServiceConfigSource::from_argument(config.clone()))?;
+            let prepared = prepare_loaded_service(requested.as_deref(), None, &loaded)?.service;
+            (
+                prepared.report.service,
+                prepared.artifact,
+                prepared.report.listen,
+                config.clone(),
+                None,
+            )
+        }
+        (Some(service), None) => {
+            let registered = Registry::new(ctx.simile_home()?).load(service)?;
+            let listen = SocketAddr::new(
+                registered.manifest.listen.host,
+                registered.manifest.listen.port,
+            );
+            (
+                registered.manifest.name,
+                registered.artifact,
+                listen,
+                "registry".to_owned(),
+                Some(registered.revision),
+            )
+        }
+        (None, None) => {
+            let loaded = LoadedServiceConfig::load_simfile(ctx)?;
+            let prepared = prepare_loaded_service(None, None, &loaded)?.service;
+            (
+                prepared.report.service,
+                prepared.artifact,
+                prepared.report.listen,
+                loaded.name,
+                None,
+            )
+        }
     };
 
-    Ok(report(request, &artifact, listen, source, revision))
+    Ok(report(
+        &service,
+        request.verbose,
+        &artifact,
+        listen,
+        source,
+        revision,
+    ))
 }
 
 fn report(
-    request: &DescribeServiceRequest,
+    service: &str,
+    verbose: bool,
     artifact: &Artifact,
     listen: SocketAddr,
     source: String,
     revision: Option<String>,
 ) -> DescribeServiceReport {
     let summary = artifact.summary();
-    let operations = if request.verbose {
+    let operations = if verbose {
         artifact
             .operations()
             .map(|operation| {
@@ -480,9 +504,9 @@ fn report(
         .collect();
 
     DescribeServiceReport {
-        service: request.service.clone(),
+        service: service.to_owned(),
         description: artifact
-            .description(DescriptionKind::Service, None, &request.service)
+            .description(DescriptionKind::Service, None, service)
             .map(str::to_owned)
             .or_else(|| artifact.service_description().map(str::to_owned)),
         service_version: summary.service_version,

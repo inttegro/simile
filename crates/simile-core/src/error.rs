@@ -22,6 +22,9 @@ pub enum Error {
         source: io::Error,
     },
 
+    #[error("no Simfile found at `{path}`; create one or pass --config URL_OR_FILE")]
+    SimfileNotFound { path: PathBuf },
+
     #[error("could not infer contract format from `{path}`; pass --contract-format")]
     UnknownContractFormat { path: PathBuf },
 
