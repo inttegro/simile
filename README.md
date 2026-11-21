@@ -53,6 +53,25 @@ simile run openapi.yaml \
 Continue with the [Quickstart](https://os.inttegro.dev/simile/quickstart) to register and run a
 long-lived local service from a conventional `Simfile`.
 
+Run an application test against the current `Simfile` with automatic startup and cleanup:
+
+```sh
+simile test -- npm test
+```
+
+See [Local testing](https://os.inttegro.dev/simile/local-testing) and
+[CI testing](https://os.inttegro.dev/simile/ci-testing) for profiles, scenarios, isolation, and
+GitHub Actions.
+
+Discover an external provider through a local pass-through proxy:
+
+```sh
+simile proxy acme --to https://api.acme.com --learn
+```
+
+See [Proxy and learn](https://os.inttegro.dev/simile/proxy-and-learn) for evidence handling and the
+generated service workspace.
+
 ## What Simile models
 
 - HTTP operations described by OpenAPI 3.0–3.2, Smithy 2.0, or semantic TypeScript declarations.

@@ -40,6 +40,15 @@
 				]
 			},
 			{
+				"group": "Proxy and learn",
+				"pages": [
+					"proxy-and-learn",
+					"proxy-api-calls",
+					"proxy-learning-output",
+					"proxy-evidence-and-limits"
+				]
+			},
+			{
 				"group": "Model behavior",
 				"pages": [
 					"outcome-fidelity",
@@ -59,6 +68,15 @@
 				"group": "Run and test",
 				"pages": [
 					"service-lifecycle",
+					{
+						"group": "Test applications",
+						"pages": [
+							"local-testing",
+							"ci-testing",
+							"github-actions",
+							"docker"
+						]
+					},
 					{
 						"group": "Set up callers",
 						"pages": [

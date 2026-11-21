@@ -1,6 +1,6 @@
 ---
 title: Lifecycle
-description: Understand how register, update, start, remove, and run manage service definitions.
+description: Understand how register, update, start, test, remove, and run manage service definitions.
 ---
 
 Simile has two execution paths. `run` compiles and executes one operation in a short-lived process.
@@ -17,6 +17,8 @@ flowchart TD
   Revision --> Setup[simile setup NAME]
   Setup --> Start[simile start NAME]
   Start --> Server[Long-lived local HTTP server]
+  Setup --> Test[simile test NAME -- COMMAND]
+  Test --> Supervised[Service + test process\none shared lifetime]
   Sources --> Update[simile update NAME]
   Update --> NewRevision[New immutable revision]
   NewRevision --> Pointer[Atomically advance current]
@@ -77,6 +79,27 @@ simile start --port 8484
 
 This form loads `./Simfile`. `--port` changes only that invocation. `start --config` accepts an
 explicit local path; URL-based configuration loading belongs to `register` and `update`.
+
+Override the configured listener address when a container or virtual machine must expose it:
+
+```bash
+simile start inttegro --host 0.0.0.0 --port 8484
+```
+
+## Test
+
+```bash
+simile test inttegro -- npm test
+```
+
+`test` starts the selected service on an available loopback port, supplies that address to the
+child as `SIMILE_BASE_URL`, and keeps the emulator alive until the command exits. A registered
+service's current profile is injected automatically; `--profile NAME` selects another profile.
+Simile returns the child command's exit status and shuts the listener down.
+
+Use `--scenario` or `--fault-profile` to run a controlled failure case. See
+[Local testing](/local-testing) for the complete workflow and [CI testing](/ci-testing) for isolated
+job state.
 
 ## Update
 

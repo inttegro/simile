@@ -308,6 +308,18 @@ simile update orders
 If compilation fails, the current revision remains active. Restart the service process to load the
 new artifact.
 
+## 6. Run an application test
+
+When an application test suite should own the emulator's lifetime, run it through Simile:
+
+```bash
+simile test orders -- npm test
+```
+
+The child command receives `SIMILE_BASE_URL`. Simile binds before starting the tests, selects an
+available port, returns the test command's exit status, and shuts down afterward. Continue with
+[Local testing](/local-testing) or [GitHub Actions](/github-actions).
+
 Next, read the authoring standard for [OpenAPI](/openapi-and-hcl),
 [Smithy](/smithy-contracts), or [semantic TypeScript](/typescript-contracts). Use
 [Contract sources and HCL](/contract-sources-and-hcl) to add named outcomes and effects, and
