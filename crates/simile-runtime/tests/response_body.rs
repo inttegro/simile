@@ -668,6 +668,155 @@ paths:
 }
 
 #[test]
+fn lets_a_triggered_rule_normalize_its_binding_target() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Pages, version: 1.0.0 }
+paths:
+  /pages:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page_number]
+              properties:
+                page_number: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [page]
+                properties:
+                  page:
+                    type: object
+                    required: [number]
+                    properties:
+                      number: { type: integer, minimum: 1 }
+              x-simile-from-request:
+                bindings:
+                  - { from: /page_number, to: /page/number }
+                rules:
+                  - when:
+                      all:
+                        - { request: /page_number, equals: 0 }
+                    then:
+                      set: { /page/number: 1 }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /pages",
+            content_type: Some("application/json"),
+            bytes: br#"{"page_number":0}"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /pages",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            request_parameters: None,
+            body: None,
+        },
+        2,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(response.value(), Some(&json!({"page": {"number": 1}})));
+    assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+}
+
+#[test]
+fn preserves_a_bound_request_value_by_repairing_its_dynamic_bound() {
+    let openapi = r#"
+openapi: 3.1.2
+info: { title: Policy versions, version: 1.0.0 }
+paths:
+  /policies/lookup:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Policy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [policy]
+                properties:
+                  policy:
+                    type: object
+                    required: [active_version, version]
+                    properties:
+                      active_version: { type: integer, minimum: 1 }
+                      version: { type: integer, minimum: 1 }
+                    x-simile-constraints:
+                      - bounded:
+                          path: /version
+                          maximum: { path: /active_version }
+              x-simile-from-request:
+                bindings:
+                  - { from: /version, to: /policy/version }
+"#;
+    let artifact = compile_artifact(openapi, None);
+    let request = validate_request_body(
+        &artifact,
+        IncomingBody {
+            operation: "POST /policies/lookup",
+            content_type: Some("application/json"),
+            bytes: br#"{"version":100}"#,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap_or_else(|| panic!("request body should be present"));
+
+    let response = synthesize_response_with_seed(
+        &artifact,
+        ResponseSynthesisRequest {
+            operation: "POST /policies/lookup",
+            status: Some(200),
+            content_type: Some("application/json"),
+            request_body: Some(&request),
+            request_parameters: None,
+            body: None,
+        },
+        1,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let policy = &response
+        .value()
+        .unwrap_or_else(|| panic!("response body should be present"))["policy"];
+
+    assert_eq!(policy["version"], 100);
+    assert!(
+        policy["active_version"]
+            .as_u64()
+            .is_some_and(|value| value >= 100)
+    );
+    assert_eq!(response.soundness(), ResponseSoundness::RequestConstrained);
+}
+
+#[test]
 fn rejects_an_unreachable_relation_instead_of_returning_an_unrelated_success() {
     let openapi = r#"
 openapi: 3.1.2

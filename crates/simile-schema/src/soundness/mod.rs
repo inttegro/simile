@@ -243,6 +243,31 @@ pub(crate) fn establish(node: &SchemaNode, value: &mut Value) {
     }
 }
 
+pub(crate) fn establish_preserving(
+    node: &SchemaNode,
+    value: &mut Value,
+    protected: &impl Fn(&str) -> bool,
+) {
+    let passes = node.constraints.len().saturating_mul(2).max(1);
+    for _ in 0..passes {
+        let mut changed = false;
+        for constraint in &node.constraints {
+            // Why: bounded constraints are bidirectional enough to repair their source boundary
+            // when a request relation owns the bounded target; other constraints retain their
+            // normal direction and are validated after the protected values are restored.
+            changed |= match constraint {
+                Constraint::Bounded(constraint) => {
+                    bounded::establish_preserving(constraint, value, protected)
+                }
+                _ => false,
+            };
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 fn invalid(field: &str, reason: &str) -> CompileError {
     CompileError::InvalidConstraint {
         field: field.to_owned(),

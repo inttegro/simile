@@ -218,6 +218,51 @@ pub(super) fn establish(constraint: &Constraint, value: &mut Value) -> bool {
     true
 }
 
+/// Repair a dynamic bound without changing a response path fixed by a request relation.
+pub(super) fn establish_preserving(
+    constraint: &Constraint,
+    value: &mut Value,
+    protected: &impl Fn(&str) -> bool,
+) -> bool {
+    if !protected(&constraint.path) {
+        return establish(constraint, value);
+    }
+    if prove(constraint, value).is_empty() {
+        return false;
+    }
+    let Some(target) = value.pointer(&constraint.path).cloned() else {
+        return false;
+    };
+    let mut candidate = value.clone();
+    for bound in &constraint.bounds {
+        let Some(source) = candidate.pointer(&bound.path) else {
+            return false;
+        };
+        let Some(ordering) = constraint.kind.compare(&target, source) else {
+            return false;
+        };
+        if bound.direction.accepts(ordering) {
+            continue;
+        }
+        // Why: the request-bound target is authoritative; changing another request-bound operand
+        // would only exchange one broken public relation for another.
+        if protected(&bound.path) {
+            return false;
+        }
+        let Some(replacement) = bound.direction.source_replacement(constraint.kind, &target) else {
+            return false;
+        };
+        if !path::apply(&mut candidate, &bound.path, replacement) {
+            return false;
+        }
+    }
+    if candidate == *value || !prove(constraint, &candidate).is_empty() {
+        return false;
+    }
+    *value = candidate;
+    true
+}
+
 fn resolve(
     catalog: &SchemaCatalog,
     root: SchemaId,
@@ -295,6 +340,14 @@ impl Direction {
             Self::Minimum | Self::Maximum => Some(source.clone()),
             Self::ExclusiveMinimum => shift(kind, source, Ordering::Greater),
             Self::ExclusiveMaximum => shift(kind, source, Ordering::Less),
+        }
+    }
+
+    fn source_replacement(self, kind: ordered::Kind, target: &Value) -> Option<Value> {
+        match self {
+            Self::Minimum | Self::Maximum => Some(target.clone()),
+            Self::ExclusiveMinimum => shift(kind, target, Ordering::Less),
+            Self::ExclusiveMaximum => shift(kind, target, Ordering::Greater),
         }
     }
 }

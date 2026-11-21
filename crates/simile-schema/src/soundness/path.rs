@@ -278,6 +278,6 @@ fn decode_segment(pointer: &str, segment: &str) -> std::result::Result<String, S
     Ok(decoded)
 }
 
-fn encode_segment(segment: &str) -> String {
+pub(crate) fn encode_segment(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
 }

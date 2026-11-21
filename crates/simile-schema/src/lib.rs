@@ -485,8 +485,10 @@ impl<'a> BoundMediaType<'a> {
         };
         relation.apply(self.schemas, schema, request, &mut candidate)?;
         // Why: response-local equations and implications may depend on a projected field; repair
-        // them before proving the cross-message relation, then reapply the authoritative request.
-        self.schemas.establish(schema, &mut candidate);
+        // them before proving the cross-message relation without rewriting request-owned values.
+        let protected = relation.protected_paths(request);
+        self.schemas
+            .establish_preserving(schema, &mut candidate, &protected);
         relation.apply(self.schemas, schema, request, &mut candidate)?;
         let issues = self.schemas.validate(schema, &candidate);
         if !issues.is_empty() {

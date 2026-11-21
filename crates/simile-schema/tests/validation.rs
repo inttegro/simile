@@ -431,6 +431,110 @@ fn synthesizes_nested_required_values_and_combinators() {
 }
 
 #[test]
+fn synthesizes_a_union_branch_that_requires_a_sibling_property() {
+    let (plan, schemas) = plan(
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id"],
+            "oneOf": [
+                {"required": ["product"]},
+                {"required": ["bundle"]}
+            ],
+            "properties": {
+                "id": {"type": "string"},
+                "product": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string"}}
+                },
+                "bundle": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string"}}
+                }
+            }
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+    assert!(value.get("product").is_some() ^ value.get("bundle").is_some());
+    assert!(media.validate(&value).is_empty(), "{value}");
+}
+
+#[test]
+fn synthesizes_required_fields_from_a_nested_all_of_overlay() {
+    let components = BTreeMap::from([
+        (
+            "Delivery".to_owned(),
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "sent_channels"],
+                "properties": {
+                    "deliveries": {"type": "array", "items": {"type": "string"}},
+                    "kind": {"type": "string", "enum": ["invoice", "receipt"]},
+                    "sent_channels": {"type": "array", "items": {"type": "string"}}
+                }
+            }),
+        ),
+        (
+            "Response".to_owned(),
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["delivery"],
+                "properties": {
+                    "delivery": {"$ref": "#/components/schemas/Delivery"}
+                }
+            }),
+        ),
+    ]);
+    let (plan, schemas) = plan(
+        json!({
+            "allOf": [
+                {"$ref": "#/components/schemas/Response"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "delivery": {
+                            "allOf": [
+                                {"$ref": "#/components/schemas/Delivery"},
+                                {
+                                    "type": "object",
+                                    "required": ["deliveries"],
+                                    "properties": {
+                                        "kind": {"type": "string", "enum": ["invoice"]},
+                                        "deliveries": {"type": "array", "minItems": 1}
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }),
+        components,
+        OpenApiFeature::V3_1,
+    );
+    let media = BoundRequestBody::new(&plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+
+    let value = media.synthesize().unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(value["delivery"]["kind"], "invoice");
+    assert_eq!(value["delivery"]["deliveries"], json!(["example"]));
+    assert!(media.validate(&value).is_empty(), "{value}");
+}
+
+#[test]
 fn representative_synthesis_includes_finite_optional_properties() {
     let (plan, schemas) = plan(
         json!({

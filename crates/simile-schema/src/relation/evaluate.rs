@@ -1,5 +1,7 @@
 //! Applies compiled relations to responses and proves the resulting cross-message contract.
 
+use std::collections::BTreeSet;
+
 use serde_json::{Number, Value};
 
 use super::{Expression, Plan, Rule};
@@ -85,6 +87,11 @@ impl Plan {
             else {
                 continue;
             };
+            // Why: a matching rule is the relation's declared normalization step for this exact
+            // response field, so proving the pre-normalized binding would reject a reachable result.
+            if self.rule_overrides(&mapping.target, request) {
+                continue;
+            }
             let target = response
                 .pointer(&mapping.target)
                 .ok_or_else(|| unreachable(&mapping.target, "is absent"))?;
@@ -96,6 +103,11 @@ impl Plan {
             }
         }
         for derivation in &self.derivations {
+            // Why: rules are applied after derivations and may deliberately normalize the same
+            // field; the triggered rule below remains responsible for proving the final value.
+            if self.rule_overrides(&derivation.target, request) {
+                continue;
+            }
             let expected = derivation
                 .value
                 .evaluate(request, request.body().unwrap_or(&Value::Null))
@@ -123,6 +135,37 @@ impl Plan {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn protected_paths(&self, request: &RequestValues<'_>) -> BTreeSet<String> {
+        let mut paths = BTreeSet::new();
+        for mapping in &self.mappings {
+            if selected_source(request, &mapping.source).is_some() || mapping.default.is_some() {
+                paths.insert(mapping.target.clone());
+            }
+        }
+        for derivation in &self.derivations {
+            if derivation
+                .value
+                .evaluate(request, request.body().unwrap_or(&Value::Null))
+                .is_some()
+            {
+                paths.insert(derivation.target.clone());
+            }
+        }
+        for rule in self.rules.iter().filter(|rule| rule.matches(request)) {
+            paths.extend(rule.set.iter().map(|(target, _)| target.clone()));
+            paths.extend(rule.omit.iter().cloned());
+        }
+        paths
+    }
+
+    fn rule_overrides(&self, target: &str, request: &RequestValues<'_>) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.matches(request)
+                && (rule.set.iter().any(|(candidate, _)| candidate == target)
+                    || rule.omit.iter().any(|candidate| candidate == target))
+        })
     }
 }
 

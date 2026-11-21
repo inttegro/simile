@@ -192,6 +192,36 @@ impl SchemaCatalog {
             *value = original;
         }
     }
+
+    pub(crate) fn establish_preserving(
+        &self,
+        root: SchemaRef,
+        value: &mut Value,
+        protected: &BTreeSet<String>,
+    ) {
+        let original = value.clone();
+        let snapshots = protected
+            .iter()
+            .map(|pointer| (pointer.clone(), value.pointer(pointer).cloned()))
+            .collect::<Vec<_>>();
+        let mut active = Vec::new();
+        apply_heuristics(self, root.0, value, 0, &mut active);
+
+        // Why: ordinary schema establishment is allowed to repair derived fields, but public
+        // request-to-response bindings and triggered rules must remain exactly authoritative.
+        for (pointer, snapshot) in snapshots {
+            if let Some(snapshot) = snapshot {
+                let _ = soundness::path::apply(value, &pointer, snapshot);
+            } else {
+                soundness::path::remove(value, &pointer);
+            }
+        }
+        let mut active = Vec::new();
+        apply_preserving_heuristics(self, root.0, value, "", protected, 0, &mut active);
+        if !validate::value(self, root, value).is_empty() {
+            *value = original;
+        }
+    }
 }
 
 fn apply_heuristics(
@@ -235,6 +265,76 @@ fn apply_heuristics(
     // Re-establish the schema's authoritative cross-field constraints so newly triggered
     // consequences (for example, `requires_payment` requiring `sealed_at`) are materialized.
     soundness::establish(&node, value);
+    active.pop();
+}
+
+fn apply_preserving_heuristics(
+    catalog: &SchemaCatalog,
+    id: SchemaId,
+    value: &mut Value,
+    prefix: &str,
+    protected: &BTreeSet<String>,
+    depth: usize,
+    active: &mut Vec<SchemaId>,
+) {
+    if depth >= MAX_DEPTH || active.contains(&id) {
+        return;
+    }
+    let Some(node) = catalog.nodes.get(id as usize).cloned() else {
+        return;
+    };
+    active.push(id);
+
+    if let Some(object) = value.as_object_mut() {
+        for (name, child) in &node.properties {
+            if let Some(value) = object.get_mut(name) {
+                let child_prefix = format!("{prefix}/{}", soundness::path::encode_segment(name));
+                apply_preserving_heuristics(
+                    catalog,
+                    *child,
+                    value,
+                    &child_prefix,
+                    protected,
+                    depth + 1,
+                    active,
+                );
+            }
+        }
+    }
+    if let (Some(items), Some(values)) = (node.items, value.as_array_mut()) {
+        for (index, value) in values.iter_mut().enumerate() {
+            let child_prefix = format!("{prefix}/{index}");
+            apply_preserving_heuristics(
+                catalog,
+                items,
+                value,
+                &child_prefix,
+                protected,
+                depth + 1,
+                active,
+            );
+        }
+    }
+    for child in &node.all_of {
+        apply_preserving_heuristics(catalog, *child, value, prefix, protected, depth + 1, active);
+    }
+    for child in node.any_of.iter().chain(&node.one_of) {
+        if validate::value(catalog, SchemaRef(*child), value).is_empty() {
+            apply_preserving_heuristics(
+                catalog,
+                *child,
+                value,
+                prefix,
+                protected,
+                depth + 1,
+                active,
+            );
+            break;
+        }
+    }
+    soundness::establish_preserving(&node, value, &|pointer| {
+        protected.contains(&format!("{prefix}{pointer}"))
+    });
     active.pop();
 }
 
@@ -509,41 +609,74 @@ impl Synthesizer<'_> {
         if depth >= MAX_DEPTH || active.contains(&id) || !value.is_object() {
             return true;
         }
+        let Some(node) = self.catalog.nodes.get(id as usize) else {
+            return false;
+        };
+        let alternatives = if node.one_of.is_empty() {
+            &node.any_of
+        } else {
+            &node.one_of
+        };
+        if !alternatives.is_empty() {
+            for offset in 0..alternatives.len() {
+                let branch = alternatives[(variant + offset) % alternatives.len()];
+                let mut candidate = value.clone();
+                if self.complete_required_shape(
+                    id,
+                    Some(branch),
+                    &mut candidate,
+                    variant,
+                    depth,
+                    active,
+                ) && validate::value(self.catalog, SchemaRef(branch), &candidate).is_empty()
+                {
+                    *value = candidate;
+                    return true;
+                }
+            }
+            return false;
+        }
+        self.complete_required_shape(id, None, value, variant, depth, active)
+    }
+
+    fn complete_required_shape(
+        &self,
+        id: SchemaId,
+        branch: Option<SchemaId>,
+        value: &mut Value,
+        variant: usize,
+        depth: usize,
+        active: &mut Vec<SchemaId>,
+    ) -> bool {
         let mut required = BTreeSet::new();
         let mut properties = BTreeMap::<String, Vec<SchemaId>>::new();
         let mut visited = BTreeSet::new();
         self.object_shape(id, &mut required, &mut properties, &mut visited);
+        if let Some(branch) = branch {
+            self.object_shape(branch, &mut required, &mut properties, &mut visited);
+        }
 
         active.push(id);
         for name in required {
-            if value.get(&name).is_some() {
-                continue;
-            }
             let Some(schemas) = properties.get(&name) else {
                 active.pop();
                 return false;
             };
-            let replacement = schemas.iter().rev().find_map(|schema| {
-                let mut synthesis_active = Vec::new();
-                let candidate = self.node(
-                    *schema,
-                    variant,
-                    depth.saturating_add(1),
-                    &mut synthesis_active,
-                )?;
-                schemas
-                    .iter()
-                    .all(|schema| {
-                        validate::value(self.catalog, SchemaRef(*schema), &candidate).is_empty()
-                    })
-                    .then_some(candidate)
+            let accepted = value.get(&name).is_some_and(|candidate| {
+                schemas.iter().all(|schema| {
+                    validate::value(self.catalog, SchemaRef(*schema), candidate).is_empty()
+                })
             });
-            let Some(replacement) = replacement else {
-                active.pop();
-                return false;
-            };
-            if let Some(object) = value.as_object_mut() {
-                object.insert(name, replacement);
+            if !accepted {
+                let Some(replacement) =
+                    self.intersection(schemas, variant, depth.saturating_add(1))
+                else {
+                    active.pop();
+                    return false;
+                };
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(name, replacement);
+                }
             }
         }
 
@@ -566,6 +699,86 @@ impl Synthesizer<'_> {
         }
         active.pop();
         true
+    }
+
+    fn intersection(&self, schemas: &[SchemaId], variant: usize, depth: usize) -> Option<Value> {
+        if depth >= MAX_DEPTH || schemas.is_empty() {
+            return None;
+        }
+        for schema in schemas.iter().rev() {
+            let mut synthesis_active = Vec::new();
+            let Some(candidate) = self.node(*schema, variant, depth, &mut synthesis_active) else {
+                continue;
+            };
+            if schemas.iter().all(|schema| {
+                validate::value(self.catalog, SchemaRef(*schema), &candidate).is_empty()
+            }) {
+                return Some(candidate);
+            }
+        }
+
+        let mut flattened = Vec::new();
+        let mut visited = BTreeSet::new();
+        for schema in schemas {
+            self.intersection_nodes(*schema, &mut flattened, &mut visited);
+        }
+        if flattened.iter().all(|schema| {
+            self.catalog
+                .nodes
+                .get(*schema as usize)
+                .is_some_and(|node| node.types.is_empty() || node.types.contains(&JsonType::Array))
+        }) {
+            let minimum = flattened
+                .iter()
+                .filter_map(|schema| self.catalog.nodes[*schema as usize].min_items)
+                .max()
+                .unwrap_or(0);
+            let maximum = flattened
+                .iter()
+                .filter_map(|schema| self.catalog.nodes[*schema as usize].max_items)
+                .min()
+                .unwrap_or(usize::MAX);
+            if minimum > maximum {
+                return None;
+            }
+            let item_schemas = flattened
+                .iter()
+                .filter_map(|schema| self.catalog.nodes[*schema as usize].items)
+                .collect::<Vec<_>>();
+            let mut items = Vec::with_capacity(minimum);
+            for index in 0..minimum {
+                items.push(if item_schemas.is_empty() {
+                    Value::Null
+                } else {
+                    self.intersection(&item_schemas, variant + index, depth + 1)?
+                });
+            }
+            let candidate = Value::Array(items);
+            return schemas
+                .iter()
+                .all(|schema| {
+                    validate::value(self.catalog, SchemaRef(*schema), &candidate).is_empty()
+                })
+                .then_some(candidate);
+        }
+        None
+    }
+
+    fn intersection_nodes(
+        &self,
+        id: SchemaId,
+        nodes: &mut Vec<SchemaId>,
+        visited: &mut BTreeSet<SchemaId>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        nodes.push(id);
+        if let Some(node) = self.catalog.nodes.get(id as usize) {
+            for child in &node.all_of {
+                self.intersection_nodes(*child, nodes, visited);
+            }
+        }
     }
 
     fn object_shape(
