@@ -62,6 +62,9 @@ pub fn authenticate_with_profiles(
     }
 
     let profiles = artifact.profiles().collect::<Vec<_>>();
+    let anonymous_allowed = requirements
+        .iter()
+        .any(|requirement| requirement.schemes().next().is_none());
     let mut permission_denied = false;
     for requirement in requirements {
         let schemes = requirement
@@ -76,7 +79,10 @@ pub fn authenticate_with_profiles(
             })
             .collect::<Result<Vec<_>>>()?;
         if schemes.is_empty() {
-            return Ok(None);
+            // Why: optional authentication must remain anonymous when no credential matches, but
+            // a valid presented identity must win over the empty OpenAPI alternative so scoped
+            // state and authenticated response behavior remain reachable.
+            continue;
         }
         let Some(presented) = schemes
             .iter()
@@ -143,7 +149,9 @@ pub fn authenticate_with_profiles(
         }
     }
 
-    if permission_denied {
+    if anonymous_allowed {
+        Ok(None)
+    } else if permission_denied {
         Err(Error::PermissionDenied {
             operation: operation.key().to_owned(),
         })

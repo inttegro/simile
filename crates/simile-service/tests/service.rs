@@ -489,6 +489,188 @@ effect "persist_product" {
 }
 
 #[test]
+fn stateful_mutation_projects_onto_the_persisted_snapshot() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Products, version: 1.0.0 }
+paths:
+  /products/create:
+    post:
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, name]
+              properties:
+                type: { type: string, enum: [digital, physical] }
+                name: { type: string }
+      responses:
+        "200":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+              x-simile-from-request:
+                bindings:
+                  - { from: /type, to: /product/type }
+                  - { from: /name, to: /product/name }
+                  - { to: /product/active, value: { literal: true } }
+  /products/update:
+    post:
+      operationId: updateProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string, pattern: '^prod_' }
+                name: { type: string }
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdatedProductResponse' }
+              x-simile-from-request:
+                bindings:
+                  - { from: /product_id, to: /product/id }
+                  - { from: /name, to: /product/name }
+  /products/lookup:
+    post:
+      operationId: lookupProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string, pattern: '^prod_' }
+      responses:
+        "200":
+          description: found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+components:
+  schemas:
+    ProductResponse:
+      type: object
+      required: [product]
+      properties:
+        product: { $ref: '#/components/schemas/Product' }
+    UpdatedProductResponse:
+      type: object
+      required: [product]
+      properties:
+        product: { $ref: '#/components/schemas/UpdatedProduct' }
+    UpdatedProduct:
+      type: object
+      additionalProperties: false
+      required: [id, type, name]
+      properties:
+        id: { type: string, pattern: '^prod_' }
+        type: { type: string, enum: [digital, physical] }
+        name: { type: string }
+    Product:
+      type: object
+      required: [id, type, name, active]
+      properties:
+        id: { type: string, pattern: '^prod_' }
+        type: { type: string, enum: [digital, physical] }
+        name: { type: string }
+        active: { type: boolean }
+"#,
+        r#"
+backend "db" "primary" {}
+
+effect "persist_product" {
+  operations = ["createProduct", "updateProduct"]
+
+  action "db.primary" "merge" {
+    collection = "products"
+    key        = response.product.id
+    value      = response.product
+  }
+}
+"#,
+    );
+
+    let create = serde_json::json!({"type": "digital", "name": "First edition"});
+    let created = service
+        .execute_value(OperationValueCall {
+            operation: "POST /products/create",
+            content_type: Some("application/json"),
+            body: Some(&create),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let product = created
+        .response()
+        .value()
+        .and_then(|body| body.get("product"))
+        .cloned()
+        .unwrap_or_else(|| panic!("expected product"));
+    let id = product
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("expected product id"));
+    assert_eq!(product.get("type"), Some(&serde_json::json!("digital")));
+    assert_eq!(product.get("active"), Some(&serde_json::json!(true)));
+
+    let update = serde_json::json!({"product_id": id, "name": "Second edition"});
+    let updated = service
+        .execute_value(OperationValueCall {
+            operation: "POST /products/update",
+            content_type: Some("application/json"),
+            body: Some(&update),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let product = updated
+        .response()
+        .value()
+        .and_then(|body| body.get("product"))
+        .cloned()
+        .unwrap_or_else(|| panic!("expected updated product"));
+    assert_eq!(product.get("id"), Some(&serde_json::json!(id)));
+    assert_eq!(
+        product.get("name"),
+        Some(&serde_json::json!("Second edition"))
+    );
+    assert_eq!(product.get("type"), Some(&serde_json::json!("digital")));
+    // Why: the mutation response must remain faithful to its deliberately narrow public schema;
+    // preservation is proven through the subsequent full-resource lookup instead.
+    assert_eq!(product.get("active"), None);
+
+    let lookup = serde_json::json!({"product_id": id});
+    let found = service
+        .execute_value(OperationValueCall {
+            operation: "POST /products/lookup",
+            content_type: Some("application/json"),
+            body: Some(&lookup),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        found.response().value(),
+        Some(&serde_json::json!({
+            "product": {
+                "id": id,
+                "name": "Second edition",
+                "type": "digital",
+                "active": true
+            }
+        }))
+    );
+}
+
+#[test]
 fn get_actions_fall_through_when_state_cannot_represent_the_response() {
     let service = service_with_contract(
         r#"

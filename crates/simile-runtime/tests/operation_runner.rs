@@ -563,6 +563,23 @@ fn treats_an_empty_security_alternative_as_public_access() {
     assert!(principal.is_none());
 }
 
+#[test]
+fn optional_authentication_prefers_a_valid_presented_profile() {
+    let artifact = authentication_artifact();
+    let mut incoming = IncomingParameters::default();
+    incoming.headers.insert(
+        "authorization".to_owned(),
+        vec!["Bearer sk_test_merchant".to_owned()],
+    );
+
+    // Why: an optional-auth operation can expose a richer caller-scoped view; silently selecting
+    // the anonymous alternative would make valid authentication ineffective.
+    let principal = authenticate(&artifact, "GET /optional", &incoming)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|| panic!("valid optional authentication was ignored"));
+    assert_eq!(principal.name(), "merchant_app");
+}
+
 fn authentication_artifact() -> Artifact {
     let openapi = r#"
 openapi: 3.1.2

@@ -183,10 +183,24 @@ impl Service {
             call.operation,
             options.parameters,
             request_body.as_ref(),
+            profile.as_ref().map(|profile| profile.id.as_str()),
         )?;
-        let response_body = match &state {
-            state::StateResolution::Found(value) => Some(value),
-            state::StateResolution::None | state::StateResolution::Missing => options.response_body,
+        let mutation = if matches!(state, state::StateResolution::None) {
+            state::mutation_baseline(
+                self,
+                call.operation,
+                request_body.as_ref(),
+                profile.as_ref().map(|profile| profile.id.as_str()),
+            )?
+        } else {
+            state::StateResolution::None
+        };
+        let response_body = match (&state, &mutation) {
+            (state::StateResolution::Found(value), _)
+            | (_, state::StateResolution::Found(value)) => Some(value),
+            (state::StateResolution::None | state::StateResolution::Missing, _) => {
+                options.response_body
+            }
         };
         let response_status = match state {
             state::StateResolution::Missing
@@ -220,10 +234,18 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let state = state::resolve(self, call.operation, options.parameters, call.body)?;
-        let response_body = match &state {
-            state::StateResolution::Found(value) => Some(value),
-            state::StateResolution::None | state::StateResolution::Missing => options.response_body,
+        let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
+        let mutation = if matches!(state, state::StateResolution::None) {
+            state::mutation_baseline(self, call.operation, call.body, None)?
+        } else {
+            state::StateResolution::None
+        };
+        let response_body = match (&state, &mutation) {
+            (state::StateResolution::Found(value), _)
+            | (_, state::StateResolution::Found(value)) => Some(value),
+            (state::StateResolution::None | state::StateResolution::Missing, _) => {
+                options.response_body
+            }
         };
         let response_status = match state {
             state::StateResolution::Missing
@@ -491,6 +513,10 @@ impl Service {
         for action in execution.effects().synchronous() {
             let resource = action.resource().as_str().parse::<ResourceAddress>()?;
             let command = StackCommand::from_effect(action.kind(), action.arguments())?;
+            // Why: provider-authored effects describe public resources, while a configured
+            // profile is an independent local consumer environment whose state must not leak to
+            // another credential using the same emulated service.
+            let command = state::scope_command(command, profile.map(|profile| profile.id.as_str()));
             stack.execute(
                 resource,
                 CommandMetadata {
@@ -529,9 +555,12 @@ impl Service {
                 StackCommand::Queue(command),
             )?;
         }
-        if let Some((resource, command)) =
-            state::delete_command(self.artifact(), execution.operation(), parameters)
-        {
+        if let Some((resource, command)) = state::delete_command(
+            self.artifact(),
+            execution.operation(),
+            parameters,
+            profile.map(|profile| profile.id.as_str()),
+        ) {
             stack.execute(
                 resource,
                 CommandMetadata {

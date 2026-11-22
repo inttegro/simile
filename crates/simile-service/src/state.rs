@@ -1,7 +1,7 @@
 use serde_json::{Map, Value, json};
 use simile_artifact::{Artifact, ArtifactOperation};
 use simile_runtime::ValidatedParameters;
-use simile_spec::{ParameterLocation, ResourceKind, ResponseStatus};
+use simile_spec::{EffectActionKind, EffectValue, ParameterLocation, ResourceKind, ResponseStatus};
 use simile_stack::{DbCommand, DbResult, ResourceAddress, StackCommand, StackResult};
 
 use crate::{Error, Result, Service};
@@ -17,6 +17,7 @@ pub(crate) fn resolve(
     operation_key: &str,
     parameters: Option<&ValidatedParameters>,
     request_body: Option<&Value>,
+    profile: Option<&str>,
 ) -> Result<StateResolution> {
     let Some(operation) = service.artifact().operation(operation_key) else {
         return Ok(StateResolution::None);
@@ -30,12 +31,13 @@ pub(crate) fn resolve(
     let Some(read) = read_kind(&operation, parameters, request_body, &collection) else {
         return Ok(StateResolution::None);
     };
+    let stored_collection = scoped_collection(profile, &collection);
 
     if let ReadKind::Entity(key) = read {
         let receipt = service.read_stack(
             database,
             StackCommand::Db(DbCommand::Get {
-                collection: collection.clone(),
+                collection: stored_collection.clone(),
                 key,
             }),
         )?;
@@ -56,7 +58,7 @@ pub(crate) fn resolve(
     let receipt = service.read_stack(
         database,
         StackCommand::Db(DbCommand::Query {
-            collection: collection.clone(),
+            collection: stored_collection,
             filters: Vec::new(),
             limit: 100,
         }),
@@ -83,10 +85,75 @@ pub(crate) fn resolve(
     }
 }
 
+/// Return a stored entity as the exact response baseline for a mutation that addresses it.
+///
+/// Request-to-response relations are applied by the runtime after this function returns. That
+/// preserves fields the mutation omitted while still letting the public contract own every field
+/// the request is allowed to change.
+pub(crate) fn mutation_baseline(
+    service: &Service,
+    operation_key: &str,
+    request_body: Option<&Value>,
+    profile: Option<&str>,
+) -> Result<StateResolution> {
+    let Some(operation) = service.artifact().operation(operation_key) else {
+        return Ok(StateResolution::None);
+    };
+    let Some(database) = sole_database(service.artifact()) else {
+        return Ok(StateResolution::None);
+    };
+    let mut collections = service
+        .artifact()
+        .effects()
+        .filter(|effect| effect.operations().iter().any(|key| key == operation_key))
+        .flat_map(|effect| effect.actions().to_vec())
+        .filter(|action| {
+            matches!(
+                action.kind,
+                EffectActionKind::DbPut | EffectActionKind::DbMerge
+            )
+        })
+        .filter_map(|action| match action.arguments.get("collection") {
+            Some(EffectValue::Literal {
+                value: Value::String(collection),
+            }) => Some(collection.clone()),
+            _ => None,
+        });
+    let Some(collection) = collections.next() else {
+        return Ok(StateResolution::None);
+    };
+    if collections.any(|candidate| candidate != collection) {
+        return Ok(StateResolution::None);
+    }
+    let Some(key) = request_body.and_then(|body| request_identity(body, &collection)) else {
+        return Ok(StateResolution::None);
+    };
+    let receipt = service.read_stack(
+        database,
+        StackCommand::Db(DbCommand::Get {
+            collection: scoped_collection(profile, &collection),
+            key,
+        }),
+    )?;
+    let document = match receipt.result {
+        StackResult::Db(result) => match *result {
+            DbResult::Document(document) => document,
+            _ => return Err(Error::InvalidStateRead("db.get")),
+        },
+        _ => return Err(Error::InvalidStateRead("db.get")),
+    };
+    let Some(document) = document else {
+        return Ok(StateResolution::None);
+    };
+    entity_candidate(operation, &collection, document.value, request_body)
+        .map(StateResolution::Found)
+}
+
 pub(crate) fn delete_command(
     artifact: &Artifact,
     operation_key: &str,
     parameters: Option<&ValidatedParameters>,
+    profile: Option<&str>,
 ) -> Option<(ResourceAddress, StackCommand)> {
     let operation = artifact.operation(operation_key)?;
     if operation.method() != "DELETE" {
@@ -98,11 +165,63 @@ pub(crate) fn delete_command(
     Some((
         database,
         StackCommand::Db(DbCommand::Delete {
-            collection,
+            collection: scoped_collection(profile, &collection),
             key,
             condition: simile_stack::WriteCondition::Any,
         }),
     ))
+}
+
+pub(crate) fn scope_command(command: StackCommand, profile: Option<&str>) -> StackCommand {
+    let Some(profile) = profile else {
+        return command;
+    };
+    match command {
+        StackCommand::Db(DbCommand::Put {
+            collection,
+            key,
+            value,
+            condition,
+        }) => StackCommand::Db(DbCommand::Put {
+            collection: scoped_collection(Some(profile), &collection),
+            key,
+            value,
+            condition,
+        }),
+        StackCommand::Db(DbCommand::Merge {
+            collection,
+            key,
+            value,
+            condition,
+        }) => StackCommand::Db(DbCommand::Merge {
+            collection: scoped_collection(Some(profile), &collection),
+            key,
+            value,
+            condition,
+        }),
+        StackCommand::Db(DbCommand::Delete {
+            collection,
+            key,
+            condition,
+        }) => StackCommand::Db(DbCommand::Delete {
+            collection: scoped_collection(Some(profile), &collection),
+            key,
+            condition,
+        }),
+        command => command,
+    }
+}
+
+fn scoped_collection(profile: Option<&str>, collection: &str) -> String {
+    profile.map_or_else(
+        || collection.to_owned(),
+        |profile| {
+            // Why: authenticated profiles represent independent consumer environments. A length
+            // prefix prevents ambiguous names while keeping tenant scoping entirely inside the
+            // emulator's storage layer and out of the provider's public resource vocabulary.
+            format!("{}:{profile}:{collection}", profile.len())
+        },
+    )
 }
 
 pub(crate) fn declares_not_found(operation: ArtifactOperation<'_>) -> bool {
@@ -120,6 +239,10 @@ fn entity_candidate(
     let selected = successful_json_response(operation)?;
     let mut candidates = entity_candidates(collection, entity.clone());
     for baseline in response_baselines(&selected, request_body) {
+        // Why: mutation responses may intentionally expose fewer fields than the stored public
+        // resource. Projecting only fields represented by the target response preserves its
+        // authored shape while carrying forward stable values such as ids and resource types.
+        candidates.extend(project_entity_candidates(baseline.clone(), &entity));
         candidates.extend(replace_entity_candidates(baseline, &entity));
     }
     candidates
@@ -222,6 +345,40 @@ fn replace_entity_candidates(baseline: Value, entity: &Value) -> Vec<Value> {
             replace_at_path(&mut candidate, &path, entity.clone()).then_some(candidate)
         })
         .collect()
+}
+
+fn project_entity_candidates(baseline: Value, entity: &Value) -> Vec<Value> {
+    let mut paths = Vec::new();
+    collect_entity_paths(&baseline, &mut Vec::new(), &mut paths);
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let mut candidate = baseline.clone();
+            project_object_at_path(&mut candidate, &path, entity).then_some(candidate)
+        })
+        .collect()
+}
+
+fn project_object_at_path(value: &mut Value, path: &[String], source: &Value) -> bool {
+    let mut current = value;
+    for segment in path {
+        let Value::Object(object) = current else {
+            return false;
+        };
+        let Some(next) = object.get_mut(segment) else {
+            return false;
+        };
+        current = next;
+    }
+    let (Value::Object(target), Value::Object(source)) = (current, source) else {
+        return false;
+    };
+    for (name, value) in source {
+        if target.contains_key(name) {
+            target.insert(name.clone(), value.clone());
+        }
+    }
+    true
 }
 
 fn collect_entity_paths(value: &Value, path: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
