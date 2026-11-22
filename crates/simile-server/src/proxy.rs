@@ -444,16 +444,45 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         let task = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap_or_else(|error| panic!("{error}"));
-            let mut request = [0_u8; 4_096];
-            let read = stream
-                .read(&mut request)
-                .unwrap_or_else(|error| panic!("{error}"));
+            let request = read_http_request(&mut stream);
             stream
                 .write_all(response.as_bytes())
                 .unwrap_or_else(|error| panic!("{error}"));
-            String::from_utf8_lossy(&request[..read]).into_owned()
+            String::from_utf8_lossy(&request).into_owned()
         });
         (format!("http://{address}"), task)
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 4_096];
+            let read = stream
+                .read(&mut chunk)
+                .unwrap_or_else(|error| panic!("{error}"));
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            let Some(headers_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let body_start = headers_end + 4;
+            let content_length = String::from_utf8_lossy(&request[..headers_end])
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if request.len() >= body_start + content_length {
+                break;
+            }
+        }
+        request
     }
 
     #[tokio::test]
