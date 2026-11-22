@@ -802,6 +802,8 @@ fn keeps_reporting_consent_profile_owned_and_contact_private() {
         use std::os::unix::fs::PermissionsExt as _;
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
+    #[cfg(not(unix))]
+    drop(metadata);
     assert!(
         fs::read_to_string(&preference)
             .unwrap_or_else(|error| panic!("{error}"))
