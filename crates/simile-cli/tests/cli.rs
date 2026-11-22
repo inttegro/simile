@@ -190,7 +190,12 @@ fn start_rejects_a_name_that_does_not_match_the_service_configuration() {
         ])
         .assert()
         .failure()
-        .stderr_eq("service configuration names `orders`, but `payments` was requested\n");
+        .stderr_eq(concat!(
+            "🎭 simile v0.4.0\n",
+            "▸ preparing payments\n",
+            "✗ could not prepare payments [..]\n",
+            "service configuration names `orders`, but `payments` was requested\n"
+        ));
 }
 
 #[test]
@@ -231,7 +236,15 @@ fn supervises_a_test_command_against_the_current_simfile() {
         .assert()
         .success()
         .stdout_eq(concat!("simile 0.4.0\n", "target [..]\n"))
-        .stderr_eq("Testing orders at http://127.0.0.1:[..]\n");
+        .stderr_eq(concat!(
+            "🎭 simile v0.4.0\n",
+            "▸ preparing the current Simfile\n",
+            "✓ prepared orders [..]\n",
+            "▸ starting orders\n",
+            "✓ orders ready at http://127.0.0.1:[..]\n",
+            "▸ running test command\n",
+            "✓ test command passed [..]\n"
+        ));
 
     fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
     fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
@@ -287,8 +300,14 @@ fn injects_the_selected_profile_and_bound_service_address() {
         .success()
         .stdout_eq("")
         .stderr_eq(concat!(
-            "Testing payments at http://127.0.0.1:[..]\n",
-            "profile ci\n"
+            "🎭 simile v0.4.0\n",
+            "▸ preparing payments\n",
+            "✓ prepared payments [..]\n",
+            "▸ starting payments\n",
+            "✓ payments ready at http://127.0.0.1:[..]\n",
+            "  profile ci\n",
+            "▸ running test command\n",
+            "✓ test command passed [..]\n"
         ));
 
     fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
@@ -363,7 +382,12 @@ fn registers_a_service_in_simile_home() {
         ])
         .assert()
         .failure()
-        .stderr_eq("service `orders` is already registered; pass --force to replace it\n");
+        .stderr_eq(concat!(
+            "🎭 simile v0.4.0\n",
+            "▸ registering orders\n",
+            "✗ could not register orders [..]\n",
+            "service `orders` is already registered; pass --force to replace it\n"
+        ));
 
     Command::new(snapbox::cmd::cargo_bin!("simile"))
         .env("SIMILE_HOME", &home)
@@ -993,6 +1017,9 @@ fn start_reports_an_unregistered_service_without_config() {
         .assert()
         .failure()
         .stderr_eq(concat!(
+            "🎭 simile v0.4.0\n",
+            "▸ preparing orders\n",
+            "✗ could not prepare orders [..]\n",
             "service `orders` is not registered; run `simile register orders --config URL_OR_FILE`\n"
         ));
 }
@@ -1020,17 +1047,17 @@ fn writes_and_inspects_a_compiled_artifact() {
         .success()
         .stdout_eq(format!(
             concat!(
-                "Compiled Orders 1.0.0\n",
-                "contract OpenAPI · JSON Schema 3.2.1 · 1 operations\n",
-                "behavior 0 contract defaults · 1 HCL overlays\n",
-                "runtime 1 async operations · 1 backends\n",
-                "webhooks 0 contracts · 0 emissions\n",
-                "faults 0 definitions · 0 profiles\n",
-                "heuristics standard\n",
+                "✓ compiled Orders 1.0.0\n",
+                "  contract OpenAPI · JSON Schema 3.2.1 · 1 operation\n",
+                "  behavior 0 contract defaults · 1 HCL overlay\n",
+                "  runtime 1 async operation · 1 backend\n",
+                "  webhooks 0 contracts · 0 emissions\n",
+                "  faults 0 definitions · 0 profiles\n",
+                "  heuristics standard\n",
                 // Why: the CLI snapshot must expose the artifact envelope version so consumers
                 // can diagnose incompatible compiled action vocabularies.
-                "artifact {} · format 24 · [..] bytes\n",
-                "digest sha256:[..]\n"
+                "  artifact {} · format 24 · [..] bytes\n",
+                "  digest sha256:[..]\n"
             ),
             rendered_artifact_path
         ));
@@ -1104,6 +1131,39 @@ fn writes_and_inspects_a_compiled_artifact() {
         ));
 
     fs::remove_file(artifact).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn colors_task_progress_and_results_when_requested() {
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args([
+            "--color",
+            "always",
+            "compile",
+            &fixture("orders.yaml"),
+            "--behavior",
+            &fixture("orders.hcl"),
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap_or_else(|error| panic!("{error}"));
+    let stdout = String::from_utf8(output.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert!(stderr.contains("\u{1b}[1m\u{1b}[32msimile\u{1b}[0m"));
+    assert!(stderr.contains("\u{1b}[36m▸\u{1b}[0m"));
+    assert!(stdout.contains("\u{1b}[32m✓\u{1b}[0m"));
+}
+
+#[test]
+fn quiet_suppresses_task_progress() {
+    let output = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--quiet", "compile", &fixture("orders.yaml")])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
 }
 
 #[test]

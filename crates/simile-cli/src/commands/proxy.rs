@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anstyle::{AnsiColor, Effects, Style};
 use serde::Serialize;
 use simile_core::{Context, ops};
 use simile_learning::{LearningReport, Session};
@@ -9,9 +8,6 @@ use crate::cli::{OutputFormat, ProxyArgs};
 use crate::commands::Status;
 use crate::error::{Error, Result};
 use crate::terminal::Terminal;
-
-const HEADING: Style = AnsiColor::Green.on_default().effects(Effects::BOLD);
-const MUTED: Style = AnsiColor::BrightBlack.on_default();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +62,10 @@ async fn run(
     ctx: &Context,
     terminal: &Terminal,
 ) -> Result<Status> {
-    let server = simile_server::ProxyServer::bind(
+    let ui = terminal.ui();
+    ui.banner()?;
+    let binding = ui.activity(format!("binding {} proxy", plan.report.service))?;
+    let bound = simile_server::ProxyServer::bind(
         plan.report.listen,
         simile_server::ProxyOptions {
             upstream: plan.report.upstream.clone(),
@@ -75,9 +74,20 @@ async fn run(
             learning: learning.clone(),
         },
     )
-    .await?;
+    .await;
+    let server = match bound {
+        Ok(server) => server,
+        Err(error) => {
+            binding.fail(format!("could not bind {} proxy", plan.report.service))?;
+            return Err(error.into());
+        }
+    };
     plan.report.listen = server.local_addr();
     plan.report.api_base = format!("http://{}", server.local_addr());
+    binding.complete_timeline(format!(
+        "{} proxy ready at {}",
+        plan.report.service, plan.report.api_base
+    ))?;
     render_started(&plan.report, terminal)?;
     server.run().await?;
 
@@ -113,43 +123,28 @@ fn verify_generated_service(ctx: &Context, service: &str, simfile: PathBuf) -> R
 }
 
 fn render_started(report: &ops::ProxyReport, terminal: &Terminal) -> Result<()> {
-    terminal.status_line(format_args!(
-        "{HEADING}Simile proxy · {}{HEADING:#}",
-        report.service
-    ))?;
-    terminal.status_line(format_args!(
-        "{MUTED}listen{MUTED:#} http://{}",
-        report.listen
-    ))?;
-    terminal.status_line(format_args!("{MUTED}upstream{MUTED:#} {}", report.upstream))?;
-    terminal.status_line(format_args!("{MUTED}API base{MUTED:#} {}", report.api_base))?;
+    let ui = terminal.ui();
+    ui.note("listen", format!("http://{}", report.listen))?;
+    ui.note("upstream", &report.upstream)?;
+    ui.note("API base", &report.api_base)?;
     if let Some(relay) = &report.webhook_relay {
-        terminal.status_line(format_args!("{MUTED}webhook{MUTED:#} {relay}"))?;
+        ui.note("webhook", relay)?;
         match &report.webhook_destination {
-            Some(destination) => {
-                terminal.status_line(format_args!("{MUTED}forwards to{MUTED:#} {destination}"))?
-            }
-            None => terminal.status_line(format_args!(
-                "{MUTED}webhook mode{MUTED:#} observe and acknowledge"
-            ))?,
+            Some(destination) => ui.note("forwards to", destination)?,
+            None => ui.note("webhook mode", "observe and acknowledge")?,
         }
     }
     if report.learning {
-        terminal.status_line(format_args!("{MUTED}learning{MUTED:#} enabled"))?;
+        ui.note("learning", "enabled")?;
         if let Some(session) = &report.session {
-            terminal.status_line(format_args!("{MUTED}session{MUTED:#} {session}"))?;
+            ui.note("session", session)?;
         }
         if let Some(workspace) = &report.workspace {
-            terminal.status_line(format_args!(
-                "{MUTED}workspace{MUTED:#} {}",
-                workspace.display()
-            ))?;
+            ui.note("workspace", workspace.display())?;
         }
-        terminal.status_line(format_args!(
-            "{MUTED}privacy{MUTED:#} secrets redacted before recording"
-        ))?;
+        ui.note("privacy", "secrets redacted before recording")?;
     }
-    terminal.status_line(format_args!("Listening. Press Ctrl-C to stop."))
+    ui.note("status", "listening · press Ctrl-C to stop")
 }
 
 fn render_finished(report: &ProxyCommandReport, terminal: &Terminal) -> Result<()> {
@@ -159,37 +154,27 @@ fn render_finished(report: &ProxyCommandReport, terminal: &Terminal) -> Result<(
             let Some(learning) = &report.learning else {
                 return terminal.line(format_args!("Stopped {} proxy.", report.proxy.service));
             };
-            terminal.line(format_args!(
-                "{HEADING}Learned {}{HEADING:#}",
-                report.proxy.service
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}traffic{MUTED:#} {} API requests · {} webhook deliveries",
-                learning.api_requests, learning.webhook_deliveries
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}contract{MUTED:#} {} operations · {} response statuses · {} supported bindings",
-                learning.operations, learning.statuses, learning.bindings
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}review{MUTED:#} {} inference gaps",
-                learning.unknowns
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}verified{MUTED:#} generated service compiles"
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}Simfile{MUTED:#} {}",
-                learning.simfile.display()
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}OpenAPI{MUTED:#} {}",
-                learning.openapi.display()
-            ))?;
-            terminal.line(format_args!(
-                "{MUTED}evidence{MUTED:#} {}",
-                learning.evidence.display()
-            ))
+            let ui = terminal.ui();
+            ui.result_title("learned", &report.proxy.service)?;
+            ui.result_fact(
+                "traffic",
+                format!(
+                    "{} API requests · {} webhook deliveries",
+                    learning.api_requests, learning.webhook_deliveries
+                ),
+            )?;
+            ui.result_fact(
+                "contract",
+                format!(
+                    "{} operations · {} response statuses · {} supported bindings",
+                    learning.operations, learning.statuses, learning.bindings
+                ),
+            )?;
+            ui.result_fact("review", format!("{} inference gaps", learning.unknowns))?;
+            ui.result_fact("verified", "generated service compiles")?;
+            ui.result_fact("Simfile", learning.simfile.display())?;
+            ui.result_fact("OpenAPI", learning.openapi.display())?;
+            ui.result_fact("evidence", learning.evidence.display())
         }
     }
 }

@@ -477,7 +477,21 @@ async fn access_log(request: Request<Body>, next: Next) -> Response {
         response_content_type: response_content_type.as_deref(),
         elapsed: started.elapsed(),
     };
-    tracing::info!(target: "simile::http", "{line}");
+    let origin = line.origin_ip.map(|value| value.to_string());
+    tracing::info!(
+        target: "simile::http",
+        method = %line.method,
+        path = line.path,
+        status = line.status.as_u16(),
+        origin = origin.as_deref().unwrap_or("-"),
+        user_agent = line.user_agent.unwrap_or("-"),
+        request_bytes = line.request_bytes,
+        request_type = line.request_content_type.unwrap_or("-"),
+        response_bytes = line.response_bytes,
+        response_type = line.response_content_type.unwrap_or("-"),
+        elapsed_us = line.elapsed.as_micros(),
+        "request completed"
+    );
     response
 }
 

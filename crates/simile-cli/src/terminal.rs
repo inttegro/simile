@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::cli::{ColorChoice, OutputFormat};
 use crate::error::{Error, Result};
+use crate::ui::Ui;
 
 const JSON_KEY: Style = AnsiColor::Blue.on_default();
 const JSON_STRING: Style = AnsiColor::Green.on_default();
@@ -45,8 +46,23 @@ impl Terminal {
     }
 
     #[must_use]
+    pub const fn is_human(&self) -> bool {
+        matches!(self.output, OutputFormat::Human)
+    }
+
+    #[must_use]
     pub const fn is_verbose(&self) -> bool {
         self.verbose
+    }
+
+    #[must_use]
+    pub const fn color_choice(&self) -> anstream::ColorChoice {
+        self.color
+    }
+
+    #[must_use]
+    pub const fn ui(&self) -> Ui<'_> {
+        Ui::new(self)
     }
 
     pub fn line(&self, arguments: fmt::Arguments<'_>) -> Result<()> {

@@ -1,4 +1,3 @@
-use anstyle::{AnsiColor, Effects, Style};
 use simile_core::{Context, ops};
 
 use crate::cli::TestArgs;
@@ -7,11 +6,16 @@ use crate::commands::automatic_reporting::AutomaticReporter;
 use crate::error::{Error, Result};
 use crate::terminal::Terminal;
 
-const HEADING: Style = AnsiColor::Green.on_default().effects(Effects::BOLD);
-const MUTED: Style = AnsiColor::BrightBlack.on_default();
-
 pub fn execute(arguments: TestArgs, ctx: &Context, terminal: &Terminal) -> Result<Status> {
-    let plan = ops::prepare_test(
+    let ui = terminal.ui();
+    ui.banner()?;
+    let requested_service = match (&arguments.service, &arguments.config) {
+        (Some(service), _) => service.clone(),
+        (None, Some(_)) => "service configuration".to_owned(),
+        (None, None) => "the current Simfile".to_owned(),
+    };
+    let preparing = ui.activity(format!("preparing {requested_service}"))?;
+    let prepared = ops::prepare_test(
         ctx,
         ops::TestRequest {
             service: arguments.service,
@@ -22,7 +26,17 @@ pub fn execute(arguments: TestArgs, ctx: &Context, terminal: &Terminal) -> Resul
             fault_profile: arguments.fault_profile,
             command: arguments.command,
         },
-    )?;
+    );
+    let plan = match prepared {
+        Ok(plan) => {
+            preparing.complete(format!("prepared {}", plan.service.report.service))?;
+            plan
+        }
+        Err(error) => {
+            preparing.fail(format!("could not prepare {requested_service}"))?;
+            return Err(error.into());
+        }
+    };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -31,9 +45,11 @@ pub fn execute(arguments: TestArgs, ctx: &Context, terminal: &Terminal) -> Resul
 }
 
 async fn run(ctx: Context, plan: ops::TestPlan, terminal: &Terminal) -> Result<Status> {
+    let ui = terminal.ui();
     let service = plan.service.report.service.clone();
     let reporting = AutomaticReporter::start(ctx, &plan.service);
-    let server = simile_server::Server::bind_durable_with_options(
+    let binding = ui.activity(format!("starting {service}"))?;
+    let bound = simile_server::Server::bind_durable_with_options(
         plan.service.report.listen,
         plan.service.artifact,
         plan.state_path,
@@ -43,25 +59,38 @@ async fn run(ctx: Context, plan: ops::TestPlan, terminal: &Terminal) -> Result<S
             incident_sender: reporting.sender(),
         },
     )
-    .await?;
+    .await;
+    let server = match bound {
+        Ok(server) => server,
+        Err(error) => {
+            binding.fail(format!("could not start {service}"))?;
+            return Err(error.into());
+        }
+    };
     let base_url = format!("http://{}", server.local_addr());
+    binding.complete(format!("{service} ready at {base_url}"))?;
     let mut environment = plan.environment;
     environment.insert("SIMILE_SERVICE".to_owned(), service.clone());
     environment.insert("SIMILE_BASE_URL".to_owned(), base_url.clone());
-    terminal.status_line(format_args!(
-        "{HEADING}Testing{HEADING:#} {} {MUTED}at{MUTED:#} {}",
-        service, base_url
-    ))?;
     if let Some(profile) = plan.profile.as_deref() {
-        terminal.status_line(format_args!("{MUTED}profile{MUTED:#} {profile}"))?;
+        ui.note("profile", profile)?;
     }
 
+    let command = ui.activity("running test command")?;
     let command_result = server.run_command(plan.command, environment).await;
     reporting.finish().await;
-    let result = command_result?;
+    let result = match command_result {
+        Ok(result) => result,
+        Err(error) => {
+            command.fail("test command could not run")?;
+            return Err(error.into());
+        }
+    };
     if result.success {
+        command.complete("test command passed")?;
         return Ok(Status::Success);
     }
+    command.fail("test command failed")?;
     Ok(result
         .exit_code
         .and_then(|code| u8::try_from(code).ok())

@@ -4,9 +4,11 @@ mod cli;
 mod commands;
 mod error;
 mod terminal;
+mod ui;
 
 use std::process::ExitCode;
 
+use anstream::AutoStream;
 use clap::Parser;
 use cli::Cli;
 use error::Result;
@@ -35,7 +37,7 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
         &cli.command,
         cli::Command::Proxy(_) | cli::Command::Start(_) | cli::Command::Test(_)
     );
-    init_tracing(cli.verbose, cli.quiet, runs_server);
+    init_tracing(cli.verbose, cli.quiet, runs_server, terminal);
     let build = BuildInfo::new(
         env!("CARGO_PKG_VERSION"),
         option_env!("SIMILE_BUILD_COMMIT"),
@@ -46,7 +48,7 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
     commands::execute(cli.command, &ctx, terminal)
 }
 
-fn init_tracing(verbosity: u8, quiet: bool, runs_server: bool) {
+fn init_tracing(verbosity: u8, quiet: bool, runs_server: bool, terminal: &Terminal) {
     let fallback = if quiet {
         "off"
     } else {
@@ -59,11 +61,11 @@ fn init_tracing(verbosity: u8, quiet: bool, runs_server: bool) {
         }
     };
     let filter = EnvFilter::try_from_env("SIMILE_LOG").unwrap_or_else(|_| EnvFilter::new(fallback));
+    let color = terminal.color_choice();
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .without_time()
+        .event_format(ui::trace::TimelineFormatter::new(verbosity))
+        .with_writer(move || AutoStream::new(std::io::stderr(), color))
         .try_init();
     drop(subscriber);
 }
