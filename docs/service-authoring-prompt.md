@@ -196,8 +196,8 @@ service "[SERVICE_NAME]" {
     path = "./[CONTRACT_FILE]"
   }
 
-  behaviors = [
-    "./behaviors.hcl",
+  modules = [
+    "./service.hcl",
   ]
 
   reporting {
@@ -211,11 +211,11 @@ Rules:
 - The file contains exactly one `service` block.
 - The service label matches the CLI service name.
 - The selected contract block uses exactly one of `path` or `url`.
-- Omit `behaviors` when no behavior module is justified.
+- Omit `modules` when no HCL module is justified.
 - Omit `reporting` when the provider does not operate a compatible receiver. The endpoint declares
   a destination; it cannot enable reporting or provide the user's contact address.
 - Relative paths resolve from the local configuration directory.
-- A remote configuration uses a contract URL and inline behavior declarations.
+- A remote configuration uses a contract URL and inline module declarations.
 - A remote TypeScript contract is one self-contained declaration document; split TypeScript
   packages require a local path.
 - Default to `127.0.0.1` unless public binding is explicitly required.

@@ -70,7 +70,7 @@ faults {
 ```
 
 Exact selectors, namespace selectors, and exclusions may be composed across inline configuration
-and imported behavior modules. Repeated selection of the same unchanged fault is idempotent.
+and imported HCL modules. Repeated selection of the same unchanged fault is idempotent.
 Selectors that match nothing fail compilation, catching misspelled names and namespaces.
 
 `http.slow` delays a response by one second. `http.response_lost` completes and commits the

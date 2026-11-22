@@ -14,7 +14,7 @@ behavior to a Simile service and testers who need to understand what that behavi
 - A service contract in OpenAPI 3.0, 3.1, or 3.2
 - Stable `operationId` values for operations referenced by HCL effects
 - Familiarity with [dependencies and effects](/dependencies-and-effects)
-- A Simile service configuration or behavior module in which to add the HCL examples
+- A Simile service configuration or HCL module in which to add the examples
 
 ## Understand the three-layer model
 
@@ -277,7 +277,7 @@ Compile and inspect the artifact to confirm how many contracts and emissions it 
 policy was retained:
 
 ```console
-$ simile compile ./commerce.yml --behavior ./payments.hcl --artifact ./inttegro.similec
+$ simile compile ./commerce.yml --module ./payments.hcl --artifact ./inttegro.similec
 $ simile inspect ./inttegro.similec
 ```
 
@@ -292,7 +292,7 @@ For a one-shot operation, `--verbose` includes each planned webhook's rendered b
 destination when available, delay, and hard prerequisites:
 
 ```console
-$ simile run ./commerce.yml --operation-id completePayment --behavior ./payments.hcl --verbose
+$ simile run ./commerce.yml --operation-id completePayment --module ./payments.hcl --verbose
 ```
 
 ## Delivery lifecycle

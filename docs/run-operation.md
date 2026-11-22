@@ -86,14 +86,14 @@ An HCL overlay can publish named outcomes and opaque scenarios:
 
 ```bash
 simile run ./openapi.yaml \
-  --behavior ./payments.hcl \
+  --module ./payments.hcl \
   --operation-id createPayment \
   --outcome card_declined
 ```
 
 ```bash
 simile run ./openapi.yaml \
-  --behavior ./payments.hcl \
+  --module ./payments.hcl \
   --operation-id createPayment \
   --scenario payment_declined
 ```

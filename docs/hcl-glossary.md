@@ -31,11 +31,12 @@ The canonical `KIND.NAME` identifier for a declared backend, such as `queue.orde
 An HCL overlay for one exact contract operation ID. A behavior may prefer a response status and
 attach named outcomes or reusable error sets. It cannot add or redefine an HTTP operation.
 
-### Behavior module
+### HCL module
 
-An HCL document containing behavior declarations but no `service` block. Modules imported by
-`service.behaviors` and declarations inline in the service configuration share one compiled
-namespace.
+An HCL document containing service-model declarations but no `service` or `principal_setup` block.
+Modules imported by `service.modules` and declarations inline in the service configuration share
+one compiled namespace. A module may define principals, profiles, operation behavior, effects,
+scenarios, faults, asynchronous work, or webhooks.
 
 ### Binding
 
@@ -64,7 +65,7 @@ outcomes, scenarios, faults, backends, and async declarations.
 ### Configuration
 
 The HCL composition root containing exactly one `service` block, its listener, one contract source,
-and optional inline or imported behavior declarations.
+and optional inline or imported module declarations.
 
 ### Constraint
 

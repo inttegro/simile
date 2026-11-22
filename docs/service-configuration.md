@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Compose one runnable service from its contract, listener, and optional behavior modules.
+description: Compose one runnable service from its contract, listener, and optional HCL modules.
 ---
 
 A `Simfile` is the composition root for one service. It gives the service a name, selects its
@@ -28,7 +28,7 @@ service "inttegro" {
     endpoint = "https://reports.example.com/v1/reports"
   }
 
-  behaviors = [
+  modules = [
     "./orders.hcl",
     "./payments.hcl",
   ]
@@ -97,9 +97,9 @@ Each contract block accepts either `path` or `url`. Multi-file Smithy models and
 use a local entrypoint or directory. A contract loaded from a URL must be self-contained. See
 [Contract sources and HCL](/contract-sources-and-hcl) for format selection and source boundaries.
 
-## Behavior and service declarations
+## Modules and service declarations
 
-`behaviors` imports HCL modules by path. The service file can also declare `async`, `backend`,
+`modules` imports HCL modules by path. The service file can also declare `async`, `backend`,
 `behavior`, `effect`, `fault`, `fault_profile`, `faults`, `principal`, `profile`, `scenario`,
 `webhook`, and `webhooks` blocks directly.
 
@@ -129,6 +129,8 @@ faults {
 Imported and inline declarations pass through the same compiler. Compilation rejects duplicate
 names, unknown operation IDs, undeclared backends, and contradictory response selections before the
 listener binds.
+
+`behaviors` remains a deprecated compatibility alias for `modules`. Do not define both attributes.
 
 Dedicated references cover [dependencies and effects](/dependencies-and-effects),
 [durable work](/durable-work), [fault injection](/fault-injection), and
@@ -211,16 +213,16 @@ in the profile's private environment file and omits them from terminal and JSON 
 [Service profiles](/service-profiles).
 
 `principal_setup` belongs in the service configuration because it provisions the service-wide entry
-point. Imported behavior modules cannot declare it.
+point. Imported HCL modules cannot declare it.
 
 ## Source resolution
 
-Relative contract and behavior paths resolve from the directory containing the configuration file.
+Relative contract and module paths resolve from the directory containing the configuration file.
 This rule stays stable when the command runs from another working directory.
 
 `--config` accepts a local path or an HTTP or HTTPS URL. A remote configuration uses contract URLs
-and inline behavior declarations because it has no local base directory. Simile rejects relative
-contract and behavior paths in remote configurations.
+and inline module declarations because it has no local base directory. Simile rejects relative
+contract and module paths in remote configurations.
 
 During registration, Simile reads remote sources into memory and stores the compiled service. A
 later `simile update NAME` reloads the sources named by the stored HCL. Passing `--config` replaces

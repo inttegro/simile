@@ -35,7 +35,7 @@ orders/
 ```
 
 The contract carries the complete HTTP surface. The service configuration selects that contract,
-sets the listener, and composes optional behavior modules. The request fixture gives you one known
+sets the listener, and composes optional HCL modules. The request fixture gives you one known
 operation to exercise throughout the authoring loop.
 
 ## 1. Establish the public evidence
@@ -133,8 +133,8 @@ service "orders" {
     path = "./orders.yaml"
   }
 
-  behaviors = [
-    "./behavior/orders.hcl",
+  modules = [
+    "./modules/orders.hcl",
   ]
 }
 ```
@@ -160,9 +160,9 @@ For Smithy or TypeScript, replace the `openapi` block with one `smithy` or `type
 [Configuration reference](/service-configuration) covers local paths, URLs, listener precedence,
 and remote configurations.
 
-## 5. Add the smallest useful behavior layer
+## 5. Add the smallest useful module layer
 
-Begin `behavior/orders.hcl` with only the public behavior the contract leaves unresolved. For a
+Begin `modules/orders.hcl` with only the public service semantics the contract leaves unresolved. For a
 stateful resource API, declaring one database can enable conservative create, read, list, and
 delete inference:
 
@@ -177,7 +177,7 @@ one identifiable entity and the service declares one database. Add an explicit
 [`effect`](/dependencies-and-effects) when the operation uses a custom identity, writes several
 entities, or has another provider-defined consequence.
 
-Extend the behavior layer only when the service requires it:
+Extend the module layer only when the service requires it:
 
 | Public behavior | Declaration |
 | --- | --- |
@@ -206,11 +206,11 @@ The description should read like a public service catalogue: listener, operation
 setup workflows, outcomes, backends, faults, and webhooks. Improve vague names and descriptions
 before continuing.
 
-Compile the contract with the same behavior module and run the fidelity audit:
+Compile the contract with the same HCL module and run the fidelity audit:
 
 ```bash
 simile compile ./orders.yaml \
-  --behavior ./behavior/orders.hcl \
+  --module ./modules/orders.hcl \
   --artifact ./orders.similec
 
 simile audit ./orders.similec

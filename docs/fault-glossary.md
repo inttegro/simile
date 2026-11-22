@@ -116,7 +116,7 @@ payment, depleted balance, or forbidden state remain deterministic outcomes.
 ## Selector glossary
 
 Selectors form a set. Positive selectors add catalog entries; selectors prefixed with `^` subtract
-them from the complete configuration, including selections made by another behavior module.
+them from the complete configuration, including selections made by another HCL module.
 
 | Form | Meaning | Example |
 | --- | --- | --- |

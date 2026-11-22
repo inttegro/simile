@@ -28,7 +28,7 @@ diagnostics and progress go to standard error.
 | --- | --- | --- |
 | `simile version` | Print detailed build information. | [Downloads](/downloads) |
 | `simile doctor` | Check the local environment and explain actionable problems. | [Quickstart](/quickstart) |
-| `simile compile CONTRACT` | Compile one OpenAPI, Smithy, or semantic TypeScript contract, with optional HCL behavior, into a `.similec` artifact. | [Contract sources and HCL](/contract-sources-and-hcl) |
+| `simile compile CONTRACT` | Compile one OpenAPI, Smithy, or semantic TypeScript contract, with optional HCL modules, into a `.similec` artifact. | [Contract sources and HCL](/contract-sources-and-hcl) |
 | `simile inspect ARTIFACT` | Verify and summarize a compiled artifact. | [Compiled artifact](/compiled-artifact) |
 | `simile describe` or `simile describe service [service]` | Explain the current `Simfile`, a registered service, or an explicit configuration. | [Describe a service](/describe-service) |
 | `simile audit ARTIFACT` | Explain remaining fidelity gaps and optionally fail on warnings. | [Fidelity audit](/fidelity-audit) |

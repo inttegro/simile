@@ -287,12 +287,12 @@ instead of hostile.
 
 ## 8. Compose and compile the service
 
-The service block connects the listener, OpenAPI source, and behavior modules.
+The service block connects the listener, OpenAPI source, and HCL modules.
 
 ```hcl
 service "inttegro" {
   description = "A local emulator for Inttegro Commerce integrations."
-  behaviors   = ["./orders.hcl", "./payments.hcl"]
+  modules     = ["./orders.hcl", "./payments.hcl"]
 
   listen {
     host = "127.0.0.1"

@@ -66,7 +66,7 @@ Avoid uploading `SIMILE_HOME`: it may contain issued credentials and collected s
 
 ## Pin the tool and service definition
 
-Pin the Simile release used by the job. Keep the Simfile, behavior modules, and local contract
+Pin the Simile release used by the job. Keep the Simfile, HCL modules, and local contract
 sources in version control, or point the Simfile at an immutable provider revision. Registration
 then compiles the same public service model on every run.
 

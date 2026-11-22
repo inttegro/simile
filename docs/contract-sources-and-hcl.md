@@ -3,7 +3,7 @@ title: Contract sources and HCL
 description: Choose OpenAPI, Smithy, or semantic TypeScript as the complete HTTP contract, then add only public observable behavior in HCL.
 ---
 
-Every Simile service has one complete HTTP contract and may have an optional HCL behavior overlay.
+Every Simile service has one complete HTTP contract and may load optional HCL modules.
 The contract can be OpenAPI, Smithy, or semantic TypeScript. All three are first-class inputs to the
 same compiler, schema engine, runtime, and `.similec` artifact.
 

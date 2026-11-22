@@ -75,7 +75,7 @@ generated service workspace.
 ## What Simile models
 
 - HTTP operations described by OpenAPI 3.0–3.2, Smithy 2.0, or semantic TypeScript declarations.
-- Optional HCL behavior for outcomes, state changes, asynchronous work, webhooks, and scenarios.
+- Optional HCL modules for principals, outcomes, state changes, asynchronous work, webhooks, and scenarios.
 - Deterministic local backends for databases, queues, caches, mail, object storage, events,
   schedules, and outbound HTTP.
 - Reproducible request and response generation, idempotent replay, causal state, and environmental

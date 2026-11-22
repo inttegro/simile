@@ -51,7 +51,7 @@ definition.
 Registration performs the expensive and failure-prone work before installation:
 
 1. load the service configuration from a local path or HTTP(S) URL;
-2. resolve and load its OpenAPI, Smithy, or TypeScript source and behavior modules;
+2. resolve and load its OpenAPI, Smithy, or TypeScript source and HCL modules;
 3. parse and semantically validate the selected contract language and HCL;
 4. compile schemas, outcomes, constraints, and heuristic plans;
 5. encode and decode the `.similec` artifact to verify it; and
@@ -155,7 +155,7 @@ service is registered again.
 simile run ./openapi.yaml --operation-id createOrder
 ```
 
-`run` compiles the selected contract and optional `--behavior` modules in memory, executes one
+`run` compiles the selected contract and optional `--module` HCL modules in memory, executes one
 operation, prints the result, and exits. It does not read or write the service registry. Because
 each invocation creates a fresh runtime, replay state does not cross CLI invocations.
 

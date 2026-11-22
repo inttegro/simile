@@ -5,7 +5,7 @@ description: The complete syntax and semantics of the Simile HCL language.
 ---
 
 This document defines the Simile HCL language implemented by Simile v0.4.0. It is the canonical
-reference for service configuration documents and behavior modules. Task-oriented pages explain
+reference for service configuration documents and HCL modules. Task-oriented pages explain
 when to use a feature; this specification defines what the feature means.
 
 “HCL” in this reference means Simile's domain-specific language built on the
@@ -39,7 +39,7 @@ in the same file. `Simfile` is the conventional filename for a local service con
 service "inttegro" {
   listen { port = 4242 }
   openapi { path = "./commerce.yml" }
-  behaviors = ["./orders.hcl"]
+  modules = ["./orders.hcl"]
 }
 
 behavior "createOrder" {
@@ -47,13 +47,16 @@ behavior "createOrder" {
 }
 ```
 
-The `behaviors` paths name additional behavior modules. Inline and imported declarations enter the
+The `modules` paths name additional HCL modules. Inline and imported declarations enter the
 same compiler and namespace. `simile register`, `simile describe`, and `simile start` load
 `./Simfile` when invoked without a service name or explicit configuration.
 
-### Behavior module
+For compatibility, `behaviors` is accepted as a deprecated alias for `modules`. A service cannot
+define both attributes.
 
-A behavior module contains only behavior declarations. It has no `service` block:
+### HCL module
+
+An HCL module contains service-model declarations but no `service` or `principal_setup` block:
 
 ```hcl
 backend "queue" "orders" {}
@@ -63,12 +66,13 @@ async "dispatch_order" {
 }
 ```
 
-Behavior modules are accepted by `simile run --behavior` and by the `behaviors` attribute of a
-local service configuration.
+HCL modules are accepted by `simile run --module` and by the `modules` attribute of a local service
+configuration. A module may declare principals, profiles, operation behavior, state effects,
+scenarios, faults, asynchronous work, or webhooks.
 
 ### Top-level forms
 
-| Block | Service config | Behavior module | Purpose |
+| Block | Service config | HCL module | Purpose |
 | --- | --- | --- | --- |
 | [`service`](#service) | exactly one | not allowed | Compose the listener, contract source, and imported modules. |
 | [`principal_setup`](#principal_setup) | once per principal | not allowed | Define how Simile provisions a principal profile. |
@@ -144,7 +148,7 @@ In syntax summaries:
 ```hcl
 service "NAME" {
   description = "PUBLIC_DESCRIPTION"
-  behaviors = ["PATH", ...]
+  modules = ["PATH", ...]
 
   listen {
     host = "IP_ADDRESS"
@@ -167,12 +171,13 @@ The block is the composition root for a runnable service.
 | --- | --- | --- | --- | --- |
 | label | yes | non-empty string | — | Service name. Local `Simfile` commands derive the name from this label; an explicitly supplied name must match it. |
 | `description` | no | non-empty string | — | Public human-readable service description retained for `simile describe`. |
-| `behaviors` | no | array of strings | `[]` | Local behavior-module paths, resolved relative to the configuration file. |
+| `modules` | no | array of strings | `[]` | Local HCL module paths, resolved relative to the configuration file. |
 | `listen` | yes | one block | — | Listener configuration. |
 | `reporting` | no | one block | — | Provider report-receiver destination. User consent is configured separately per profile. |
 | `openapi`, `smithy`, or `typescript` | yes | exactly one of these blocks | — | Public HTTP contract source. |
 
-Exactly one `service` block, one `listen` block, and one contract block are required.
+Exactly one `service` block, one `listen` block, and one contract block are required. The deprecated
+`behaviors` attribute is accepted instead of `modules`, but the two cannot be combined.
 
 ### `listen`
 
@@ -277,7 +282,7 @@ principal_setup "application" {
 }
 ```
 
-The block may repeat in a service configuration and is rejected in behavior modules. Its label
+The block may repeat in a service configuration and is rejected in imported HCL modules. Its label
 names the declared `principal` it provisions. Each principal may have at most one
 `principal_setup` block. At
 least one `issue` block is required.
@@ -375,7 +380,7 @@ webhooks {
 
 The block configures the service's webhook delivery infrastructure. It does not declare a webhook
 payload or decide which operation emits one. At most one `webhooks` block may appear across the
-inline configuration and every imported behavior module.
+inline configuration and every imported HCL module.
 
 | Attribute | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |

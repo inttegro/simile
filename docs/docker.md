@@ -34,7 +34,7 @@ docker run --rm \
   start --host 0.0.0.0 --port 8484
 ```
 
-The container loads `/workspace/Simfile`. Relative contract and behavior paths resolve from that
+The container loads `/workspace/Simfile`. Relative contract and module paths resolve from that
 directory.
 
 ## Preserve service state
