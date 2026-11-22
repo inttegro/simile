@@ -510,7 +510,12 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"))
             .unwrap_or_else(|error| panic!("{error}"));
 
-        assert!(String::from_utf8_lossy(&response).starts_with("HTTP/1.1 201 Created"));
+        let response = String::from_utf8_lossy(&response);
+        let status = response
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1));
+        assert_eq!(status, Some("201"), "unexpected proxy response: {response}");
         let request = upstream_task
             .join()
             .unwrap_or_else(|_| panic!("upstream task failed"));
