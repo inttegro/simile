@@ -615,6 +615,7 @@ behavior "OPERATION_ID" {
   error_sets = ["ERROR_SET", ...]
 
   response { status = STATUS }
+  resolve "db.BACKEND" { ... }
   outcome "NAME" { ... }
 }
 ```
@@ -627,10 +628,62 @@ complete service.
 | `description` | no | one string | Public explanation of the operation behavior. |
 | `error_sets` | no | one array | Reusable outcome families attached to this operation. |
 | `response` | no | zero or one | Default response-status preference. |
+| `resolve` | no | zero or more | Resolve a stored public reference for response synthesis. |
 | `outcome` | no | zero or more | Provider-authored named result. |
 
 All referenced error sets must exist. All selected statuses must already be declared by the
 contract operation.
+
+### `resolve`
+
+```hcl
+behavior "createOrder" {
+  resolve "db.resources" {
+    collection = "prices"
+    key        = "/line_items/*/product/price_id"
+    select     = "/fixed_amount"
+    into       = "/line_items/*/product/price"
+
+    where {
+      stored  = "/product_id"
+      request = "/line_items/*/product/product_id"
+    }
+    where {
+      stored = "/active"
+      equals = true
+    }
+    where {
+      stored = "/archived_at"
+      state  = "null-or-absent"
+    }
+  }
+}
+```
+
+`resolve` reads one document for each scalar selected by `key`, takes the stored value at `select`,
+and adds it at `into` in the request view used by response relations. It does not modify the
+validated request retained by the operation, outcome predicates, replay, or effects. This makes it
+safe to enrich a reference branch with a field that is mutually exclusive on the public wire.
+
+| Member | Required | Meaning |
+| --- | --- | --- |
+| label | yes | Declared `db.NAME` backend used for the read. |
+| `collection` | yes | Public resource collection written by an effect. |
+| `key` | yes | Request JSON Pointer selecting stored keys; complete `*` segments iterate arrays. |
+| `select` | yes | JSON Pointer into each stored public document. Wildcards are not allowed. |
+| `into` | yes | Request-view JSON Pointer receiving the selected value. It must have the same wildcard count as `key`. |
+| `where` | no | Public predicates a stored document must satisfy before projection. |
+
+Every `where` block requires `stored` and exactly one predicate:
+
+- `equals = VALUE` compares a stored field with a JSON-compatible literal;
+- `request = "/path"` compares it with the request value at the corresponding wildcard position;
+  or
+- `state = "present|absent|null|non-null|null-or-absent"` checks presence and nullability.
+
+State projections must use public resource names and public fields. They are not a way to publish
+private tables, thresholds, routing rules, or production decision trees. A missing document,
+missing selected value, or failed predicate cannot be used to construct a successful response.
 
 ### `response`
 

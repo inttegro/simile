@@ -178,6 +178,12 @@ impl Service {
                 *content_type == "application/json" || content_type.ends_with("+json")
             })
             .and_then(|_| serde_json::from_slice(call.body).ok());
+        let response_request_body = state::response_request_body(
+            self,
+            call.operation,
+            request_body.as_ref(),
+            profile.as_ref().map(|profile| profile.id.as_str()),
+        )?;
         let state = state::resolve(
             self,
             call.operation,
@@ -218,6 +224,9 @@ impl Service {
             ExecutionOptions {
                 response_body,
                 response_status,
+                response_request_body: response_request_body
+                    .as_ref()
+                    .or(options.response_request_body),
                 ..options
             },
         )?;
@@ -234,6 +243,8 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
+        let response_request_body =
+            state::response_request_body(self, call.operation, call.body, None)?;
         let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
         let mutation = if matches!(state, state::StateResolution::None) {
             state::mutation_baseline(self, call.operation, call.body, None)?
@@ -263,6 +274,9 @@ impl Service {
             ExecutionOptions {
                 response_body,
                 response_status,
+                response_request_body: response_request_body
+                    .as_ref()
+                    .or(options.response_request_body),
                 ..options
             },
         )?;
@@ -760,6 +774,8 @@ pub enum Error {
     StateResponseUnavailable,
     #[error("state read returned an unexpected result for {0}")]
     InvalidStateRead(&'static str),
+    #[error("state projection for operation `{operation}` failed: {reason}")]
+    InvalidStateProjection { operation: String, reason: String },
     #[error(
         "this service does not declare principal setup; add a `principal_setup` block to its configuration"
     )]

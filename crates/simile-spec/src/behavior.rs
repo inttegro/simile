@@ -381,6 +381,47 @@ impl Resource {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StateProjection {
+    pub resource: ResourceRef,
+    pub collection: String,
+    pub key: String,
+    pub select: String,
+    pub into: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predicates: Vec<StateProjectionPredicate>,
+}
+
+/// One public condition that a stored document must satisfy before it can enrich response
+/// synthesis. These predicates deliberately describe only distributable resource semantics.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum StateProjectionPredicate {
+    Equals {
+        stored: String,
+        value: Value,
+    },
+    EqualsRequest {
+        stored: String,
+        request: String,
+    },
+    State {
+        stored: String,
+        state: StateProjectionValueState,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StateProjectionValueState {
+    Present,
+    Absent,
+    Null,
+    NonNull,
+    NullOrAbsent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Behavior {
     pub operation_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -389,6 +430,10 @@ pub struct Behavior {
     pub error_sets: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<Outcome>,
+    /// Provider-authored reads that enrich only the response-synthesis view of a validated
+    /// request. The caller's request value remains unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_projections: Vec<StateProjection>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

@@ -15,7 +15,8 @@ pub use behavior::{
     AsyncOperation, Behavior, BehaviorOrigin, BehaviorSpec, CompiledOperation, CompiledService,
     DescriptionCatalog, DescriptionEntry, DescriptionKind, ErrorSet, ErrorSetApplication, Fault,
     FaultAction, FaultPhase, FaultProfile, Outcome, OutcomeCondition, OutcomeProvenance,
-    ProtocolError, Resource, ResourceKind, ResourceRef, Scenario, WebhookOrdering, WebhookPolicy,
+    ProtocolError, Resource, ResourceKind, ResourceRef, Scenario, StateProjection,
+    StateProjectionPredicate, StateProjectionValueState, WebhookOrdering, WebhookPolicy,
     WebhookSigning,
 };
 pub use contract::{

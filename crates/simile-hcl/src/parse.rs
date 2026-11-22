@@ -12,7 +12,8 @@ use crate::ast::{
     EffectDeclaration, ErrorSetApplicationDeclaration, ErrorSetDeclaration, FaultDeclaration,
     FaultProfileDeclaration, FaultUseDeclaration, Module, OutcomeDeclaration,
     ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
-    ScenarioSelectionDeclaration, Source,
+    ScenarioSelectionDeclaration, Source, StateProjectionDeclaration,
+    StateProjectionPredicateDeclaration,
 };
 use crate::principal::principal;
 use crate::profile::profile;
@@ -189,6 +190,7 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
         .transpose()?
         .unwrap_or_default();
     let mut outcomes = Vec::new();
+    let mut state_projections = Vec::new();
 
     for child in block.body().blocks() {
         match child.identifier() {
@@ -204,6 +206,7 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
                 response_status = Some(response(child, source)?);
             }
             "outcome" => outcomes.push(outcome(child, source)?),
+            "resolve" => state_projections.push(state_projection(child, source)?),
             unknown => {
                 return Err(Error::UnknownNestedBlock {
                     file: source.to_owned(),
@@ -220,7 +223,121 @@ pub(crate) fn behavior(block: &Block, source: &str) -> Result<BehaviorDeclaratio
         response_status,
         error_sets,
         outcomes,
+        state_projections,
     })
+}
+
+fn state_projection(block: &Block, source: &str) -> Result<StateProjectionDeclaration> {
+    labels(block, source, 1)?;
+    reject_attributes(
+        block.body(),
+        source,
+        "resolve",
+        &["collection", "key", "select", "into"],
+    )?;
+    let backend = block.labels()[0].as_str();
+    let (kind, name) =
+        backend
+            .split_once('.')
+            .ok_or_else(|| Error::InvalidStateProjectionBackend {
+                file: source.to_owned(),
+                backend: backend.to_owned(),
+            })?;
+    let kind = ResourceKind::from_str(kind).map_err(|()| Error::InvalidStateProjectionBackend {
+        file: source.to_owned(),
+        backend: backend.to_owned(),
+    })?;
+    if kind != ResourceKind::Db || name.is_empty() || name.contains('.') {
+        return Err(Error::InvalidStateProjectionBackend {
+            file: source.to_owned(),
+            backend: backend.to_owned(),
+        });
+    }
+
+    let predicates = block
+        .body()
+        .blocks()
+        .map(|child| {
+            if child.identifier() != "where" {
+                return Err(Error::UnknownNestedBlock {
+                    file: source.to_owned(),
+                    block: "resolve".to_owned(),
+                    nested: child.identifier().to_owned(),
+                });
+            }
+            state_projection_predicate(child, source)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(StateProjectionDeclaration {
+        resource: ResourceRef::new(kind, name),
+        collection: required_string(block.body(), source, "resolve", "collection")?,
+        key: required_string(block.body(), source, "resolve", "key")?,
+        select: required_string(block.body(), source, "resolve", "select")?,
+        into: required_string(block.body(), source, "resolve", "into")?,
+        predicates,
+    })
+}
+
+fn state_projection_predicate(
+    block: &Block,
+    source: &str,
+) -> Result<StateProjectionPredicateDeclaration> {
+    labels(block, source, 0)?;
+    reject_blocks(block.body(), source, "where")?;
+    reject_attributes(
+        block.body(),
+        source,
+        "where",
+        &["stored", "equals", "request", "state"],
+    )?;
+    let stored = required_string(block.body(), source, "where", "stored")?;
+    let equals = attribute(block.body(), "equals");
+    let request = attribute(block.body(), "request");
+    let state = attribute(block.body(), "state");
+    if usize::from(equals.is_some()) + usize::from(request.is_some()) + usize::from(state.is_some())
+        != 1
+    {
+        return Err(Error::InvalidStateProjectionPredicate {
+            file: source.to_owned(),
+        });
+    }
+    if let Some(equals) = equals {
+        return Ok(StateProjectionPredicateDeclaration::Equals {
+            stored,
+            value: literal_value(equals, source, "where", "equals")?,
+        });
+    }
+    if let Some(request) = request {
+        return Ok(StateProjectionPredicateDeclaration::EqualsRequest {
+            stored,
+            request: non_empty_string(request, source, "where", "request")?,
+        });
+    }
+    // Why: malformed public configuration must produce a provider-facing diagnostic, not panic
+    // the compiler, even if the exclusivity check above is changed during future maintenance.
+    let Some(state) = state else {
+        return Err(Error::InvalidStateProjectionPredicate {
+            file: source.to_owned(),
+        });
+    };
+    let state = non_empty_string(state, source, "where", "state")?;
+    let state = match state.as_str() {
+        "present" => simile_spec::StateProjectionValueState::Present,
+        "absent" => simile_spec::StateProjectionValueState::Absent,
+        "null" => simile_spec::StateProjectionValueState::Null,
+        "non-null" => simile_spec::StateProjectionValueState::NonNull,
+        "null-or-absent" => simile_spec::StateProjectionValueState::NullOrAbsent,
+        _ => {
+            return Err(Error::InvalidAttribute {
+                file: source.to_owned(),
+                block: "where".to_owned(),
+                attribute: "state".to_owned(),
+                expected: "one of present, absent, null, non-null, or null-or-absent",
+            });
+        }
+    };
+    Ok(StateProjectionPredicateDeclaration::State { stored, state })
 }
 
 pub(crate) fn error_set(block: &Block, source: &str) -> Result<ErrorSetDeclaration> {

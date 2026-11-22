@@ -47,7 +47,8 @@ boundary: the runtime executes the compiled artifact and does not reopen the sou
 
 HCL is optional and additive. It can select a response already declared by the contract, publish
 exact named outcomes, define opaque test scenarios, map protocol errors, describe portable
-dependencies, and declare observable effects or asynchronous work.
+dependencies, declare observable effects or asynchronous work, and resolve stored public
+references needed to construct a response.
 
 HCL cannot add a route, replace a request or response schema, invent a status, or weaken the
 contract. It targets operations by stable `operationId`, so every operation referenced by HCL must

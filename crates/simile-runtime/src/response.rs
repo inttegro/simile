@@ -81,7 +81,7 @@ pub fn synthesize_response(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_with_seed(artifact, request, rand::random())
+    synthesize_response_inner(artifact, request, rand::random(), None)
 }
 
 /// Synthesize a reproducible response from a caller-provided seed.
@@ -89,6 +89,32 @@ pub fn synthesize_response_with_seed(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
     seed: u64,
+) -> Result<SynthesizedResponse> {
+    synthesize_response_inner(artifact, request, seed, None)
+}
+
+pub(crate) fn synthesize_response_with_context(
+    artifact: &Artifact,
+    request: ResponseSynthesisRequest<'_>,
+    response_request_body: Option<&Value>,
+) -> Result<SynthesizedResponse> {
+    synthesize_response_inner(artifact, request, rand::random(), response_request_body)
+}
+
+pub(crate) fn synthesize_response_with_seed_and_context(
+    artifact: &Artifact,
+    request: ResponseSynthesisRequest<'_>,
+    seed: u64,
+    response_request_body: Option<&Value>,
+) -> Result<SynthesizedResponse> {
+    synthesize_response_inner(artifact, request, seed, response_request_body)
+}
+
+fn synthesize_response_inner(
+    artifact: &Artifact,
+    request: ResponseSynthesisRequest<'_>,
+    seed: u64,
+    response_request_body: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
     let operation =
         artifact
@@ -127,7 +153,7 @@ pub fn synthesize_response_with_seed(
             soundness: ResponseSoundness::SchemaOnly,
         });
     };
-    synthesize_body(request, status, headers, body, seed)
+    synthesize_body(request, status, headers, body, seed, response_request_body)
 }
 
 fn synthesize_headers(response: &ArtifactResponse<'_>, seed: u64) -> Result<Vec<(String, String)>> {
@@ -204,6 +230,7 @@ fn synthesize_body(
     headers: Vec<(String, String)>,
     body: BoundResponseBody<'_>,
     seed: u64,
+    response_request_body: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
     let content_type = request
         .content_type
@@ -222,7 +249,11 @@ fn synthesize_body(
                 content_type: content_type.clone(),
                 expected: body.media_types().map(str::to_owned).collect(),
             })?;
-    let request_values = request_values(request.request_body, request.request_parameters);
+    let request_values = request_values(
+        request.request_body,
+        request.request_parameters,
+        response_request_body,
+    );
     let soundness = if request_values.is_some() && selected.is_request_constrained() {
         ResponseSoundness::RequestConstrained
     } else {
@@ -260,11 +291,16 @@ fn synthesize_body(
 fn request_values<'a>(
     body: Option<&'a ValidatedBody>,
     parameters: Option<&'a ValidatedParameters>,
+    response_request_body: Option<&'a Value>,
 ) -> Option<RequestValues<'a>> {
-    if body.is_none() && parameters.is_none() {
+    if body.is_none() && parameters.is_none() && response_request_body.is_none() {
         return None;
     }
-    let mut values = RequestValues::new(body.map(ValidatedBody::value));
+    // Why: a state projection may add data that is mutually exclusive on the wire (for example,
+    // a resolved price beside price_id). It may guide response synthesis, but it must never
+    // replace the request value already proven by the public request schema.
+    let mut values =
+        RequestValues::new(response_request_body.or_else(|| body.map(ValidatedBody::value)));
     if let Some(parameters) = parameters {
         for location in [
             ParameterLocation::Path,

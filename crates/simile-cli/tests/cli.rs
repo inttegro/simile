@@ -929,7 +929,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "heuristics standard\n",
                 // Why: the CLI snapshot must expose the artifact envelope version so consumers
                 // can diagnose incompatible compiled action vocabularies.
-                "artifact {} · format 22 · [..] bytes\n",
+                "artifact {} · format 23 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -942,8 +942,8 @@ fn writes_and_inspects_a_compiled_artifact() {
         .stdout_eq(concat!(
             "{\n",
             // Why: machine-readable inspection must report the same envelope version as the
-            // human compile output so tooling cannot mistake a new action vocabulary for v21.
-            "  \"formatVersion\": 22,\n",
+            // human compile output so tooling cannot ignore state-projection runtime records.
+            "  \"formatVersion\": 23,\n",
             "  \"compilerVersion\": \"0.3.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
@@ -987,6 +987,7 @@ fn writes_and_inspects_a_compiled_artifact() {
             "  \"providerAuthoredEffects\": 0,\n",
             "  \"conventionInferredEffects\": 0,\n",
             "  \"effectActions\": 0,\n",
+            "  \"stateProjections\": 0,\n",
             "  \"encodedBytes\": [..],\n",
             "  \"payloadSha256\": \"[..]\",\n",
             "  \"webhookPolicy\": {\n",

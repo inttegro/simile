@@ -142,6 +142,7 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
                 replay: None,
                 response_seed: None,
                 response_body: None,
+                response_request_body: None,
                 parameters: None,
             },
         )

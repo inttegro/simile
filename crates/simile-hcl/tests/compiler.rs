@@ -1,5 +1,8 @@
 use simile_hcl::Source;
-use simile_spec::{ProfileCredential, ProfileStatus, ResourceKind, ResourceRef};
+use simile_spec::{
+    ProfileCredential, ProfileStatus, ResourceKind, ResourceRef, StateProjectionPredicate,
+    StateProjectionValueState,
+};
 
 #[test]
 fn compiles_service_setup_into_a_profile_contract() {
@@ -323,6 +326,69 @@ effect "record_order" {
             .descriptions
             .find(simile_spec::DescriptionKind::Effect, None, "record_order"),
         Some("Persist the accepted order and publish it for fulfillment.")
+    );
+}
+
+#[test]
+fn compiles_provider_authored_state_projections() {
+    let compiled = simile_hcl::compile(
+        [module(
+            r#"
+backend "db" "resources" {}
+
+behavior "createOrder" {
+  resolve "db.resources" {
+    collection = "prices"
+    key        = "/line_items/*/product/price_id"
+    select     = "/fixed_amount"
+    into       = "/line_items/*/product/price"
+
+    where {
+      stored  = "/product_id"
+      request = "/line_items/*/product/product_id"
+    }
+
+    where {
+      stored = "/active"
+      equals = true
+    }
+
+    where {
+      stored = "/archived_at"
+      state  = "null-or-absent"
+    }
+  }
+}
+"#,
+        )],
+        &contract(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let projection = &compiled.behaviors["createOrder"].state_projections[0];
+    assert_eq!(
+        projection.resource,
+        ResourceRef::new(ResourceKind::Db, "resources")
+    );
+    assert_eq!(projection.collection, "prices");
+    assert_eq!(projection.select, "/fixed_amount");
+    assert_eq!(projection.into, "/line_items/*/product/price");
+    assert_eq!(
+        projection.predicates,
+        [
+            StateProjectionPredicate::EqualsRequest {
+                stored: "/product_id".to_owned(),
+                request: "/line_items/*/product/product_id".to_owned(),
+            },
+            StateProjectionPredicate::Equals {
+                stored: "/active".to_owned(),
+                value: serde_json::Value::Bool(true),
+            },
+            StateProjectionPredicate::State {
+                stored: "/archived_at".to_owned(),
+                state: StateProjectionValueState::NullOrAbsent,
+            },
+        ]
     );
 }
 

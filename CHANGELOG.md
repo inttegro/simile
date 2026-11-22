@@ -14,7 +14,9 @@ All notable changes to Simile will be documented in this file.
   stay absent.
 - Encode declared JSON, text, form URL-encoded, multipart, and octet-stream responses.
 - Compile and synthesize declared response headers, including bodyless redirects with `Location`.
-- Advance the compiled artifact format to version 21. Existing artifacts must be recompiled.
+- Add provider-authored state projections that resolve stored public references into a private
+  response-synthesis view without changing the validated caller request.
+- Advance the compiled artifact format to version 23. Existing artifacts must be recompiled.
 
 ## 0.3.0 - 2026-11-20
 

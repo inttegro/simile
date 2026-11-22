@@ -127,6 +127,16 @@ pub enum Error {
     #[error("behavior for operationId `{operation_id}` is declared more than once")]
     DuplicateBehavior { operation_id: String },
 
+    #[error(
+        "{file}: state projection target `{backend}` must name a declared database backend such as `db.resources`"
+    )]
+    InvalidStateProjectionBackend { file: String, backend: String },
+
+    #[error(
+        "{file}: state projection `where` must define exactly one of `equals`, `request`, or `state`"
+    )]
+    InvalidStateProjectionPredicate { file: String },
+
     #[error("error set `{name}` is declared more than once")]
     DuplicateErrorSet { name: String },
 
@@ -329,6 +339,12 @@ pub enum Error {
 
     #[error("behavior references unknown OpenAPI operationId `{operation_id}`")]
     UnknownOperation { operation_id: String },
+
+    #[error("behavior for `{operation_id}` has an invalid state projection: {reason}")]
+    InvalidStateProjection {
+        operation_id: String,
+        reason: String,
+    },
 
     #[error("operationId `{operation_id}` does not declare response status {status} in OpenAPI")]
     UndeclaredResponse { operation_id: String, status: u16 },

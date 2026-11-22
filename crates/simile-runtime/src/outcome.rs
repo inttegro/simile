@@ -1,8 +1,10 @@
 use simile_artifact::{Artifact, ArtifactOutcome};
 
+use crate::response::{
+    synthesize_response_with_context, synthesize_response_with_seed_and_context,
+};
 use crate::{
     Error, ExecutionOptions, OperationOutcome, ResponseSynthesisRequest, Result, ValidatedBody,
-    synthesize_response, synthesize_response_with_seed,
 };
 
 pub(crate) fn produce(
@@ -32,8 +34,15 @@ pub(crate) fn produce(
             .or(options.response_body),
     };
     let response = match options.response_seed {
-        Some(seed) => synthesize_response_with_seed(artifact, synthesis, seed),
-        None => synthesize_response(artifact, synthesis),
+        Some(seed) => synthesize_response_with_seed_and_context(
+            artifact,
+            synthesis,
+            seed,
+            options.response_request_body,
+        ),
+        None => {
+            synthesize_response_with_context(artifact, synthesis, options.response_request_body)
+        }
     }?;
     Ok(OperationOutcome::new(
         operation_key.to_owned(),

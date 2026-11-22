@@ -16,14 +16,15 @@ use simile_spec::{
     EffectValue, FaultAction, FaultPhase, HttpMethod, OpenApiFeature, OutcomeProvenance,
     ParameterLocation, PrincipalSetup, ProfileCredential, ProfileStatus, ResourceKind, ResourceRef,
     ResponseStatus, SecurityScheme, SetupBinding, SetupCollect, SetupIssue, SetupIssueSource,
-    SetupValueType, WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
+    SetupValueType, StateProjection, StateProjectionPredicate, StateProjectionValueState,
+    WebhookEmission, WebhookOrdering, WebhookOrigin, WebhookPolicy,
 };
 
 use crate::{Error, Result};
 
-// Why: `DbMerge` extends the serialized action vocabulary; a new envelope version prevents an
-// older runtime from accepting an artifact whose action tag it cannot interpret.
-pub const FORMAT_VERSION: u16 = 22;
+// Why: operation state projections add runtime-bearing records; a new envelope version prevents
+// an older runtime from silently ignoring the provider-authored lookup semantics.
+pub const FORMAT_VERSION: u16 = 23;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -70,6 +71,7 @@ pub struct ArtifactSummary {
     pub provider_authored_effects: usize,
     pub convention_inferred_effects: usize,
     pub effect_actions: usize,
+    pub state_projections: usize,
     pub encoded_bytes: usize,
     pub payload_sha256: String,
     pub webhook_policy: WebhookPolicy,
@@ -115,7 +117,9 @@ pub struct ArtifactOperation<'a> {
     responses: &'a [ResponseRecord],
     outcomes: &'a [OutcomeRecord],
     behavior_response_status: Option<u16>,
+    state_projections: &'a [StateProjectionRecord],
     strings: &'a [String],
+    resources: &'a [ResourceRecord],
     values: &'a [ValueRecord],
     schemas: &'a SchemaCatalog,
     security: &'a [SecurityRequirementRecord],
@@ -355,6 +359,44 @@ impl<'a> ArtifactOperation<'a> {
     #[must_use]
     pub const fn behavior_response_status(&self) -> Option<u16> {
         self.behavior_response_status
+    }
+
+    /// Return provider-authored state reads used only to enrich response synthesis.
+    pub fn state_projections(&self) -> Vec<StateProjection> {
+        self.state_projections
+            .iter()
+            .map(|projection| StateProjection {
+                resource: decode_resource_ref(projection.0, self.strings, self.resources),
+                collection: self.strings[projection.1 as usize].clone(),
+                key: self.strings[projection.2 as usize].clone(),
+                select: self.strings[projection.3 as usize].clone(),
+                into: self.strings[projection.4 as usize].clone(),
+                predicates: projection
+                    .5
+                    .iter()
+                    .map(|predicate| match predicate {
+                        StateProjectionPredicateRecord::Equals(stored, value) => {
+                            StateProjectionPredicate::Equals {
+                                stored: self.strings[*stored as usize].clone(),
+                                value: decode_value(*value, self.strings, self.values()),
+                            }
+                        }
+                        StateProjectionPredicateRecord::EqualsRequest(stored, request) => {
+                            StateProjectionPredicate::EqualsRequest {
+                                stored: self.strings[*stored as usize].clone(),
+                                request: self.strings[*request as usize].clone(),
+                            }
+                        }
+                        StateProjectionPredicateRecord::State(stored, state) => {
+                            StateProjectionPredicate::State {
+                                stored: self.strings[*stored as usize].clone(),
+                                state: decode_state_projection_value_state(*state),
+                            }
+                        }
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Source of the operation's behavioral refinement.
@@ -1004,6 +1046,12 @@ impl Artifact {
                     .iter()
                     .map(|operation| operation.2.len())
                     .sum::<usize>(),
+            state_projections: self
+                .payload
+                .3
+                .iter()
+                .map(|operation| operation.13.len())
+                .sum(),
             encoded_bytes: self.encoded_bytes,
             payload_sha256: encode_hex(&self.digest),
             webhook_policy: self.webhook_policy(),
@@ -1473,7 +1521,9 @@ impl Artifact {
             responses: &operation.7,
             outcomes: &operation.10,
             behavior_response_status: operation.9,
+            state_projections: &operation.13,
             strings: &self.payload.1,
+            resources: &self.payload.5,
             values: &self.payload.4,
             schemas: &self.payload.7,
             security: &operation.12,
@@ -1716,7 +1766,25 @@ struct OperationRecord(
     Vec<OutcomeRecord>,
     Vec<ParameterRecord>,
     Vec<SecurityRequirementRecord>,
+    Vec<StateProjectionRecord>,
 );
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct StateProjectionRecord(
+    ResourceId,
+    StringId,
+    StringId,
+    StringId,
+    StringId,
+    Vec<StateProjectionPredicateRecord>,
+);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+enum StateProjectionPredicateRecord {
+    Equals(StringId, ValueId),
+    EqualsRequest(StringId, StringId),
+    State(StringId, u8),
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SecurityRequirementRecord(Vec<(StringId, Vec<StringId>)>);
@@ -2299,6 +2367,25 @@ impl Payload {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let state_projections = compiled
+                .behavior
+                .as_ref()
+                .map(|behavior| {
+                    behavior
+                        .state_projections
+                        .iter()
+                        .map(|projection| {
+                            compile_state_projection(
+                                projection,
+                                &resource_ids,
+                                &strings,
+                                &mut values,
+                            )
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
             operations.push(OperationRecord(
                 strings.id(key.as_str())?,
                 method,
@@ -2313,6 +2400,7 @@ impl Payload {
                 outcomes,
                 parameters,
                 security,
+                state_projections,
             ));
         }
 
@@ -2830,6 +2918,31 @@ impl Payload {
                     }
                 }
             }
+            for projection in &operation.13 {
+                validate_index(projection.0, resources, "state projection resource")?;
+                validate_index(projection.1, strings, "state projection collection")?;
+                validate_index(projection.2, strings, "state projection key")?;
+                validate_index(projection.3, strings, "state projection selection")?;
+                validate_index(projection.4, strings, "state projection target")?;
+                for predicate in &projection.5 {
+                    match predicate {
+                        StateProjectionPredicateRecord::Equals(stored, value) => {
+                            validate_index(*stored, strings, "state projection stored path")?;
+                            validate_index(*value, values, "state projection comparison value")?;
+                        }
+                        StateProjectionPredicateRecord::EqualsRequest(stored, request) => {
+                            validate_index(*stored, strings, "state projection stored path")?;
+                            validate_index(*request, strings, "state projection request path")?;
+                        }
+                        StateProjectionPredicateRecord::State(stored, state) => {
+                            validate_index(*stored, strings, "state projection stored path")?;
+                            if *state > 4 {
+                                return Err(Error::Invalid("state projection value state"));
+                            }
+                        }
+                    }
+                }
+            }
         }
         for operations in self.3.windows(2) {
             let left = &self.1[operations[0].0 as usize];
@@ -3206,6 +3319,31 @@ fn audit_public_export(service: &CompiledService) -> Result<()> {
                 audit_public_value(body)?;
             }
         }
+        if let Some(behavior) = &operation.behavior {
+            for projection in &behavior.state_projections {
+                // Why: state projections are shipped to integrators, so their resource vocabulary
+                // receives the same private-detail audit as authored outcomes and descriptions.
+                audit_public_name(&projection.collection)?;
+                audit_public_name(&projection.key)?;
+                audit_public_name(&projection.select)?;
+                audit_public_name(&projection.into)?;
+                for predicate in &projection.predicates {
+                    match predicate {
+                        StateProjectionPredicate::Equals { stored, value } => {
+                            audit_public_name(stored)?;
+                            audit_public_value(value)?;
+                        }
+                        StateProjectionPredicate::EqualsRequest { stored, request } => {
+                            audit_public_name(stored)?;
+                            audit_public_name(request)?;
+                        }
+                        StateProjectionPredicate::State { stored, .. } => {
+                            audit_public_name(stored)?;
+                        }
+                    }
+                }
+            }
+        }
     }
     for error in service.protocol_errors.values() {
         audit_public_name(&error.cause)?;
@@ -3321,6 +3459,29 @@ impl StringTable {
                 for condition in &outcome.when {
                     values.insert(condition.path.clone());
                     collect_value_strings(&condition.equals, &mut values);
+                }
+            }
+            if let Some(behavior) = &compiled.behavior {
+                for projection in &behavior.state_projections {
+                    values.insert(projection.collection.clone());
+                    values.insert(projection.key.clone());
+                    values.insert(projection.select.clone());
+                    values.insert(projection.into.clone());
+                    for predicate in &projection.predicates {
+                        match predicate {
+                            StateProjectionPredicate::Equals { stored, value } => {
+                                values.insert(stored.clone());
+                                collect_value_strings(value, &mut values);
+                            }
+                            StateProjectionPredicate::EqualsRequest { stored, request } => {
+                                values.insert(stored.clone());
+                                values.insert(request.clone());
+                            }
+                            StateProjectionPredicate::State { stored, .. } => {
+                                values.insert(stored.clone());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3642,6 +3803,55 @@ fn compile_effect_value(
     })
 }
 
+fn compile_state_projection(
+    projection: &StateProjection,
+    resources: &BTreeMap<ResourceRef, ResourceId>,
+    strings: &StringTable,
+    values: &mut ValueArena,
+) -> Result<StateProjectionRecord> {
+    let resource = resources
+        .get(&projection.resource)
+        .copied()
+        .ok_or_else(|| Error::UnknownReference {
+            kind: "state projection resource",
+            name: projection.resource.to_string(),
+        })?;
+    let predicates = projection
+        .predicates
+        .iter()
+        .map(|predicate| {
+            Ok(match predicate {
+                StateProjectionPredicate::Equals { stored, value } => {
+                    StateProjectionPredicateRecord::Equals(
+                        strings.id(stored)?,
+                        values.push(value, strings)?,
+                    )
+                }
+                StateProjectionPredicate::EqualsRequest { stored, request } => {
+                    StateProjectionPredicateRecord::EqualsRequest(
+                        strings.id(stored)?,
+                        strings.id(request)?,
+                    )
+                }
+                StateProjectionPredicate::State { stored, state } => {
+                    StateProjectionPredicateRecord::State(
+                        strings.id(stored)?,
+                        encode_state_projection_value_state(*state),
+                    )
+                }
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(StateProjectionRecord(
+        resource,
+        strings.id(&projection.collection)?,
+        strings.id(&projection.key)?,
+        strings.id(&projection.select)?,
+        strings.id(&projection.into)?,
+        predicates,
+    ))
+}
+
 fn decode_effect_action(
     action: &ActionRecord,
     strings: &[String],
@@ -3666,6 +3876,18 @@ fn decode_effect_action(
             })
             .collect(),
     }
+}
+
+fn decode_resource_ref(
+    id: ResourceId,
+    strings: &[String],
+    resources: &[ResourceRecord],
+) -> ResourceRef {
+    let resource = &resources[id as usize];
+    ResourceRef::new(
+        decode_resource_kind(resource.0),
+        &strings[resource.1 as usize],
+    )
 }
 
 fn decode_effect_value(
@@ -4057,6 +4279,27 @@ fn decode_resource_kind(kind: u8) -> ResourceKind {
     }
 }
 
+const fn encode_state_projection_value_state(state: StateProjectionValueState) -> u8 {
+    match state {
+        StateProjectionValueState::Present => 0,
+        StateProjectionValueState::Absent => 1,
+        StateProjectionValueState::Null => 2,
+        StateProjectionValueState::NonNull => 3,
+        StateProjectionValueState::NullOrAbsent => 4,
+    }
+}
+
+fn decode_state_projection_value_state(state: u8) -> StateProjectionValueState {
+    match state {
+        0 => StateProjectionValueState::Present,
+        1 => StateProjectionValueState::Absent,
+        2 => StateProjectionValueState::Null,
+        3 => StateProjectionValueState::NonNull,
+        4 => StateProjectionValueState::NullOrAbsent,
+        _ => unreachable!("artifact validation rejects unknown state projection predicates"),
+    }
+}
+
 const fn encode_parameter_location(location: ParameterLocation) -> u8 {
     match location {
         ParameterLocation::Path => 0,
@@ -4219,6 +4462,7 @@ mod tests {
                 Vec::new(),
                 0,
                 None,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),

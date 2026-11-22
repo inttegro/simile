@@ -4,8 +4,9 @@ use simile_spec::{
     ApiContract, AsyncOperation, Behavior, BehaviorSpec, DescriptionEntry, DescriptionKind, Effect,
     EffectAction, EffectOrigin, ErrorSet, ErrorSetApplication, Fault, FaultAction, FaultPhase,
     FaultProfile, MediaTypeContract, Outcome, OutcomeProvenance, Principal, ProtocolError,
-    RequestBodyContract, Resource, Scenario, SecurityScheme, WebhookContract, WebhookEmission,
-    WebhookOrdering, WebhookOrigin, WebhookPolicy,
+    RequestBodyContract, Resource, Scenario, SecurityScheme, StateProjection,
+    StateProjectionPredicate, WebhookContract, WebhookEmission, WebhookOrdering, WebhookOrigin,
+    WebhookPolicy,
 };
 
 use crate::{Error, Module, Result};
@@ -429,6 +430,35 @@ fn collect_behaviors(
                 .outcomes
                 .into_iter()
                 .map(provider_outcome)
+                .collect(),
+            state_projections: declaration
+                .state_projections
+                .into_iter()
+                .map(|projection| StateProjection {
+                    resource: projection.resource,
+                    collection: projection.collection,
+                    key: projection.key,
+                    select: projection.select,
+                    into: projection.into,
+                    predicates: projection
+                        .predicates
+                        .into_iter()
+                        .map(|predicate| match predicate {
+                            crate::ast::StateProjectionPredicateDeclaration::Equals {
+                                stored,
+                                value,
+                            } => StateProjectionPredicate::Equals { stored, value },
+                            crate::ast::StateProjectionPredicateDeclaration::EqualsRequest {
+                                stored,
+                                request,
+                            } => StateProjectionPredicate::EqualsRequest { stored, request },
+                            crate::ast::StateProjectionPredicateDeclaration::State {
+                                stored,
+                                state,
+                            } => StateProjectionPredicate::State { stored, state },
+                        })
+                        .collect(),
+                })
                 .collect(),
         };
         if spec
@@ -975,8 +1005,107 @@ fn validate_behaviors(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
             validate_outcomes(operation, &behavior.operation_id, &error_set.outcomes)?;
         }
         validate_outcomes(operation, &behavior.operation_id, &behavior.outcomes)?;
+        validate_state_projections(spec, behavior)?;
     }
     Ok(())
+}
+
+fn validate_state_projections(spec: &BehaviorSpec, behavior: &Behavior) -> Result<()> {
+    for projection in &behavior.state_projections {
+        if !spec.resources.contains_key(&projection.resource) {
+            return Err(Error::UnknownEffectBackend {
+                owner: format!("behavior `{}` state projection", behavior.operation_id),
+                backend: projection.resource.to_string(),
+            });
+        }
+        if projection.collection.trim().is_empty() {
+            return Err(invalid_state_projection(
+                behavior,
+                "`collection` must be non-empty",
+            ));
+        }
+        validate_projection_pointer(behavior, "key", &projection.key, true)?;
+        validate_projection_pointer(behavior, "select", &projection.select, false)?;
+        validate_projection_pointer(behavior, "into", &projection.into, true)?;
+        let key_wildcards = wildcard_count(&projection.key);
+        if wildcard_count(&projection.into) != key_wildcards {
+            return Err(invalid_state_projection(
+                behavior,
+                "`key` and `into` must contain the same number of array wildcards",
+            ));
+        }
+        for predicate in &projection.predicates {
+            match predicate {
+                StateProjectionPredicate::Equals { stored, .. }
+                | StateProjectionPredicate::State { stored, .. } => {
+                    validate_projection_pointer(behavior, "where.stored", stored, false)?;
+                }
+                StateProjectionPredicate::EqualsRequest { stored, request } => {
+                    validate_projection_pointer(behavior, "where.stored", stored, false)?;
+                    validate_projection_pointer(behavior, "where.request", request, true)?;
+                    if wildcard_count(request) != key_wildcards {
+                        return Err(invalid_state_projection(
+                            behavior,
+                            "`where.request` and `key` must contain the same number of array wildcards",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_projection_pointer(
+    behavior: &Behavior,
+    member: &str,
+    pointer: &str,
+    allow_wildcards: bool,
+) -> Result<()> {
+    let Some(body) = pointer.strip_prefix('/') else {
+        return Err(invalid_state_projection(
+            behavior,
+            format!("`{member}` must be a non-empty absolute JSON Pointer"),
+        ));
+    };
+    if body.is_empty() {
+        return Err(invalid_state_projection(
+            behavior,
+            format!("`{member}` must identify a property"),
+        ));
+    }
+    for segment in body.split('/') {
+        if segment == "*" {
+            if allow_wildcards {
+                continue;
+            }
+            return Err(invalid_state_projection(
+                behavior,
+                format!("`{member}` cannot contain an array wildcard"),
+            ));
+        }
+        let mut characters = segment.chars();
+        while let Some(character) = characters.next() {
+            if character == '~' && !matches!(characters.next(), Some('0' | '1')) {
+                return Err(invalid_state_projection(
+                    behavior,
+                    format!("`{member}` contains an invalid JSON Pointer escape"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn wildcard_count(pointer: &str) -> usize {
+    pointer.split('/').filter(|segment| *segment == "*").count()
+}
+
+fn invalid_state_projection(behavior: &Behavior, reason: impl Into<String>) -> Error {
+    Error::InvalidStateProjection {
+        operation_id: behavior.operation_id.clone(),
+        reason: reason.into(),
+    }
 }
 
 fn validate_outcomes(

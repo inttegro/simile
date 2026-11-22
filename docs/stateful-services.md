@@ -116,6 +116,33 @@ effect "persist_order" {
 An authored effect suppresses the inferred write for that operation. This gives the provider one
 clear override rather than two competing state transitions.
 
+## Resolve stored references during synthesis
+
+Some valid requests identify a stored public resource instead of repeating its value. An order may
+carry `price_id`, for example, while its response snapshots the resolved amount. Declare that read
+inside the operation behavior:
+
+```hcl
+behavior "createOrder" {
+  resolve "db.primary" {
+    collection = "prices"
+    key        = "/line_items/*/price_id"
+    select     = "/fixed_amount"
+    into       = "/line_items/*/price"
+
+    where {
+      stored  = "/product_id"
+      request = "/line_items/*/product_id"
+    }
+  }
+}
+```
+
+The stored amount exists only in the relation-synthesis view. Request validation, public outcome
+matching, replay identity, and effects continue to see the exact request sent by the caller. This
+separation prevents the emulator from weakening a mutually exclusive request shape merely to make
+the response constructible.
+
 ## Inspect authority
 
 `simile audit ARTIFACT` identifies convention-inferred effects, missing state effects, and ambiguous

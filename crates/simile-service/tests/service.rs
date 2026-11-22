@@ -671,6 +671,235 @@ effect "persist_product" {
 }
 
 #[test]
+fn stored_reference_enriches_response_synthesis_without_changing_the_request() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Catalog orders, version: 1.0.0 }
+paths:
+  /prices:
+    post:
+      operationId: createPrice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [product_id, fixed_amount]
+              properties:
+                product_id: { type: string }
+                fixed_amount: { $ref: '#/components/schemas/Amount' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [price]
+                properties:
+                  price: { $ref: '#/components/schemas/Price' }
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [line_items]
+              properties:
+                line_items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [product]
+                    properties:
+                      product:
+                        oneOf:
+                          - type: object
+                            additionalProperties: false
+                            required: [product_id, price_id, quantity]
+                            properties:
+                              product_id: { type: string }
+                              price_id: { type: string }
+                              quantity: { type: integer, minimum: 1 }
+                          - type: object
+                            additionalProperties: false
+                            required: [product_id, price, quantity]
+                            properties:
+                              product_id: { type: string }
+                              price: { $ref: '#/components/schemas/Amount' }
+                              quantity: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [order]
+                properties:
+                  order:
+                    type: object
+                    additionalProperties: false
+                    required: [id, line_items, total]
+                    properties:
+                      id: { type: string, pattern: '^or_' }
+                      line_items:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [product]
+                          properties:
+                            product:
+                              type: object
+                              additionalProperties: false
+                              required: [product_id, price_id, price, quantity]
+                              properties:
+                                product_id: { type: string }
+                                price_id: { type: string }
+                                price: { $ref: '#/components/schemas/Amount' }
+                                quantity: { type: integer, minimum: 1 }
+                      total: { $ref: '#/components/schemas/Amount' }
+              x-simile-from-request:
+                bindings:
+                  - { from: /line_items, to: /order/line_items }
+                  - { from: /line_items/*/product/price/currency, to: /order/total/currency }
+                  - to: /order/total/value
+                    value:
+                      sum:
+                        each: /line_items/*/product
+                        value:
+                          multiply:
+                            - { path: /quantity }
+                            - { path: /price/value }
+components:
+  schemas:
+    Amount:
+      type: object
+      additionalProperties: false
+      required: [currency, value]
+      properties:
+        currency: { type: string }
+        value: { type: integer, minimum: 1 }
+    Price:
+      type: object
+      additionalProperties: false
+      required: [id, product_id, type, active, fixed_amount]
+      properties:
+        id: { type: string }
+        product_id: { type: string }
+        type: { type: string, enum: [fixed_amount] }
+        active: { type: boolean }
+        archived_at: { type: [string, 'null'], format: date-time }
+        fixed_amount: { $ref: '#/components/schemas/Amount' }
+"#,
+        r#"
+backend "db" "resources" {}
+
+effect "persist_price" {
+  operations = ["createPrice"]
+
+  action "db.resources" "put" {
+    collection = "prices"
+    key        = response.price.id
+    value      = response.price
+  }
+}
+
+behavior "createOrder" {
+  resolve "db.resources" {
+    collection = "prices"
+    key        = "/line_items/*/product/price_id"
+    select     = "/fixed_amount"
+    into       = "/line_items/*/product/price"
+
+    where {
+      stored  = "/product_id"
+      request = "/line_items/*/product/product_id"
+    }
+    where {
+      stored = "/type"
+      equals = "fixed_amount"
+    }
+    where {
+      stored = "/active"
+      equals = true
+    }
+    where {
+      stored = "/archived_at"
+      state  = "null-or-absent"
+    }
+  }
+}
+"#,
+    );
+    let price_response = serde_json::json!({
+        "price": {
+            "id": "pr_standard",
+            "product_id": "prod_shirt",
+            "type": "fixed_amount",
+            "active": true,
+            "fixed_amount": { "currency": "ghs", "value": 2500 }
+        }
+    });
+    service
+        .execute_with_options(
+            OperationCall {
+                operation: "POST /prices",
+                content_type: Some("application/json"),
+                body: br#"{"product_id":"prod_shirt","fixed_amount":{"currency":"ghs","value":2500}}"#,
+            },
+            ExecutionOptions {
+                response_body: Some(&price_response),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let execution = service
+        .execute(OperationCall {
+            operation: "POST /orders",
+            content_type: Some("application/json"),
+            body: br#"{"line_items":[{"product":{"product_id":"prod_shirt","price_id":"pr_standard","quantity":2}}]}"#,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let response = execution
+        .response()
+        .value()
+        .unwrap_or_else(|| panic!("missing order response"));
+    assert_eq!(
+        response.pointer("/order/line_items/0/product/price"),
+        Some(&serde_json::json!({ "currency": "ghs", "value": 2500 }))
+    );
+    assert_eq!(
+        response.pointer("/order/total/value"),
+        Some(&serde_json::json!(5000))
+    );
+    assert_eq!(
+        response.pointer("/order/total/currency"),
+        Some(&serde_json::json!("ghs"))
+    );
+    assert!(
+        execution
+            .request_body()
+            .and_then(|body| body.value().pointer("/line_items/0/product/price"))
+            .is_none(),
+        "the stored projection must not mutate the caller's validated request"
+    );
+}
+
+#[test]
 fn get_actions_fall_through_when_state_cannot_represent_the_response() {
     let service = service_with_contract(
         r#"

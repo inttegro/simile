@@ -38,6 +38,33 @@ pub struct BehaviorDeclaration {
     pub response_status: Option<u16>,
     pub error_sets: Vec<String>,
     pub outcomes: Vec<OutcomeDeclaration>,
+    pub state_projections: Vec<StateProjectionDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StateProjectionDeclaration {
+    pub resource: ResourceRef,
+    pub collection: String,
+    pub key: String,
+    pub select: String,
+    pub into: String,
+    pub predicates: Vec<StateProjectionPredicateDeclaration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StateProjectionPredicateDeclaration {
+    Equals {
+        stored: String,
+        value: Value,
+    },
+    EqualsRequest {
+        stored: String,
+        request: String,
+    },
+    State {
+        stored: String,
+        state: simile_spec::StateProjectionValueState,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

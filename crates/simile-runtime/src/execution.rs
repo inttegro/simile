@@ -39,6 +39,9 @@ pub struct ExecutionOptions<'a> {
     /// An exact state-derived response candidate. Named outcomes retain
     /// precedence when a request deliberately selects one.
     pub response_body: Option<&'a Value>,
+    /// A provider-authored, state-enriched view used only by request-to-response relations. The
+    /// validated request retained by the outcome and effects remains the caller's original value.
+    pub response_request_body: Option<&'a Value>,
     /// Parameters already decoded and proven by the transport adapter.
     pub parameters: Option<&'a crate::ValidatedParameters>,
     pub replay: Option<ReplayIdentity<'a>>,

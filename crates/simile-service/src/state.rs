@@ -1,7 +1,10 @@
 use serde_json::{Map, Value, json};
 use simile_artifact::{Artifact, ArtifactOperation};
 use simile_runtime::ValidatedParameters;
-use simile_spec::{EffectActionKind, EffectValue, ParameterLocation, ResourceKind, ResponseStatus};
+use simile_spec::{
+    EffectActionKind, EffectValue, ParameterLocation, ResourceKind, ResponseStatus,
+    StateProjectionPredicate, StateProjectionValueState,
+};
 use simile_stack::{DbCommand, DbResult, ResourceAddress, StackCommand, StackResult};
 
 use crate::{Error, Result, Service};
@@ -10,6 +13,256 @@ pub(crate) enum StateResolution {
     None,
     Found(Value),
     Missing,
+}
+
+/// Build the private synthesis view declared by an operation's HCL state projections.
+///
+/// The returned value is never exposed as the caller's request and is never used by effects. This
+/// separation permits a provider to resolve a reference into fields that are mutually exclusive in
+/// the public request schema without weakening request validation.
+pub(crate) fn response_request_body(
+    service: &Service,
+    operation_key: &str,
+    request_body: Option<&Value>,
+    profile: Option<&str>,
+) -> Result<Option<Value>> {
+    let Some(request_body) = request_body else {
+        return Ok(None);
+    };
+    let Some(operation) = service.artifact().operation(operation_key) else {
+        return Ok(None);
+    };
+    let projections = operation.state_projections();
+    if projections.is_empty() {
+        return Ok(None);
+    }
+    let mut enriched = request_body.clone();
+    for projection in projections {
+        let resource = projection.resource.as_str().parse::<ResourceAddress>()?;
+        let selected = select_pattern(&enriched, &projection.key).ok_or_else(|| {
+            Error::InvalidStateProjection {
+                operation: operation_key.to_owned(),
+                reason: format!("invalid key selector `{}`", projection.key),
+            }
+        })?;
+        for selection in selected {
+            let Some(key) = scalar_key(&selection.value) else {
+                return Err(Error::InvalidStateProjection {
+                    operation: operation_key.to_owned(),
+                    reason: format!(
+                        "key selector `{}` did not resolve to a scalar",
+                        projection.key
+                    ),
+                });
+            };
+            let receipt = service.read_stack(
+                resource.clone(),
+                StackCommand::Db(DbCommand::Get {
+                    collection: scoped_collection(profile, &projection.collection),
+                    key,
+                }),
+            )?;
+            let document = match receipt.result {
+                StackResult::Db(result) => match *result {
+                    DbResult::Document(document) => document,
+                    _ => return Err(Error::InvalidStateRead("db.get")),
+                },
+                _ => return Err(Error::InvalidStateRead("db.get")),
+            };
+            let Some(document) = document else {
+                return Err(Error::InvalidStateProjection {
+                    operation: operation_key.to_owned(),
+                    reason: format!("stored `{}` resource was not found", projection.collection),
+                });
+            };
+            if !projection.predicates.iter().all(|predicate| {
+                state_projection_predicate_matches(
+                    predicate,
+                    &document.value,
+                    &enriched,
+                    &selection.captures,
+                )
+            }) {
+                return Err(Error::InvalidStateProjection {
+                    operation: operation_key.to_owned(),
+                    reason: format!(
+                        "stored `{}` resource does not satisfy its declared public predicates",
+                        projection.collection
+                    ),
+                });
+            }
+            let value = document
+                .value
+                .pointer(&projection.select)
+                .cloned()
+                .ok_or_else(|| Error::InvalidStateProjection {
+                    operation: operation_key.to_owned(),
+                    reason: format!(
+                        "stored `{}` resource does not contain `{}`",
+                        projection.collection, projection.select
+                    ),
+                })?;
+            let target =
+                materialize_pattern(&projection.into, &selection.captures).ok_or_else(|| {
+                    Error::InvalidStateProjection {
+                        operation: operation_key.to_owned(),
+                        reason: format!("cannot materialize target `{}`", projection.into),
+                    }
+                })?;
+            if !apply_at_pointer(&mut enriched, &target, value) {
+                return Err(Error::InvalidStateProjection {
+                    operation: operation_key.to_owned(),
+                    reason: format!("cannot apply target `{target}`"),
+                });
+            }
+        }
+    }
+    Ok(Some(enriched))
+}
+
+struct PatternSelection {
+    value: Value,
+    captures: Vec<String>,
+}
+
+fn select_pattern(value: &Value, pattern: &str) -> Option<Vec<PatternSelection>> {
+    let segments = pattern_segments(pattern)?;
+    let mut selected = Vec::new();
+    select_pattern_inner(value, &segments, &mut Vec::new(), &mut selected);
+    Some(selected)
+}
+
+fn select_pattern_inner(
+    value: &Value,
+    segments: &[Option<String>],
+    captures: &mut Vec<String>,
+    selected: &mut Vec<PatternSelection>,
+) {
+    let Some((segment, tail)) = segments.split_first() else {
+        selected.push(PatternSelection {
+            value: value.clone(),
+            captures: captures.clone(),
+        });
+        return;
+    };
+    match segment {
+        Some(name) => {
+            if let Some(child) = value.as_object().and_then(|object| object.get(name)) {
+                select_pattern_inner(child, tail, captures, selected);
+            }
+        }
+        None => {
+            if let Some(items) = value.as_array() {
+                for (index, child) in items.iter().enumerate() {
+                    captures.push(index.to_string());
+                    select_pattern_inner(child, tail, captures, selected);
+                    captures.pop();
+                }
+            }
+        }
+    }
+}
+
+fn materialize_pattern(pattern: &str, captures: &[String]) -> Option<String> {
+    let segments = pattern_segments(pattern)?;
+    let mut captures = captures.iter();
+    let mut pointer = String::new();
+    for segment in segments {
+        pointer.push('/');
+        match segment {
+            Some(name) => pointer.push_str(&encode_pointer_segment(&name)),
+            None => pointer.push_str(captures.next()?),
+        }
+    }
+    captures.next().is_none().then_some(pointer)
+}
+
+fn pattern_segments(pattern: &str) -> Option<Vec<Option<String>>> {
+    let body = pattern.strip_prefix('/')?;
+    if body.is_empty() {
+        return None;
+    }
+    body.split('/')
+        .map(|segment| {
+            if segment == "*" {
+                Some(None)
+            } else {
+                decode_pointer_segment(segment).map(Some)
+            }
+        })
+        .collect()
+}
+
+fn state_projection_predicate_matches(
+    predicate: &StateProjectionPredicate,
+    stored: &Value,
+    request: &Value,
+    captures: &[String],
+) -> bool {
+    match predicate {
+        StateProjectionPredicate::Equals {
+            stored: path,
+            value,
+        } => stored.pointer(path) == Some(value),
+        StateProjectionPredicate::EqualsRequest {
+            stored: stored_path,
+            request: request_pattern,
+        } => materialize_pattern(request_pattern, captures)
+            .and_then(|path| request.pointer(&path))
+            .is_some_and(|request| stored.pointer(stored_path) == Some(request)),
+        StateProjectionPredicate::State {
+            stored: path,
+            state,
+        } => {
+            let value = stored.pointer(path);
+            match state {
+                StateProjectionValueState::Present => value.is_some(),
+                StateProjectionValueState::Absent => value.is_none(),
+                StateProjectionValueState::Null => value.is_some_and(Value::is_null),
+                StateProjectionValueState::NonNull => value.is_some_and(|value| !value.is_null()),
+                StateProjectionValueState::NullOrAbsent => value.is_none_or(Value::is_null),
+            }
+        }
+    }
+}
+
+fn apply_at_pointer(value: &mut Value, pointer: &str, replacement: Value) -> bool {
+    if let Some(target) = value.pointer_mut(pointer) {
+        *target = replacement;
+        return true;
+    }
+    let Some((parent, property)) = pointer.rsplit_once('/') else {
+        return false;
+    };
+    let Some(property) = decode_pointer_segment(property) else {
+        return false;
+    };
+    value
+        .pointer_mut(parent)
+        .and_then(Value::as_object_mut)
+        .map(|object| object.insert(property, replacement))
+        .is_some()
+}
+
+fn decode_pointer_segment(segment: &str) -> Option<String> {
+    let mut decoded = String::new();
+    let mut characters = segment.chars();
+    while let Some(character) = characters.next() {
+        if character != '~' {
+            decoded.push(character);
+            continue;
+        }
+        match characters.next()? {
+            '0' => decoded.push('~'),
+            '1' => decoded.push('/'),
+            _ => return None,
+        }
+    }
+    Some(decoded)
+}
+
+fn encode_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
 }
 
 pub(crate) fn resolve(

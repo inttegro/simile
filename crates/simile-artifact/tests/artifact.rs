@@ -424,6 +424,7 @@ fn example_service() -> CompiledService {
             response_status: Some(201),
             error_sets: Vec::new(),
             outcomes: Vec::new(),
+            state_projections: Vec::new(),
         }),
         outcomes: Vec::new(),
     };
