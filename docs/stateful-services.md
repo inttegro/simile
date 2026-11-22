@@ -6,15 +6,16 @@ description: Let ordinary resource operations compose into durable create, read,
 Many API contracts already contain enough public structure to describe ordinary resource state.
 When a service declares one database, Simile can connect an identifiable successful response to
 later reads and deletes. Providers author HCL only where public structure leaves more than one
-reasonable interpretation.
+reasonable interpretation. Besides conventional GET routes, Simile recognizes POST routes ending
+in `/lookup` or `/page`, which are common in RPC-shaped HTTP APIs.
 
 ```mermaid
 flowchart LR
   Write[POST, PUT, or PATCH] --> Response[Successful entity response]
   Response --> Infer[Conservative entity inference]
   Infer --> Commit[(db.put in operation checkpoint)]
-  Commit --> Read[GET by identity]
-  Commit --> List[GET collection]
+  Commit --> Read[GET by identity or POST /lookup]
+  Commit --> List[GET collection or POST /page]
   Commit --> Delete[DELETE by identity]
 ```
 
@@ -69,6 +70,12 @@ The later item GET reads that identity, the collection GET queries all products,
 the selected identity. State lives in the service's redb checkpoint under `$SIMILE_HOME`, so a
 registered service can continue after restart.
 
+For a POST `/lookup`, Simile reads an `id` or resource-shaped `*_id` scalar from the validated JSON
+object. For POST `/page`, it projects stored entities into a contract-valid collection response and
+repairs declared `size`, `count`, `total`, and `has_more` page metadata. It does not interpret
+arbitrary POST operations as reads. An ambiguous identity or incompatible response projection
+leaves the operation's ordinary authored or contract-derived outcome in control.
+
 ## Understand the inference threshold
 
 Simile adds the default write only when all of these facts are clear:
@@ -80,9 +87,13 @@ Simile adds the default write only when all of these facts are clear:
 5. no provider-authored effect already owns the operation.
 
 The collection comes from the semantic route segment. `/v1/products/create` becomes `products`;
-route scaffolding such as version, `create`, `update`, and `delete` is ignored. Reads accept the
-response shapes that the contract proves: a direct entity, a singular or collection wrapper, an
-array, `{ "data": [...] }`, or a collection wrapper.
+version and mutation scaffolding such as `create`, `update`, and `delete` is ignored. Simile also
+requires the resulting resource name to match the successful response entity. This structural
+check prevents a POST action from becoming a write merely because of its method or vocabulary.
+Reads accept only response shapes that the contract proves, including a direct entity, a singular
+or collection wrapper, an array, `{ "data": [...] }`, and page wrappers whose collection and
+metadata remain schema-valid after stored values are inserted. A possible state read whose stored
+value cannot satisfy the declared response falls through to the operation's ordinary outcome.
 
 ## Take control with an effect
 

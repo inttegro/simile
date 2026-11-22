@@ -7,6 +7,7 @@ use simile_spec::{EffectActionKind, EffectOrigin, EffectValue};
 fn infers_one_conservative_database_write_for_a_created_entity() {
     let service = compile(
         "/v1/products/create",
+        "createProduct",
         r#"
                 type: object
                 required: [product]
@@ -38,13 +39,43 @@ fn infers_one_conservative_database_write_for_a_created_entity() {
 fn does_not_guess_when_databases_or_entities_are_ambiguous() {
     let service = compile(
         "/things",
+        "createThing",
         "                type: object\n                properties:\n                  ok: { type: boolean }",
         "backend \"db\" \"east\" {}\nbackend \"db\" \"west\" {}",
     );
     assert!(service.effects.is_empty());
 }
 
-fn compile(path: &str, response_schema: &str, behavior: &str) -> simile_spec::CompiledService {
+#[test]
+fn requires_the_route_resource_to_match_the_response_entity() {
+    for (path, operation_id) in [
+        ("/widgets/lookup", "lookupWidget"),
+        ("/widgets/page", "pageWidgets"),
+        ("/widgets/preview", "previewWidget"),
+        ("/widgets/metrics", "measureWidget"),
+    ] {
+        let service = compile(
+            path,
+            operation_id,
+            r#"
+                type: object
+                required: [widget]
+                properties:
+                  widget:
+                    $ref: '#/components/schemas/Widget'
+"#,
+            "backend \"db\" \"primary\" {}",
+        );
+        assert!(service.effects.is_empty(), "{operation_id} became a write");
+    }
+}
+
+fn compile(
+    path: &str,
+    operation_id: &str,
+    response_schema: &str,
+    behavior: &str,
+) -> simile_spec::CompiledService {
     let openapi = format!(
         r#"
 openapi: 3.1.2
@@ -52,7 +83,7 @@ info: {{ title: Products, version: 1.0.0 }}
 paths:
   {path}:
     post:
-      operationId: createProduct
+      operationId: {operation_id}
       responses:
         "201":
           description: Created
@@ -63,6 +94,11 @@ paths:
 components:
   schemas:
     Product:
+      type: object
+      required: [id]
+      properties:
+        id: {{ type: string }}
+    Widget:
       type: object
       required: [id]
       properties:

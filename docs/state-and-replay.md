@@ -38,9 +38,10 @@ the registry entry and this durable state, but refuses while another process own
 
 When the public contract proves one database, one entity, and one stable identity, Simile infers
 ordinary create, read, list, and delete behavior. `POST`, `PUT`, and `PATCH` can commit the successful
-response entity; addressed `GET` can retrieve it; collection `GET` can list it; and addressed
-`DELETE` can remove it. Ambiguous projections, custom lookup keys, multi-entity results, and
-provider-specific transitions remain provider-authored.
+response entity; addressed `GET` and POST `/lookup` can retrieve it; collection `GET` and POST
+`/page` can list it; and addressed `DELETE` can remove it. Ambiguous projections, composite or
+custom lookup keys, multi-entity results, and provider-specific transitions remain
+provider-authored.
 
 ## Exact reproductions
 

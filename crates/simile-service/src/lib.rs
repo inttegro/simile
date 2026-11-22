@@ -170,7 +170,20 @@ impl Service {
             .map(|name| self.profile(name))
             .transpose()?
             .flatten();
-        let state = state::resolve(self, call.operation, options.parameters)?;
+        // Why: POST-based public lookup/page routes carry their selector in JSON rather than in
+        // path parameters, so state resolution needs the request value before runtime synthesis.
+        let request_body = call
+            .content_type
+            .filter(|content_type| {
+                *content_type == "application/json" || content_type.ends_with("+json")
+            })
+            .and_then(|_| serde_json::from_slice(call.body).ok());
+        let state = state::resolve(
+            self,
+            call.operation,
+            options.parameters,
+            request_body.as_ref(),
+        )?;
         let response_body = match &state {
             state::StateResolution::Found(value) => Some(value),
             state::StateResolution::None | state::StateResolution::Missing => options.response_body,
@@ -207,7 +220,7 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let state = state::resolve(self, call.operation, options.parameters)?;
+        let state = state::resolve(self, call.operation, options.parameters, call.body)?;
         let response_body = match &state {
             state::StateResolution::Found(value) => Some(value),
             state::StateResolution::None | state::StateResolution::Missing => options.response_body,

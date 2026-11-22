@@ -160,19 +160,15 @@ fn collection_name(path: &str, fallback: &str) -> Option<String> {
         .filter(|segment| !is_route_scaffolding(segment))
         .next_back()
         .unwrap_or(fallback);
-    let normalized = candidate
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_owned();
-    (!normalized.is_empty()).then_some(normalized)
+    let collection = normalize_route_segment(candidate);
+    let entity = normalize_type_name(fallback);
+    // Why: POST is not proof of a write in an RPC-shaped API. The route must also name the
+    // successful response entity, which prevents arbitrary provider action names from becoming
+    // inferred persistence rules.
+    (!collection.is_empty()
+        && !entity.is_empty()
+        && (collection == entity || singular(&collection) == entity))
+        .then_some(collection)
 }
 
 fn is_route_scaffolding(segment: &str) -> bool {
@@ -192,6 +188,50 @@ fn is_route_scaffolding(segment: &str) -> bool {
     ) || segment
         .strip_prefix('v')
         .is_some_and(|version| !version.is_empty() && version.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn normalize_route_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_owned()
+}
+
+fn normalize_type_name(value: &str) -> String {
+    let mut normalized = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if character.is_ascii_alphanumeric() {
+            if character.is_ascii_uppercase()
+                && index > 0
+                && normalized
+                    .chars()
+                    .next_back()
+                    .is_some_and(|last| last != '_')
+            {
+                normalized.push('_');
+            }
+            normalized.push(character.to_ascii_lowercase());
+        } else if !normalized.ends_with('_') {
+            normalized.push('_');
+        }
+    }
+    normalized.trim_matches('_').to_owned()
+}
+
+fn singular(collection: &str) -> String {
+    collection
+        .strip_suffix("ies")
+        .map(|stem| format!("{stem}y"))
+        .or_else(|| collection.strip_suffix('s').map(str::to_owned))
+        .unwrap_or_else(|| collection.to_owned())
 }
 
 fn escape_pointer(value: &str) -> String {

@@ -88,10 +88,11 @@ parameter styles remain audit errors, and media types without a codec fail expli
 ### Stateful behavior
 
 The service supervisor infers ordinary create, read, list, and delete behavior only when the
-contract identifies one database, one entity, and one stable identity. Ambiguous projections,
-multi-entity responses, custom lookup keys, and provider-specific transitions still require an
-authored effect. Operation-response replay remains process-local, while Stack state and deferred
-work survive restarts.
+contract identifies one database, one entity, and one stable identity. Reads may use conventional
+GET routes or unambiguous POST `/lookup` and `/page` JSON routes. Ambiguous projections,
+multi-entity responses, composite or custom lookup keys, and provider-specific transitions still
+require provider-authored behavior. Operation-response replay remains process-local, while Stack
+state and deferred work survive restarts.
 
 ### Effect execution
 

@@ -1603,6 +1603,7 @@ dependencies = [
  "simile-compiler",
  "simile-heuristics",
  "simile-runtime",
+ "simile-schema",
  "simile-spec",
  "simile-stack",
  "thiserror",

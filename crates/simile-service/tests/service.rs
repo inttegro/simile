@@ -1,7 +1,7 @@
 use simile_artifact::{decode, encode};
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_heuristics::Policy;
-use simile_runtime::{ExecutionOptions, OperationCall, ReplayIdentity};
+use simile_runtime::{ExecutionOptions, OperationCall, OperationValueCall, ReplayIdentity};
 use simile_runtime::{IncomingParameters, validate_parameters};
 use simile_service::{DependencyReadiness, Service};
 use simile_stack::{
@@ -343,6 +343,190 @@ components:
         )
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(missing.response().status(), 404);
+}
+
+#[test]
+fn inferred_entities_survive_post_lookup_and_page_routes() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Products, version: 1.0.0 }
+paths:
+  /products/create:
+    post:
+      operationId: createProduct
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [product]
+                properties:
+                  product: { $ref: '#/components/schemas/Product' }
+  /products/lookup:
+    post:
+      operationId: lookupProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string }
+      responses:
+        "200":
+          description: found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [product]
+                properties:
+                  product: { $ref: '#/components/schemas/Product' }
+        "404": { description: missing }
+  /products/page:
+    post:
+      operationId: pageProducts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                page_number: { type: integer, minimum: 1, default: 1 }
+      responses:
+        "200":
+          description: listed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [page]
+                properties:
+                  page:
+                    type: object
+                    required: [number, size, products]
+                    properties:
+                      number: { type: integer, minimum: 1 }
+                      size: { type: integer, minimum: 0 }
+                      products:
+                        type: array
+                        items: { $ref: '#/components/schemas/Product' }
+components:
+  schemas:
+    Product:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, pattern: '^prod_' }
+        name: { type: string }
+"#,
+        r#"
+backend "db" "primary" {}
+
+effect "persist_product" {
+  operations = ["createProduct"]
+
+  action "db.primary" "put" {
+    collection = "products"
+    key        = response.product.id
+    value      = response.product
+  }
+}
+"#,
+    );
+
+    let created = service
+        .execute(OperationCall {
+            operation: "POST /products/create",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    let product = created
+        .response()
+        .value()
+        .and_then(|body| body.get("product"))
+        .cloned()
+        .unwrap_or_else(|| panic!("expected product"));
+    let id = product
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("expected product id"));
+
+    let lookup_body = serde_json::json!({"product_id": id});
+    let found = service
+        .execute_value(OperationValueCall {
+            operation: "POST /products/lookup",
+            content_type: Some("application/json"),
+            body: Some(&lookup_body),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        found.response().value(),
+        Some(&serde_json::json!({"product": product}))
+    );
+
+    let page_body = serde_json::json!({"page_number": 1});
+    let listed = service
+        .execute_value(OperationValueCall {
+            operation: "POST /products/page",
+            content_type: Some("application/json"),
+            body: Some(&page_body),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        listed.response().value(),
+        Some(&serde_json::json!({
+            "page": {"number": 1, "size": 1, "products": [product]}
+        }))
+    );
+}
+
+#[test]
+fn get_actions_fall_through_when_state_cannot_represent_the_response() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Widgets, version: 1.0.0 }
+paths:
+  /widgets/export:
+    get:
+      operationId: exportWidgets
+      responses:
+        "200":
+          description: export ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [download_url]
+                properties:
+                  download_url: { type: string, format: uri }
+"#,
+        "backend \"db\" \"primary\" {}",
+    );
+
+    let exported = service
+        .execute(OperationCall {
+            operation: "GET /widgets/export",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(exported.response().status(), 200);
+    assert!(
+        exported
+            .response()
+            .value()
+            .and_then(|body| body.get("download_url"))
+            .is_some()
+    );
 }
 
 fn product_parameters(
