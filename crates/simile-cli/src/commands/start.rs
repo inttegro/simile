@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::cli::{OutputFormat, StartArgs};
 use crate::commands::Status;
+use crate::commands::automatic_reporting::AutomaticReporter;
 use crate::error::{Error, Result};
 use crate::terminal::Terminal;
 
@@ -27,16 +28,25 @@ pub fn execute(arguments: StartArgs, ctx: &Context, terminal: &Terminal) -> Resu
         .enable_all()
         .build()
         .map_err(Error::AsyncRuntime)?;
-    runtime.block_on(run(prepared, scenario, fault_profile, state_path, terminal))
+    runtime.block_on(run(
+        ctx.clone(),
+        prepared,
+        scenario,
+        fault_profile,
+        state_path,
+        terminal,
+    ))
 }
 
 async fn run(
+    ctx: Context,
     mut prepared: ops::PreparedService,
     scenario: Option<String>,
     fault_profile: Option<String>,
     state_path: PathBuf,
     terminal: &Terminal,
 ) -> Result<Status> {
+    let reporting = AutomaticReporter::start(ctx, &prepared);
     let server = simile_server::Server::bind_durable_with_options(
         prepared.report.listen,
         prepared.artifact,
@@ -44,6 +54,7 @@ async fn run(
         simile_server::ServerOptions {
             scenario,
             fault_profile: fault_profile.clone(),
+            incident_sender: reporting.sender(),
         },
     )
     .await?;
@@ -51,7 +62,9 @@ async fn run(
     prepared.report.active_fault_profile = fault_profile;
     prepared.report.fault_seed = server.fault_seed();
     render(&prepared.report, terminal)?;
-    server.run().await?;
+    let result = server.run().await;
+    reporting.finish().await;
+    result?;
     Ok(Status::Success)
 }
 

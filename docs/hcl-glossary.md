@@ -235,6 +235,23 @@ stronger guarantee beyond isolated schema validity.
 An idempotency key or stable GET resource identity used to return the same completed result within
 one running service process. Durable backend state has a separate lifecycle.
 
+### Report
+
+A local record of one verified emulator issue. It contains technical metadata, a verification
+fingerprint, and a self-contained reproduction case. Reporter contact travels separately during
+submission.
+
+### Reporting destination
+
+The HTTPS receiver published by `service.reporting.endpoint`. The declaration exposes a provider
+capability. Permission to send remains with the user and is stored per profile or granted for one
+manual submission.
+
+### Reporting preference
+
+Profile-scoped user consent for automatic issue reporting, together with a private contact address
+and the exact destination shown when consent was granted.
+
 ### Reorder window
 
 The maximum scheduled-time separation within which two independent webhook deliveries are

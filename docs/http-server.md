@@ -85,6 +85,12 @@ Each completed exchange emits a concise access line containing method, path, sta
 user agent, request and response sizes, request and response media types, and elapsed time. The
 listener supports graceful Ctrl-C shutdown.
 
+When the runtime returns an internal emulator failure, the adapter can emit a sanitized incident to
+a bounded reporting channel. It removes recognized secrets from body and parameter fields and
+skips opaque bodies. The application reporting worker owns consent lookup, reproduction, storage,
+upgrade preflight, deduplication, and submission. This keeps report-network activity outside the
+request path and leaves the HTTP server unaware of contacts or provider policy.
+
 The server does not own source resolution, registry paths, terminal rendering, or process policy.
 Those belong to the [application layer](/application-registry). The request itself is coordinated
 by [operation execution](/operation-execution).

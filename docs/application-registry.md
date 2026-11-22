@@ -65,6 +65,16 @@ The same application layer powers `simile run`. It resolves a specification or a
 operation by method/path or `operationId`, optionally synthesizes a request, invokes the runtime,
 and returns a structured report. Terminal color, verbosity, and pretty-printing stay in the CLI.
 
+## Reporting records
+
+Reporting is another application operation. `simile-core` resolves profile consent, verifies an
+incident case against its exact artifact, records it under `~/.simile/reports`, checks for available
+upgrades, and submits it to the destination captured with consent. The HTTP adapter supplies only a
+sanitized candidate incident.
+
+One-off reports use the same verifier and store. An explicit `--contact` authorizes that submission
+without enabling future automatic reports. See [Report emulator issues](/issue-reporting).
+
 ## Ownership boundary
 
 Core may coordinate source loading, compilation, registry transactions, and listener preparation.

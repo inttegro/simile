@@ -16,7 +16,7 @@ pub use ast::{
     FaultDeclaration, FaultProfileDeclaration, FaultUseDeclaration, ListenDeclaration, Module,
     OutcomeDeclaration, PrincipalCredentialDeclaration, PrincipalDeclaration,
     PrincipalSetupDeclaration, ProfileCredentialDeclaration, ProfileDeclaration,
-    ProtocolErrorDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
+    ProtocolErrorDeclaration, ReportingDeclaration, ScenarioDeclaration, ScenarioFaultDeclaration,
     ScenarioSelectionDeclaration, ServiceDeclaration, ServiceDocument, SetupCollectDeclaration,
     SetupIssueDeclaration, Source, SourceDeclaration, WebhookDeclaration,
     WebhookEmissionDeclaration, WebhookPolicyDeclaration,

@@ -24,6 +24,10 @@ service "inttegro" {
     path = "./commerce.yml"
   }
 
+  reporting {
+    endpoint = "https://reports.example.com/v1/reports"
+  }
+
   behaviors = [
     "./orders.hcl",
     "./payments.hcl",
@@ -130,6 +134,23 @@ Dedicated references cover [dependencies and effects](/dependencies-and-effects)
 [durable work](/durable-work), [fault injection](/fault-injection), and
 [Simile Stack](/simile-stack).
 
+## Reporting
+
+`reporting.endpoint` publishes where users may send reproducible emulator issues:
+
+```hcl
+reporting {
+  endpoint = "https://reports.example.com/v1/reports"
+}
+```
+
+The declaration does not grant permission to send. During `simile setup`, each user can enable
+automatic reporting for the new profile and provide a contact address. One-off reports remain
+available to users who leave automatic reporting off.
+
+Production destinations require HTTPS. Loopback HTTP is accepted for receiver development. Read
+[Report emulator issues](/issue-reporting) for consent, verification, and submission behavior.
+
 ## Webhooks
 
 A singular `webhook` block supplements webhook contracts absent from OpenAPI. `effect.emit` connects
@@ -220,6 +241,10 @@ or tests.
 │       ├── manifest.json
 │       └── service.similec
 ├── profiles/NAME/PROFILE.env
+├── reporting/NAME/PROFILE.json
+├── reports/REPORT_ID/
+│   ├── report.json
+│   └── case.simile-repro/
 ├── state/
 │   ├── services/NAME.redb
 │   └── stack/KIND/RESOURCE_FINGERPRINT.redb
@@ -237,6 +262,9 @@ refreshes; `register --force` explicitly replaces an existing registration. Runt
 live outside immutable revisions under `state/`, allowing restarts and updates to resume persisted
 work. Simile verifies persisted service state against the compiled artifact before restoration.
 `locks/` supports registry coordination, and `tmp/` holds staging data during atomic installation.
+
+Reporting preferences contain user-owned consent and contact information, so they use private file
+permissions. Reports retain their verified reproduction cases for local review and resubmission.
 
 For the runtime path from configuration to listener, continue with [HTTP server](/http-server).
 Current protocol and fidelity limits are tracked in [Current boundaries](/current-boundaries).

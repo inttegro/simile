@@ -44,7 +44,19 @@ pub struct ServiceReport {
 pub struct PreparedService {
     pub report: ServiceReport,
     pub artifact: Artifact,
+    pub reporting_endpoint: Option<String>,
     pub(crate) artifact_bytes: Vec<u8>,
+}
+
+impl PreparedService {
+    /// Return the exact compiled artifact used by this service.
+    ///
+    /// Automatic reports retain these bytes so a failure can be reproduced against the same
+    /// runtime authority, even after the registered service is updated.
+    #[must_use]
+    pub fn artifact_bytes(&self) -> &[u8] {
+        &self.artifact_bytes
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +97,14 @@ pub(crate) fn prepare_loaded_service(
 ) -> Result<PreparedConfiguration> {
     let document =
         simile_hcl::parse_service(simile_hcl::Source::new(&config.name, &config.contents))?;
+    let reporting_endpoint = document
+        .service
+        .reporting
+        .as_ref()
+        .map(|reporting| reporting.endpoint.clone());
+    if let Some(endpoint) = reporting_endpoint.as_deref() {
+        crate::reporting::validate_endpoint(endpoint)?;
+    }
     crate::registry::validate_service_name(&document.service.name)?;
     if let Some(requested_service) = requested_service {
         verify_service_name(requested_service, &document)?;
@@ -183,6 +203,7 @@ pub(crate) fn prepare_loaded_service(
         service: PreparedService {
             report,
             artifact,
+            reporting_endpoint,
             artifact_bytes: encoded,
         },
         openapi_source,
@@ -196,6 +217,17 @@ fn prepare_registered_service(
     port: Option<u16>,
 ) -> Result<PreparedService> {
     let registered = Registry::new(ctx.simile_home()?).load(service)?;
+    let document = simile_hcl::parse_service(simile_hcl::Source::new(
+        &registered.manifest.name,
+        &registered.config_contents,
+    ))?;
+    let reporting_endpoint = document
+        .service
+        .reporting
+        .map(|reporting| reporting.endpoint);
+    if let Some(endpoint) = reporting_endpoint.as_deref() {
+        crate::reporting::validate_endpoint(endpoint)?;
+    }
     let summary = registered.artifact.summary();
     let listen = SocketAddr::new(
         host.unwrap_or(registered.manifest.listen.host),
@@ -217,6 +249,7 @@ fn prepare_registered_service(
     Ok(PreparedService {
         report,
         artifact: registered.artifact,
+        reporting_endpoint,
         artifact_bytes: registered.artifact_bytes,
     })
 }

@@ -348,6 +348,83 @@ pub enum Error {
 }
 
 impl Error {
+    /// Stable diagnostic identity used by logs, reproduction bundles, and verified reports.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::UnknownOperation { .. } => "unknown_operation",
+            Self::UnknownOutcome { .. } => "unknown_outcome",
+            Self::UnknownScenario { .. } => "unknown_scenario",
+            Self::UnknownFaultProfile { .. } => "unknown_fault_profile",
+            Self::UnknownFault { .. } => "unknown_fault",
+            Self::FaultStateUnavailable => "fault_state_unavailable",
+            Self::EffectAsyncMissing { .. } => "effect_async_missing",
+            Self::EffectWebhookMissing { .. } => "effect_webhook_missing",
+            Self::EffectWebhookMediaTypeMissing { .. } => "effect_webhook_media_type_missing",
+            Self::InvalidWebhookTarget => "invalid_webhook_target",
+            Self::UnsupportedCallbackExpression { .. } => "unsupported_callback_expression",
+            Self::CallbackTargetMissing { .. } => "callback_target_missing",
+            Self::InvalidWebhookBody { .. } => "invalid_webhook_body",
+            Self::EffectProjectionMissing { .. } => "effect_projection_missing",
+            Self::BodyNotDeclared { .. } => "body_not_declared",
+            Self::BodyRequired { .. } => "body_required",
+            Self::MissingContentType { .. } => "missing_content_type",
+            Self::UnsupportedMediaType { .. } => "unsupported_media_type",
+            Self::UnsupportedEncoding { .. } => "unsupported_encoding",
+            Self::MalformedBody { .. } => "malformed_body",
+            Self::NoSynthesisMediaType { .. } => "no_synthesis_media_type",
+            Self::ResponseNotDeclared { .. } => "response_not_declared",
+            Self::ResponseBodyNotDeclared { .. } => "response_body_not_declared",
+            Self::EmptyReplayIdentity => "empty_replay_identity",
+            Self::ResourceReplayRequiresGet { .. } => "resource_replay_requires_get",
+            Self::IdempotencyConflict { .. } => "idempotency_conflict",
+            Self::ReplayStateUnavailable => "replay_state_unavailable",
+            Self::NoResponseStatus { .. } => "no_response_status",
+            Self::RequestContextMismatch { .. } => "request_context_mismatch",
+            Self::NoResponseMediaType { .. } => "no_response_media_type",
+            Self::UnsupportedResponseMediaType { .. } => "unsupported_response_media_type",
+            Self::UnsupportedResponseEncoding { .. } => "unsupported_response_encoding",
+            Self::Synthesis { .. } => "request_synthesis_failed",
+            Self::ResponseSynthesis { .. } => "response_synthesis_failed",
+            Self::ResponseHeaderSynthesis { .. } => "response_header_synthesis_failed",
+            Self::InvalidResponseHeader { .. } => "invalid_response_header",
+            Self::EncodeResponseHeader { .. } => "encode_response_header_failed",
+            Self::EncodeJson { .. } => "encode_json_failed",
+            Self::EncodeBody { .. } => "encode_request_body_failed",
+            Self::EncodeResponseBody { .. } => "encode_response_body_failed",
+            Self::MalformedJson { .. } => "malformed_json",
+            Self::InvalidBody { .. } => "invalid_body",
+            Self::InvalidParameters { .. } => "invalid_parameters",
+            Self::InvalidResponseBody { .. } => "invalid_response_body",
+            Self::AuthenticationRequired { .. } => "authentication_required",
+            Self::PermissionDenied { .. } => "permission_denied",
+            Self::AuthenticationConfiguration { .. } => "authentication_configuration",
+        }
+    }
+
+    /// Whether an execution failure represents an emulator or contract problem worth verifying.
+    /// Caller mistakes remain ordinary emulated responses and never enter automatic reporting.
+    #[must_use]
+    pub const fn is_reportable(&self) -> bool {
+        !matches!(
+            self,
+            Self::BodyNotDeclared { .. }
+                | Self::BodyRequired { .. }
+                | Self::MissingContentType { .. }
+                | Self::UnsupportedMediaType { .. }
+                | Self::UnsupportedEncoding { .. }
+                | Self::MalformedBody { .. }
+                | Self::EmptyReplayIdentity
+                | Self::ResourceReplayRequiresGet { .. }
+                | Self::IdempotencyConflict { .. }
+                | Self::MalformedJson { .. }
+                | Self::InvalidBody { .. }
+                | Self::InvalidParameters { .. }
+                | Self::AuthenticationRequired { .. }
+                | Self::PermissionDenied { .. }
+        )
+    }
+
     #[must_use]
     pub fn issues(&self) -> &[ValidationIssue] {
         match self {

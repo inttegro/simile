@@ -142,6 +142,20 @@ service "orders" {
 The service label becomes the CLI name. Relative paths resolve from the configuration file's
 directory. Keep the listener on loopback unless another machine must reach it.
 
+If the provider accepts verified emulator issue reports, declare its receiver in the same service
+block:
+
+```hcl
+reporting {
+  endpoint = "https://reports.example.com/v1/reports"
+}
+```
+
+This only tells Simile where reports may go. During `simile setup`, each user decides whether a
+profile may report automatically and supplies their own contact address. The Simfile cannot grant
+that consent. See [Issue reporting](/issue-reporting) for the user flow and
+[Build a reporting endpoint](/reporting-endpoint) for the receiver protocol.
+
 For Smithy or TypeScript, replace the `openapi` block with one `smithy` or `typescript` block. The
 [Configuration reference](/service-configuration) covers local paths, URLs, listener precedence,
 and remote configurations.

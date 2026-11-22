@@ -295,6 +295,16 @@ pub struct ServiceDeclaration {
     pub listen: ListenDeclaration,
     pub contract: ContractDeclaration,
     pub behaviors: Vec<String>,
+    pub reporting: Option<ReportingDeclaration>,
+}
+
+/// A provider-selected destination that can accept verified emulator reports.
+///
+/// The declaration names a destination only. Consent and reporter contact details remain local,
+/// user-owned profile settings and never compile into the service artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportingDeclaration {
+    pub endpoint: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

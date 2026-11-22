@@ -2,8 +2,8 @@ use hcl::expr::Expression;
 use hcl::{Attribute, Block, Body, Structure};
 
 use crate::ast::{
-    ContractDeclaration, ListenDeclaration, Module, ServiceDeclaration, ServiceDocument, Source,
-    SourceDeclaration,
+    ContractDeclaration, ListenDeclaration, Module, ReportingDeclaration, ServiceDeclaration,
+    ServiceDocument, Source, SourceDeclaration,
 };
 use crate::parse::{
     apply_error_set, async_operation, attribute, backend, behavior, effect, error_set, fault,
@@ -145,11 +145,19 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         .unwrap_or_default();
     let listen = one_nested(block.body(), source, "service", "listen", parse_listen)?;
     let contract = contract_nested(block.body(), source)?;
+    let reporting = optional_nested(
+        block.body(),
+        source,
+        "service",
+        "reporting",
+        parse_reporting,
+    )?;
     for nested in block.body().blocks() {
         if nested.identifier() != "listen"
             && nested.identifier() != "openapi"
             && nested.identifier() != "smithy"
             && nested.identifier() != "typescript"
+            && nested.identifier() != "reporting"
         {
             return Err(Error::UnknownNestedBlock {
                 file: source.to_owned(),
@@ -165,7 +173,29 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         listen,
         contract,
         behaviors,
+        reporting,
     })
+}
+
+fn optional_nested<T>(
+    body: &Body,
+    source: &str,
+    parent: &str,
+    name: &'static str,
+    parse: impl FnOnce(&Block, &str) -> Result<T>,
+) -> Result<Option<T>> {
+    let mut blocks = body.blocks().filter(|block| block.identifier() == name);
+    let Some(block) = blocks.next() else {
+        return Ok(None);
+    };
+    if blocks.next().is_some() {
+        return Err(Error::DuplicateNestedBlock {
+            file: source.to_owned(),
+            block: parent.to_owned(),
+            nested: name,
+        });
+    }
+    parse(block, source).map(Some)
 }
 
 fn one_nested<T>(
@@ -220,6 +250,20 @@ fn parse_listen(block: &Block, source: &str) -> Result<ListenDeclaration> {
     })?;
 
     Ok(ListenDeclaration { host, port })
+}
+
+fn parse_reporting(block: &Block, source: &str) -> Result<ReportingDeclaration> {
+    labels(block, source, 0)?;
+    reject_blocks(block.body(), source, "reporting")?;
+    reject_attributes(block.body(), source, "reporting", &["endpoint"])?;
+    let endpoint = attribute(block.body(), "endpoint")
+        .ok_or_else(|| Error::MissingAttribute {
+            file: source.to_owned(),
+            block: "reporting".to_owned(),
+            attribute: "endpoint",
+        })
+        .and_then(|value| string(value, source, "reporting", "endpoint"))?;
+    Ok(ReportingDeclaration { endpoint })
 }
 
 fn contract_nested(body: &Body, source: &str) -> Result<ContractDeclaration> {
@@ -314,6 +358,10 @@ service "inttegro" {
     path = "./commerce.yml"
   }
 
+  reporting {
+    endpoint = "https://reports.inttegro.dev/v1/reports"
+  }
+
   behaviors = ["./orders.hcl"]
 }
 
@@ -363,6 +411,12 @@ webhooks {
             ContractDeclaration::OpenApi(SourceDeclaration::Path("./commerce.yml".to_owned()))
         );
         assert_eq!(document.service.behaviors, ["./orders.hcl"]);
+        assert_eq!(
+            document.service.reporting,
+            Some(ReportingDeclaration {
+                endpoint: "https://reports.inttegro.dev/v1/reports".to_owned(),
+            })
+        );
         assert_eq!(document.inline_behavior.backends.len(), 1);
         assert_eq!(document.inline_behavior.async_operations.len(), 1);
         assert_eq!(document.inline_behavior.behaviors.len(), 1);
@@ -475,5 +529,22 @@ service "demo" {
 "#,
         ));
         assert!(matches!(multiple, Err(Error::DuplicateNestedBlock { .. })));
+    }
+
+    #[test]
+    fn rejects_ambiguous_reporting_destinations() {
+        let result = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  openapi { path = "./openapi.yml" }
+  reporting { endpoint = "https://reports.example.test/v1/reports" }
+  reporting { endpoint = "https://another.example.test/v1/reports" }
+}
+"#,
+        ));
+
+        assert!(matches!(result, Err(Error::DuplicateNestedBlock { .. })));
     }
 }

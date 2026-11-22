@@ -151,6 +151,10 @@ service "NAME" {
     port = PORT
   }
 
+  reporting {
+    endpoint = "HTTPS_URL"
+  }
+
   openapi {
     path = "PATH"
   }
@@ -165,6 +169,7 @@ The block is the composition root for a runnable service.
 | `description` | no | non-empty string | — | Public human-readable service description retained for `simile describe`. |
 | `behaviors` | no | array of strings | `[]` | Local behavior-module paths, resolved relative to the configuration file. |
 | `listen` | yes | one block | — | Listener configuration. |
+| `reporting` | no | one block | — | Provider report-receiver destination. User consent is configured separately per profile. |
 | `openapi`, `smithy`, or `typescript` | yes | exactly one of these blocks | — | Public HTTP contract source. |
 
 Exactly one `service` block, one `listen` block, and one contract block are required.
@@ -185,6 +190,26 @@ listen {
 
 The CLI `simile start ... --port PORT` overrides `listen.port` for that invocation without changing
 the configuration.
+
+### `reporting`
+
+```hcl
+reporting {
+  endpoint = "https://reports.example.com/v1/reports"
+}
+```
+
+| Attribute | Required | Type | Constraint |
+| --- | --- | --- | --- |
+| `endpoint` | yes | non-empty string | Absolute HTTPS URL with a non-root path and no query or trailing slash. Loopback HTTP is accepted for local receiver development. |
+
+The endpoint declares provider capability. It grants no permission to submit. `simile setup` and
+`simile reporting` store user-owned automatic-reporting consent and contact information outside the
+service artifact. One-off reports require an explicit send action and contact address.
+
+Simile appends `/preflight` to this URL for version and service-definition checks. It sends the
+technical report, reproduction attachments, and reporter contact as separate multipart fields to
+the declared endpoint. See [Report emulator issues](/issue-reporting).
 
 ### `openapi`, `smithy`, and `typescript`
 

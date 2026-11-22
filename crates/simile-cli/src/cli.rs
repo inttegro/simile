@@ -39,6 +39,12 @@ pub enum ContractFormatChoice {
     TypeScript,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ReportingChoice {
+    Automatic,
+    Off,
+}
+
 impl From<ContractFormatChoice> for simile_core::ops::ContractFormat {
     fn from(value: ContractFormatChoice) -> Self {
         match value {
@@ -120,6 +126,12 @@ pub enum Command {
     Run(RunArgs),
     /// Re-run and verify a self-contained reproduction bundle.
     Replay(ReplayArgs),
+    /// Prepare, inspect, verify, or send one reproducible issue report.
+    Report(ReportArgs),
+    /// List prepared reports.
+    Reports(ReportsArgs),
+    /// Inspect or change automatic reporting consent for a service profile.
+    Reporting(ReportingArgs),
     /// Compile and register a service for later use.
     Register(RegisterArgs),
     /// Permanently remove a registered service and its local data.
@@ -287,6 +299,64 @@ pub struct RunArgs {
 pub struct ReplayArgs {
     /// Directory produced by `simile run --bundle`.
     pub bundle: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Registered service name when preparing a report, or an existing `rpt_…` identifier.
+    pub target: String,
+
+    /// Reproduction bundle that demonstrates a newly reported inconsistency.
+    #[arg(long, value_name = "DIR")]
+    pub bundle: Option<PathBuf>,
+
+    /// Profile whose consent and contact should accompany the report.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+
+    /// Short, concrete summary of the observed inconsistency.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+
+    /// Additional context about the expected behavior.
+    #[arg(long, value_name = "TEXT")]
+    pub description: Option<String>,
+
+    /// One-time contact email for clarification and resolution updates.
+    #[arg(long, value_name = "EMAIL", requires = "send")]
+    pub contact: Option<String>,
+
+    /// Submit the report after verification and upgrade preflight.
+    #[arg(long)]
+    pub send: bool,
+
+    /// Submit with the captured versions after showing available upgrades.
+    #[arg(long, requires = "send")]
+    pub send_current: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportsArgs {
+    /// Limit the list to one registered service.
+    pub service: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportingArgs {
+    /// Registered service name.
+    pub service: String,
+
+    /// Profile to configure. The current profile is used when omitted.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+
+    /// Enable automatic verified reports or turn reporting off.
+    #[arg(long, value_enum)]
+    pub mode: Option<ReportingChoice>,
+
+    /// Contact email for clarification and resolution updates.
+    #[arg(long, value_name = "EMAIL", requires = "mode")]
+    pub contact: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -461,6 +531,14 @@ pub struct SetupArgs {
     /// Select this profile as the default after setup.
     #[arg(long = "use")]
     pub select: bool,
+
+    /// Enable automatic verified reports or turn reporting off for the created profile.
+    #[arg(long, value_enum)]
+    pub reporting: Option<ReportingChoice>,
+
+    /// Contact email for clarification and resolution updates.
+    #[arg(long, value_name = "EMAIL", requires = "reporting")]
+    pub report_contact: Option<String>,
 }
 
 #[derive(Debug, Args)]

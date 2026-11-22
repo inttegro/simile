@@ -104,6 +104,10 @@
 							"reproduction-bundles",
 							"conformance-suites"
 						]
+					},
+					{
+						"group": "Report emulator issues",
+						"pages": ["issue-reporting", "reporting-endpoint"]
 					}
 				]
 			},

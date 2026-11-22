@@ -23,6 +23,7 @@ Inputs
 - Desired contract output: [CONTRACT_OUTPUT]
 - Desired service config path: [CONFIG_PATH, normally ./Simfile]
 - Desired listener: [HOST]:[PORT]
+- Issue-reporting endpoint, if the provider operates one: [HTTPS_URL_OR_NONE]
 - Intended users and primary workflows: [WORKFLOWS]
 
 Goal
@@ -198,6 +199,10 @@ service "[SERVICE_NAME]" {
   behaviors = [
     "./behaviors.hcl",
   ]
+
+  reporting {
+    endpoint = "[HTTPS_REPORTING_ENDPOINT]"
+  }
 }
 ```
 
@@ -207,12 +212,16 @@ Rules:
 - The service label matches the CLI service name.
 - The selected contract block uses exactly one of `path` or `url`.
 - Omit `behaviors` when no behavior module is justified.
+- Omit `reporting` when the provider does not operate a compatible receiver. The endpoint declares
+  a destination; it cannot enable reporting or provide the user's contact address.
 - Relative paths resolve from the local configuration directory.
 - A remote configuration uses a contract URL and inline behavior declarations.
 - A remote TypeScript contract is one self-contained declaration document; split TypeScript
   packages require a local path.
 - Default to `127.0.0.1` unless public binding is explicitly required.
 - Keep configuration concerned with composition, not endpoint definitions.
+- When reporting is declared, verify that the receiver supports Simile's preflight and multipart
+  submission protocol. Never place contact details, credentials, or consent in the Simfile.
 
 Required deliverables
 

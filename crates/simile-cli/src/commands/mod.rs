@@ -1,4 +1,5 @@
 mod audit;
+mod automatic_reporting;
 mod compile;
 mod conformance;
 mod describe;
@@ -10,6 +11,9 @@ mod proxy;
 mod register;
 mod remove;
 mod replay;
+mod report;
+mod reporting;
+mod reports;
 mod run;
 mod setup;
 mod start;
@@ -45,6 +49,9 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Proxy(arguments) => proxy::execute(arguments, ctx, terminal),
         Command::Register(arguments) => register::execute(arguments, ctx, terminal),
         Command::Replay(arguments) => replay::execute(arguments, terminal),
+        Command::Report(arguments) => report::execute(arguments, ctx, terminal),
+        Command::Reporting(arguments) => reporting::execute(arguments, ctx, terminal),
+        Command::Reports(arguments) => reports::execute(arguments, ctx, terminal),
         Command::Remove(arguments) => remove::execute(arguments, ctx, terminal),
         Command::Run(arguments) => run::execute(arguments, terminal),
         Command::Setup(arguments) => setup::execute(arguments, ctx, terminal),

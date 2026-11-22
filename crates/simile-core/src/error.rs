@@ -204,6 +204,81 @@ pub enum Error {
     #[error("conformance path `{path}` is not a reproduction bundle or suite directory")]
     ConformancePath { path: PathBuf },
 
+    #[error(
+        "invalid reporting endpoint `{endpoint}`; use HTTPS or a loopback HTTP address without a trailing slash"
+    )]
+    InvalidReportingEndpoint { endpoint: String },
+
+    #[error("report contact must be a valid email address")]
+    InvalidReportContact,
+
+    #[error("invalid report identifier `{report}`")]
+    InvalidReportId { report: String },
+
+    #[error("report `{report}` already exists")]
+    ReportAlreadyExists { report: String },
+
+    #[error("`{path}` is not a complete Simile reproduction bundle")]
+    InvalidReportReproduction { path: PathBuf },
+
+    #[error("could not {action} reporting path `{path}`: {source}")]
+    ReportingIo {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("could not decode reporting data `{path}`: {source}")]
+    ReportingJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("could not determine report time: {0}")]
+    ReportingTime(String),
+
+    #[error("service `{service}` does not declare a reporting endpoint")]
+    ReportingNotDeclared { service: String },
+
+    #[error(
+        "sending a report requires a contact email; pass --contact or enable automatic reporting for its profile"
+    )]
+    ReportContactRequired,
+
+    #[error("service `{service}` has no current profile; pass --profile or run simile setup first")]
+    ReportProfileRequired { service: String },
+
+    #[error("reproduction bundle `{bundle}` did not reproduce its recorded behavior")]
+    ReportDidNotReproduce { bundle: PathBuf },
+
+    #[error("report names service `{requested}`, but the reproduction belongs to `{reproduced}`")]
+    ReportServiceMismatch {
+        requested: String,
+        reproduced: String,
+    },
+
+    #[error("report preflight failed at `{endpoint}`: {source}")]
+    ReportPreflight {
+        endpoint: String,
+        #[source]
+        source: ureq::Error,
+    },
+
+    #[error("report submission failed at `{endpoint}`: {source}")]
+    ReportSubmission {
+        endpoint: String,
+        #[source]
+        source: ureq::Error,
+    },
+
+    #[error("report service returned an invalid response: {0}")]
+    ReportSubmissionResponse(String),
+
+    #[error("report payload is {bytes} bytes; the maximum is {limit} bytes")]
+    ReportTooLarge { bytes: usize, limit: usize },
+
     #[error("service `{service}` has no persisted state yet; start it before inspecting state")]
     StateNotFound { service: String },
 

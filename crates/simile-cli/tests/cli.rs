@@ -717,6 +717,91 @@ fn sets_up_and_selects_named_service_profiles_without_printing_secrets() {
 }
 
 #[test]
+fn keeps_reporting_consent_profile_owned_and_contact_private() {
+    let home = registry_home();
+    drop(fs::remove_dir_all(&home));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "register",
+            "payments",
+            "--config",
+            &fixture("reporting-service.hcl"),
+        ])
+        .assert()
+        .success();
+
+    let setup = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args([
+            "--output",
+            "json",
+            "setup",
+            "payments",
+            "--profile",
+            "ci",
+            "--set",
+            "name=CI integration",
+            "--reporting",
+            "automatic",
+            "--report-contact",
+            "developer@example.com",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let setup: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(setup["reporting"]["automatic"], true);
+    assert_eq!(setup["reporting"]["contact"], "d***@example.com");
+    assert!(!setup.to_string().contains("developer@example.com"));
+
+    let inspected = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["--output", "json", "reporting", "payments"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        inspected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspected.stderr)
+    );
+    let inspected: serde_json::Value =
+        serde_json::from_slice(&inspected.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(inspected[0]["profile"], "ci");
+    assert_eq!(inspected[0]["contact"], "d***@example.com");
+    assert_eq!(inspected[0]["endpoint"], "http://127.0.0.1:8787/v1/reports");
+    assert!(!inspected.to_string().contains("developer@example.com"));
+
+    let preference = home.join("reporting/payments/ci.json");
+    let metadata = fs::metadata(&preference).unwrap_or_else(|error| panic!("{error}"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+    assert!(
+        fs::read_to_string(&preference)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .contains("developer@example.com")
+    );
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["reporting", "payments", "--profile", "ci", "--mode", "off"])
+        .assert()
+        .success();
+    assert!(!preference.exists());
+
+    fs::remove_dir_all(home).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
 fn registers_a_service_from_a_remote_configuration() {
     let home = registry_home();
     drop(fs::remove_dir_all(&home));
@@ -929,7 +1014,7 @@ fn writes_and_inspects_a_compiled_artifact() {
                 "heuristics standard\n",
                 // Why: the CLI snapshot must expose the artifact envelope version so consumers
                 // can diagnose incompatible compiled action vocabularies.
-                "artifact {} · format 23 · [..] bytes\n",
+                "artifact {} · format 24 · [..] bytes\n",
                 "digest sha256:[..]\n"
             ),
             rendered_artifact_path
@@ -943,7 +1028,7 @@ fn writes_and_inspects_a_compiled_artifact() {
             "{\n",
             // Why: machine-readable inspection must report the same envelope version as the
             // human compile output so tooling cannot ignore state-projection runtime records.
-            "  \"formatVersion\": 23,\n",
+            "  \"formatVersion\": 24,\n",
             "  \"compilerVersion\": \"0.3.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",

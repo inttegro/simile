@@ -32,6 +32,7 @@ use simile_runtime::{
 use simile_service::Service;
 use thiserror::Error;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 
 const DEFAULT_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
@@ -87,10 +88,27 @@ pub enum Error {
     CommandServiceTask(#[source] tokio::task::JoinError),
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ServerOptions {
     pub scenario: Option<String>,
     pub fault_profile: Option<String>,
+    pub incident_sender: Option<mpsc::Sender<RuntimeIncident>>,
+}
+
+/// Sanitized evidence for one internal runtime failure that may become an automatic report.
+#[derive(Clone, Debug)]
+pub struct RuntimeIncident {
+    pub profile: Option<String>,
+    pub operation: String,
+    pub seed: u64,
+    pub content_type: Option<String>,
+    pub body: Vec<u8>,
+    pub parameters: IncomingParameters,
+    pub scenario: Option<String>,
+    pub fault_profile: Option<String>,
+    pub code: String,
+    pub message: String,
+    pub issues: Vec<serde_json::Value>,
 }
 
 pub struct Server {
@@ -107,6 +125,7 @@ struct ServerState {
     body_limit: usize,
     scenario: Option<String>,
     fault_profile: Option<String>,
+    incident_sender: Option<mpsc::Sender<RuntimeIncident>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -170,6 +189,7 @@ impl Server {
             ServerOptions {
                 scenario,
                 fault_profile: None,
+                incident_sender: None,
             },
         )
         .await
@@ -237,6 +257,7 @@ impl Server {
             body_limit: DEFAULT_BODY_LIMIT,
             scenario: options.scenario,
             fault_profile: options.fault_profile,
+            incident_sender: options.incident_sender,
         });
         let router = Router::new()
             .fallback(handle)
@@ -477,8 +498,8 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             return error_response(StatusCode::NOT_FOUND, "not_found", "route not found");
         }
     };
-    let parameters = incoming_parameters(&request, path_parameters);
-    let authentication = match state.service.authenticate(&operation, &parameters) {
+    let incoming = incoming_parameters(&request, path_parameters);
+    let authentication = match state.service.authenticate(&operation, &incoming) {
         Ok(authentication) => authentication,
         Err(simile_service::Error::Runtime(error)) => {
             return operation_error(
@@ -497,7 +518,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             );
         }
     };
-    let parameters = match validate_parameters(state.service.artifact(), &operation, &parameters) {
+    let parameters = match validate_parameters(state.service.artifact(), &operation, &incoming) {
         Ok(parameters) => parameters,
         Err(error) => {
             return operation_error(
@@ -533,6 +554,8 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         .or_else(|| {
             (method == Method::GET).then_some(ReplayIdentity::Resource(&resource_identity))
         });
+    let response_seed = rand::random::<u64>();
+    let profile = authentication.profile().map(str::to_owned);
     let outcome = state.service.execute_for_profile_with_options(
         OperationCall {
             operation: &operation,
@@ -544,18 +567,31 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             replay,
             scenario: state.scenario.as_deref(),
             fault_profile: state.fault_profile.as_deref(),
+            response_seed: Some(response_seed),
             ..ExecutionOptions::default()
         },
-        authentication.profile(),
+        profile.as_deref(),
     );
     match outcome {
         Ok(execution) => operation_execution_response(execution, method == Method::HEAD).await,
-        Err(simile_service::Error::Runtime(error)) => operation_error(
-            state.service.runtime(),
-            &operation,
-            error,
-            method == Method::HEAD,
-        ),
+        Err(simile_service::Error::Runtime(error)) => {
+            emit_incident(
+                &state,
+                profile,
+                &operation,
+                response_seed,
+                content_type,
+                &body,
+                incoming,
+                &error,
+            );
+            operation_error(
+                state.service.runtime(),
+                &operation,
+                error,
+                method == Method::HEAD,
+            )
+        }
         Err(error) => {
             tracing::error!(target: "simile::effect", %operation, %error, "could not apply operation effects");
             error_response(
@@ -565,6 +601,125 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             )
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_incident(
+    state: &ServerState,
+    profile: Option<String>,
+    operation: &str,
+    seed: u64,
+    content_type: Option<String>,
+    body: &[u8],
+    parameters: IncomingParameters,
+    error: &simile_runtime::Error,
+) {
+    if !error.is_reportable() {
+        return;
+    }
+    let Some(sender) = state.incident_sender.as_ref() else {
+        return;
+    };
+    let Some(body) = sanitize_body(content_type.as_deref(), body) else {
+        tracing::debug!(
+            target: "simile::reporting",
+            operation,
+            content_type,
+            "automatic report skipped because the request body cannot be safely sanitized"
+        );
+        return;
+    };
+    let incident = RuntimeIncident {
+        profile,
+        operation: operation.to_owned(),
+        seed,
+        content_type,
+        body,
+        parameters: sanitize_parameters(parameters),
+        scenario: state.scenario.clone(),
+        fault_profile: state.fault_profile.clone(),
+        code: error.code().to_owned(),
+        message: error.to_string(),
+        issues: error
+            .issues()
+            .iter()
+            .filter_map(|issue| serde_json::to_value(issue).ok())
+            .collect(),
+    };
+    if let Err(error) = sender.try_send(incident) {
+        tracing::debug!(
+            target: "simile::reporting",
+            %error,
+            "automatic report skipped because the reporting queue is unavailable"
+        );
+    }
+}
+
+fn sanitize_parameters(mut parameters: IncomingParameters) -> IncomingParameters {
+    redact_parameter_map(&mut parameters.path);
+    redact_parameter_map(&mut parameters.query);
+    redact_parameter_map(&mut parameters.headers);
+    redact_parameter_map(&mut parameters.cookies);
+    parameters
+}
+
+fn redact_parameter_map(values: &mut BTreeMap<String, Vec<String>>) {
+    for (name, values) in values {
+        if sensitive_name(name) {
+            values.clear();
+            values.push("<redacted>".to_owned());
+        }
+    }
+}
+
+fn sanitize_body(content_type: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
+    if body.is_empty() {
+        return Some(Vec::new());
+    }
+    let media_type = content_type?.split(';').next()?.trim();
+    if media_type != "application/json" && !media_type.ends_with("+json") {
+        return None;
+    }
+    let mut value = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    redact_json(&mut value);
+    serde_json::to_vec(&value).ok()
+}
+
+fn redact_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (name, value) in object {
+                if sensitive_name(name) {
+                    *value = serde_json::Value::String("<redacted>".to_owned());
+                } else {
+                    redact_json(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => values.iter_mut().for_each(redact_json),
+        _ => {}
+    }
+}
+
+fn sensitive_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase().replace(['-', '.'], "_");
+    [
+        "authorization",
+        "cookie",
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_key",
+        "private_key",
+        "card_number",
+        "account_number",
+        "cvc",
+        "cvv",
+    ]
+    .iter()
+    .any(|sensitive| normalized == *sensitive || normalized.ends_with(&format!("_{sensitive}")))
 }
 
 fn incoming_parameters(
@@ -1206,6 +1361,7 @@ profile "merchant" {
             ServerOptions {
                 scenario: None,
                 fault_profile: Some("missing".to_owned()),
+                incident_sender: None,
             },
         )
         .await;
@@ -1221,6 +1377,7 @@ profile "merchant" {
             ServerOptions {
                 scenario: None,
                 fault_profile: Some("always_slow".to_owned()),
+                incident_sender: None,
             },
         )
         .await
@@ -1416,5 +1573,43 @@ profile "merchant" {
                 "message": "required property `customer` is missing"
             }])
         );
+    }
+
+    #[test]
+    fn sanitizes_sensitive_incident_evidence_without_flattening_the_request() {
+        let body = br#"{
+          "customer": {"name": "Ada", "api_key": "sk_live_secret"},
+          "password_reset_token": "reset-secret",
+          "items": [{"reference": "sku_123"}]
+        }"#;
+        let sanitized = sanitize_body(Some("application/problem+json; charset=utf-8"), body)
+            .unwrap_or_else(|| panic!("JSON incident body must be sanitizable"));
+        let value: serde_json::Value = serde_json::from_slice(&sanitized)
+            .unwrap_or_else(|error| panic!("sanitized body must remain JSON: {error}"));
+
+        assert_eq!(value["customer"]["name"], "Ada");
+        assert_eq!(value["customer"]["api_key"], "<redacted>");
+        assert_eq!(value["password_reset_token"], "<redacted>");
+        assert_eq!(value["items"][0]["reference"], "sku_123");
+
+        let parameters = sanitize_parameters(IncomingParameters {
+            path: BTreeMap::from([("access_token".to_owned(), vec!["path-secret".to_owned()])]),
+            query: BTreeMap::from([("page".to_owned(), vec!["2".to_owned()])]),
+            headers: BTreeMap::from([(
+                "authorization".to_owned(),
+                vec!["Bearer secret".to_owned()],
+            )]),
+            cookies: BTreeMap::from([("session_token".to_owned(), vec!["cookie".to_owned()])]),
+        });
+        assert_eq!(parameters.path["access_token"], ["<redacted>"]);
+        assert_eq!(parameters.query["page"], ["2"]);
+        assert_eq!(parameters.headers["authorization"], ["<redacted>"]);
+        assert_eq!(parameters.cookies["session_token"], ["<redacted>"]);
+    }
+
+    #[test]
+    fn declines_opaque_request_bodies_for_automatic_reports() {
+        assert!(sanitize_body(Some("application/octet-stream"), b"secret bytes").is_none());
+        assert!(sanitize_body(None, b"secret bytes").is_none());
     }
 }

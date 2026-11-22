@@ -1477,6 +1477,7 @@ name = "simile-core"
 version = "0.3.0"
 dependencies = [
  "rand",
+ "semver",
  "serde",
  "serde_json",
  "simile-artifact",
@@ -1577,6 +1578,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "percent-encoding",
+ "rand",
  "serde_json",
  "sha2",
  "simile-artifact",

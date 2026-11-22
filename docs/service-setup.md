@@ -141,6 +141,29 @@ simile setup inttegro \
 The first profile becomes current automatically. Add `--use` when a later profile should become the
 CLI default.
 
+## Reporting choice
+
+When the service publishes a reporting endpoint, interactive setup asks whether the new profile may
+send automatic emulator issue reports. The prompt shows the exact destination before asking for
+consent. Choosing yes also collects an email address for clarification and fix notifications.
+
+Automation can make the same decision explicitly:
+
+```bash
+simile setup inttegro \
+  --profile ci \
+  --reporting automatic \
+  --report-contact developer@example.com
+```
+
+Automatic reporting covers reproducible internal emulator failures. Request validation and
+authentication errors stay within the emulated API. Choosing no still permits a deliberate one-off
+report later.
+
+Use `simile reporting inttegro` to inspect profile choices and `--mode off` to withdraw automatic
+reporting consent. See [Report emulator issues](/issue-reporting) for the complete evidence and
+privacy flow.
+
 ## Credential handling
 
 Setup output withholds issued values. Simile writes them to a private environment file:

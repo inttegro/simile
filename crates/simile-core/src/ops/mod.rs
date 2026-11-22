@@ -8,6 +8,7 @@ mod profile;
 mod proxy;
 mod register;
 mod remove;
+mod report;
 mod reproduce;
 mod run;
 mod start;
@@ -35,6 +36,13 @@ pub use profile::{
 pub use proxy::{ProxyPlan, ProxyReport, ProxyRequest, prepare_proxy};
 pub use register::{RegisterRequest, RegistrationReport, register};
 pub use remove::{RemoveReport, RemoveRequest, remove};
+pub use report::{
+    AutomaticReportRequest, ConfigureReportingReport, ConfigureReportingRequest,
+    PrepareReportRequest, PreparedReport, ReportingPreferenceSummary, ReportsReport,
+    SendReportReport, SendReportRequest, configure_reporting, prepare_report,
+    process_automatic_report, report, reporting_destination, reporting_preferences, reports,
+    send_report,
+};
 pub use reproduce::{ReplayReport, ReplayRequest, replay};
 pub use run::{
     ExecutedRequest, ExecutedResponse, ExecutedWebhook, OperationSelector, RequestInput,

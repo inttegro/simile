@@ -12,7 +12,10 @@ interpret safely.
 | `.similec` artifact | 16 | fixed envelope, length, SHA-256 digest, flags, typed indexes |
 | Stack command protocol | 1 | exhaustive command/result tags and resource-kind checks |
 | redb state layout | 2 | format and protocol metadata, service identity, artifact digest, resource digest |
-| reproduction bundle | 1 | bundle version, Simile version, artifact format, artifact digest |
+| response reproduction bundle | 1 | bundle version, Simile version, artifact format, artifact digest |
+| incident reproduction bundle | 2 | expected diagnostic, exact request controls, artifact digest |
+| report document | 1 | report status, verification fingerprint, reproduction path |
+| reporting preference | 1 | profile-scoped consent, destination, and contact |
 
 The artifact decoder rejects unknown versions, non-zero flags, truncation, trailing bytes, digest
 mismatch, unknown tags, and invalid indexes before constructing a runtime. Durable service state

@@ -6,6 +6,10 @@ All notable changes to Simile will be documented in this file.
 
 - Adopt `Simfile` as the conventional local service definition so `register`, `describe`, and
   `start` can discover and name a service from the current directory.
+- Add provider-declared report destinations, profile-owned automatic-reporting consent, one-time
+  manual submissions, private contact storage, upgrade preflight, and local report history.
+- Capture sanitized internal runtime failures as exact incident reproductions, verify them before
+  submission, deduplicate fingerprints, and keep reporting work outside the HTTP request path.
 
 - Treat request-to-response bindings as hard postconditions across body, path, query, header, and
   cookie sources, with explicit failures when a reachable response cannot be constructed.

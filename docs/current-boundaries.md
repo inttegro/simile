@@ -52,6 +52,9 @@ emulator.
 - API key, Basic, Bearer, OAuth 2.0, and OpenID Connect test-principal authentication
 - conservative database-backed create, read, list, and delete behavior when one entity is unambiguous
 - deterministic reproduction bundles and batch conformance replay
+- user-prepared and automatic issue reports backed by verified reproduction cases
+- profile-owned automatic-reporting consent, one-time manual contact, upgrade preflight, and local
+  report history
 
 ### Stack backend layer
 
@@ -123,6 +126,17 @@ disconnect-after-commit faults are testing controls rather than measurements. Sc
 outcomes carry contract-derived provenance. Authored outcomes and effects carry provider-authored
 provenance. Convention-derived state behavior remains visibly inferred in `simile audit` and
 `simile describe service --verbose`.
+
+### Issue reporting
+
+Simile prepares automatic reports only for internal runtime failures and only when the selected
+profile granted consent. It sanitizes recognized secret fields, requires local reproduction, and
+deduplicates the verification fingerprint. Opaque request bodies are skipped because their secret
+boundaries cannot be established safely.
+
+The sender accepts `pending_verification` as a receipt. A provider-operated receiver still needs an
+isolated verifier before it promotes the report into an accepted issue. Upgrade discovery for the
+Simile binary and provider definition depends on the receiver's preflight response.
 
 ## How to write tests today
 

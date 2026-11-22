@@ -3,6 +3,7 @@ use simile_core::{Context, ops};
 
 use crate::cli::TestArgs;
 use crate::commands::Status;
+use crate::commands::automatic_reporting::AutomaticReporter;
 use crate::error::{Error, Result};
 use crate::terminal::Terminal;
 
@@ -26,11 +27,12 @@ pub fn execute(arguments: TestArgs, ctx: &Context, terminal: &Terminal) -> Resul
         .enable_all()
         .build()
         .map_err(Error::AsyncRuntime)?;
-    runtime.block_on(run(plan, terminal))
+    runtime.block_on(run(ctx.clone(), plan, terminal))
 }
 
-async fn run(plan: ops::TestPlan, terminal: &Terminal) -> Result<Status> {
+async fn run(ctx: Context, plan: ops::TestPlan, terminal: &Terminal) -> Result<Status> {
     let service = plan.service.report.service.clone();
+    let reporting = AutomaticReporter::start(ctx, &plan.service);
     let server = simile_server::Server::bind_durable_with_options(
         plan.service.report.listen,
         plan.service.artifact,
@@ -38,6 +40,7 @@ async fn run(plan: ops::TestPlan, terminal: &Terminal) -> Result<Status> {
         simile_server::ServerOptions {
             scenario: plan.scenario,
             fault_profile: plan.fault_profile,
+            incident_sender: reporting.sender(),
         },
     )
     .await?;
@@ -53,7 +56,9 @@ async fn run(plan: ops::TestPlan, terminal: &Terminal) -> Result<Status> {
         terminal.status_line(format_args!("{MUTED}profile{MUTED:#} {profile}"))?;
     }
 
-    let result = server.run_command(plan.command, environment).await?;
+    let command_result = server.run_command(plan.command, environment).await;
+    reporting.finish().await;
+    let result = command_result?;
     if result.success {
         return Ok(Status::Success);
     }
