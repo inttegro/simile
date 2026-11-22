@@ -1,0 +1,40 @@
+---
+title: Simile 0.2.0
+sidebarTitle: 0.2.0
+description: Request-aware response synthesis, reusable fault catalogs, service removal, and the first documentation site.
+---
+
+Released November 18, 2026.
+
+Simile 0.2.0 moves response generation beyond independent schema-valid fields. Providers can state
+how a response relates to the request and which lifecycle outcomes are reachable.
+
+<Info>
+  This release advances the compiled artifact format to version 11. Existing service artifacts
+  must be recompiled.
+</Info>
+
+## Request-aware responses
+
+- Provider-authored bindings preserve request values in the response.
+- OpenAPI patterns guide generated identifiers and other structured strings.
+- Lifecycle constraints reject unreachable states.
+- Response soundness checks distinguish a schema-shaped value from a reachable operation result.
+
+## Reusable service faults
+
+- The environmental fault catalog supplies named HTTP, HTTP/2, network, TLS, DNS, and resource
+  failures with sensible defaults.
+- Namespace selectors and exclusions let a service import a broad catalog without repeating each
+  definition.
+- Deterministic profiles combine bounded delays and disconnect plans into repeatable tests.
+
+## Service lifecycle and documentation
+
+- `simile remove SERVICE --confirm SERVICE` removes a registered service through an explicit
+  confirmation boundary.
+- The first Simile documentation site adds installation, architecture, OpenAPI extension,
+  service-authoring, and fault-reference guides.
+
+- [Download Simile](/downloads)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.2.0)

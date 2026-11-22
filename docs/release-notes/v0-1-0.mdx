@@ -1,0 +1,33 @@
+---
+title: Simile 0.1.0
+sidebarTitle: 0.1.0
+description: The first public Simile CLI with OpenAPI execution, seeded synthesis, replay, and soundness constraints.
+---
+
+Released November 17, 2026.
+
+Simile 0.1.0 establishes the Rust workspace, CLI architecture, CI, and release pipeline. It can run
+an OpenAPI operation directly without starting the long-running service server.
+
+## Run operations from a public contract
+
+- Select an operation by HTTP method and path or by exact OpenAPI `operationId`.
+- Load a local contract or read one from a URL without saving it to disk.
+- Validate a supplied request or synthesize a schema-valid request when the body is omitted.
+- Return a generated response as pretty-printed JSON for ordinary command-line use.
+
+## Generate repeatable values
+
+- Request and response values vary between calls.
+- A fixed seed reproduces the same generated values.
+- Idempotency keys and GET resource identities replay compatible results in memory.
+
+## Express payload soundness
+
+- `x-simile-constraints` covers ordered numbers and timestamps, conditional implications, equality
+  across array items, numeric equations, guarded sums, derived strings, finite lifecycles, relative
+  bounds, distinct selections, set relationships, and count or numeric aggregates.
+- Validation and synthesis apply item-local constraints recursively inside arrays.
+
+- [Download Simile](/downloads)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.1.0)

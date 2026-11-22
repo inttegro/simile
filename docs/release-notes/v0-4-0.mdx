@@ -1,0 +1,78 @@
+---
+title: Simile 0.4.0
+sidebarTitle: 0.4.0
+description: Request-bound synthesis, supervised tests, proxy learning, issue reporting, and broader HTTP outcomes.
+---
+
+Released November 22, 2026.
+
+Simile 0.4.0 strengthens the connection between an incoming request and the result returned to the
+caller. It also adds complete workflows for testing an application, learning from proxied traffic,
+and reporting reproducible emulator inconsistencies.
+
+<Info>
+  This release advances the compiled artifact format to version 24. Recompile existing service
+  artifacts with `simile update SERVICE` before starting them with Simile 0.4.0.
+</Info>
+
+## Test applications against a supervised service
+
+- `simile test` starts a registered service, runs an application test command, injects the selected
+  profile, forwards the test process exit code, and shuts the service down.
+- The new container image supports local Docker runs and CI service containers.
+- Practical guides cover [local testing](/local-testing), [CI](/ci-testing),
+  [GitHub Actions](/github-actions), and [Docker](/docker).
+
+## Learn a draft service from traffic
+
+- `simile proxy --learn` forwards local integration traffic to a real provider.
+- Learning stores sanitized evidence and produces a conservative OpenAPI contract and Simfile for
+  review.
+- Simile now discovers a conventional `Simfile` for `register`, `describe`, and `start`.
+
+Start with [Proxy and learn](/proxy-and-learn) to understand the workflow and its evidence limits.
+
+## Preserve the request through response synthesis
+
+- Request-to-response bindings are hard postconditions for body, path, query, header, and cookie
+  inputs.
+- Bound values can use concatenation, substring extraction, masking, and conditional defaults.
+- Synthesis omits unrelated optional properties and inactive union branches by default.
+- Simile fails explicitly when it cannot construct a result that satisfies every applicable
+  schema, constraint, binding, selected outcome, and state rule.
+
+The [request and response relations](/request-response-relations) guide describes the published
+contract language.
+
+## Return more kinds of HTTP outcomes
+
+- Response synthesis covers JSON, text, form URL-encoded, multipart, and octet-stream bodies.
+- Declared response headers are compiled and synthesized.
+- Bodyless redirects can return a generated `Location` header.
+
+## Build results from service state
+
+- Provider-authored state projections resolve stored public references into private synthesis
+  inputs without changing the validated caller request.
+- A projection can select a declared public outcome when a reference is missing or a public
+  predicate fails.
+- Stored mutation snapshots are completed with schema-required response fields before request
+  relations are applied.
+
+Read [Stateful services](/stateful-services) for the service-authoring model.
+
+## Report reproducible inconsistencies
+
+- A service provider can publish its own report destination.
+- Profiles can store automatic-reporting consent and reporter contact details privately.
+- Simile verifies a reproduction, checks for available upgrades, removes sensitive values,
+  deduplicates repeated incidents, and records local report history.
+- Runtime failures are captured outside the HTTP request path so reporting cannot delay the
+  emulated operation.
+
+See [Issues and reporting](/issue-reporting) for the consent and verification flow.
+
+## Install or inspect the release
+
+- [Download Simile 0.4.0](/downloads)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.4.0)

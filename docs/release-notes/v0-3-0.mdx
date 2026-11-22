@@ -1,0 +1,56 @@
+---
+title: Simile 0.3.0
+sidebarTitle: 0.3.0
+description: Principals, durable profiles, persistent Stack state, effects, webhooks, and additional contract sources.
+---
+
+Released November 20, 2026.
+
+Simile 0.3.0 adds the service identity, state, and background-work foundations needed for a local
+emulator to behave like a continuing service across requests and restarts.
+
+<Info>
+  This release advances the compiled artifact format to version 20. Existing service artifacts
+  must be recompiled.
+</Info>
+
+## Principals and profiles
+
+- Providers can define principal contracts and setup workflows.
+- Setup creates durable named profiles with private credential exports, OAuth grants, webhook
+  destinations, and signing material.
+- Simile generates collision-safe, human-readable profile names when `--profile` is omitted.
+
+## Durable service state
+
+- Simile Stack checkpoints database, cache, queue, mail, object-store, event-bus, scheduler, and
+  time state with embedded redb storage.
+- Persistence includes normalized metadata, resources, replay results, journal events, counters,
+  and logical clock state.
+- State is bound to service and artifact identity, resumes after restart, and is removed with a
+  confirmed service deletion.
+
+## Effects and background work
+
+- Typed HCL effects compile into Stack actions.
+- Synchronous actions commit transactionally before delivery.
+- Named asynchronous work runs after the response-critical path.
+- Simile can infer a conservative database write for an unambiguous mutating operation.
+
+## More contract sources and HTTP inputs
+
+- Smithy 2.0 and declarations-only TypeScript contracts compile into the same canonical service
+  model as OpenAPI.
+- Path, query, header, and cookie parameters are compiled with OpenAPI inheritance and overrides.
+- Seeded reproduction bundles, conformance suites, fidelity audits, and compatibility metadata make
+  emulator behavior easier to inspect and repeat.
+
+## Webhooks and delivery policy
+
+- OpenAPI callbacks and OpenAPI 3.1 or 3.2 top-level webhooks compile as contracts.
+- HCL effects can emit multiple schema-checked webhook occurrences.
+- Service-wide delivery policy supports best-effort ordering, bounded probabilistic reordering,
+  hard dependency protection, and reproducible decisions.
+
+- [Download Simile](/downloads)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.3.0)
