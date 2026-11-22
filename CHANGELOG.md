@@ -4,6 +4,10 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-22
+
+- Add `simile test` for supervised application tests and `simile proxy --learn` for capturing
+  sanitized HTTP evidence and producing a conservative OpenAPI contract and Simfile.
 - Adopt `Simfile` as the conventional local service definition so `register`, `describe`, and
   `start` can discover and name a service from the current directory.
 - Add provider-declared report destinations, profile-owned automatic-reporting consent, one-time
@@ -24,6 +28,7 @@ All notable changes to Simile will be documented in this file.
   predicates while retaining provider-facing errors for undeclared failures.
 - Complete schema-required response fields around stored mutation snapshots before applying the
   operation's published request-to-response relations.
+- Add a container image and practical guides for local, Docker, CI, and GitHub Actions testing.
 - Advance the compiled artifact format to version 24. Existing artifacts must be recompiled.
 
 ## 0.3.0 - 2026-11-20

@@ -29,7 +29,7 @@ jobs:
       - name: Install Simile
         run: |
           curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-            https://github.com/inttegro/simile/releases/download/v0.3.0/simile-cli-installer.sh \
+            https://github.com/inttegro/simile/releases/download/v0.4.0/simile-cli-installer.sh \
             | sh
 
       - name: Install application dependencies

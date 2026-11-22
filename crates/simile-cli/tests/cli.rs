@@ -79,7 +79,7 @@ fn prints_version_as_json() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"version\": \"0.3.0\",\n",
+            "  \"version\": \"0.4.0\",\n",
             "  \"architecture\": \"[..]\",\n",
             "  \"operatingSystem\": \"[..]\"\n",
             "}\n"
@@ -99,7 +99,7 @@ fn doctor_writes_machine_output_only_to_stdout() {
             "    {\n",
             "      \"name\": \"build\",\n",
             "      \"status\": \"pass\",\n",
-            "      \"detail\": \"simile 0.3.0\"\n",
+            "      \"detail\": \"simile 0.4.0\"\n",
             "    },\n",
             "    {\n",
             "      \"name\": \"current-directory\",\n",
@@ -230,7 +230,7 @@ fn supervises_a_test_command_against_the_current_simfile() {
         ])
         .assert()
         .success()
-        .stdout_eq(concat!("simile 0.3.0\n", "target [..]\n"))
+        .stdout_eq(concat!("simile 0.4.0\n", "target [..]\n"))
         .stderr_eq("Testing orders at http://127.0.0.1:[..]\n");
 
     fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
@@ -1046,7 +1046,7 @@ fn writes_and_inspects_a_compiled_artifact() {
             // Why: machine-readable inspection must report the same envelope version as the
             // human compile output so tooling cannot ignore state-projection runtime records.
             "  \"formatVersion\": 24,\n",
-            "  \"compilerVersion\": \"0.3.0\",\n",
+            "  \"compilerVersion\": \"0.4.0\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",

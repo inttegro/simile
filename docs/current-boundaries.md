@@ -1,10 +1,10 @@
 ---
 title: Capabilities and limits
 sidebarTitle: Capabilities
-description: See what Simile v0.3.0 can emulate, where provider authorship is required, and which boundaries remain explicit.
+description: See what Simile v0.4.0 can emulate, where provider authorship is required, and which boundaries remain explicit.
 ---
 
-Simile v0.3.0 runs stateful HTTP service emulators from public contracts. It compiles the service
+Simile v0.4.0 runs stateful HTTP service emulators from public contracts. It compiles the service
 before startup, validates each request, constructs a reachable result, commits declared
 consequences, and exposes the service through an ordinary local HTTP endpoint.
 

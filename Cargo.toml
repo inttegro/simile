@@ -20,7 +20,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -51,21 +51,21 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_norway = "0.9.42"
 sha2 = "0.10.9"
-simile-artifact = { version = "=0.3.0", path = "crates/simile-artifact" }
-simile-compiler = { version = "=0.3.0", path = "crates/simile-compiler" }
-simile-core = { version = "=0.3.0", path = "crates/simile-core" }
-simile-hcl = { version = "=0.3.0", path = "crates/simile-hcl" }
-simile-heuristics = { version = "=0.3.0", path = "crates/simile-heuristics" }
-simile-learning = { version = "=0.3.0", path = "crates/simile-learning" }
-simile-openapi = { version = "=0.3.0", path = "crates/simile-openapi" }
-simile-runtime = { version = "=0.3.0", path = "crates/simile-runtime" }
-simile-schema = { version = "=0.3.0", path = "crates/simile-schema" }
-simile-server = { version = "=0.3.0", path = "crates/simile-server" }
-simile-service = { version = "=0.3.0", path = "crates/simile-service" }
-simile-smithy = { version = "=0.3.0", path = "crates/simile-smithy" }
-simile-spec = { version = "=0.3.0", path = "crates/simile-spec" }
-simile-stack = { version = "=0.3.0", path = "crates/simile-stack" }
-simile-typescript = { version = "=0.3.0", path = "crates/simile-typescript" }
+simile-artifact = { version = "=0.4.0", path = "crates/simile-artifact" }
+simile-compiler = { version = "=0.4.0", path = "crates/simile-compiler" }
+simile-core = { version = "=0.4.0", path = "crates/simile-core" }
+simile-hcl = { version = "=0.4.0", path = "crates/simile-hcl" }
+simile-heuristics = { version = "=0.4.0", path = "crates/simile-heuristics" }
+simile-learning = { version = "=0.4.0", path = "crates/simile-learning" }
+simile-openapi = { version = "=0.4.0", path = "crates/simile-openapi" }
+simile-runtime = { version = "=0.4.0", path = "crates/simile-runtime" }
+simile-schema = { version = "=0.4.0", path = "crates/simile-schema" }
+simile-server = { version = "=0.4.0", path = "crates/simile-server" }
+simile-service = { version = "=0.4.0", path = "crates/simile-service" }
+simile-smithy = { version = "=0.4.0", path = "crates/simile-smithy" }
+simile-spec = { version = "=0.4.0", path = "crates/simile-spec" }
+simile-stack = { version = "=0.4.0", path = "crates/simile-stack" }
+simile-typescript = { version = "=0.4.0", path = "crates/simile-typescript" }
 snapbox = { version = "1.2.2", features = ["cmd"] }
 thiserror = "2.0.17"
 time = { version = "0.3.44", features = ["formatting", "parsing"] }
