@@ -110,6 +110,14 @@ pub enum Error {
         attributes: &'static str,
     },
 
+    #[error("{file}: `{block}` cannot define both `{left}` and `{right}`")]
+    ConflictingAttributes {
+        file: String,
+        block: String,
+        left: &'static str,
+        right: &'static str,
+    },
+
     #[error("{file}: `{block}.{attribute}` must be {expected}")]
     InvalidAttribute {
         file: String,

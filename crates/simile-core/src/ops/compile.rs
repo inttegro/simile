@@ -16,7 +16,7 @@ use crate::{Error, Result};
 pub struct CompileRequest {
     pub contract: PathBuf,
     pub contract_format: ContractFormat,
-    pub behaviors: Vec<PathBuf>,
+    pub modules: Vec<PathBuf>,
     pub artifact: Option<PathBuf>,
     pub heuristic_policy: Policy,
 }
@@ -75,10 +75,10 @@ pub struct CompileReport {
     pub artifact: Option<WrittenArtifact>,
 }
 
-/// Compile a public contract and zero or more HCL behavior modules.
+/// Compile a public contract and zero or more HCL modules.
 pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
     let loaded = load_contract(&request.contract, request.contract_format)?;
-    let compiled = compile_loaded(&loaded, &request.behaviors, request.heuristic_policy)?;
+    let compiled = compile_loaded(&loaded, &request.modules, request.heuristic_policy)?;
     let hcl_behaviors = compiled
         .operations
         .values()
@@ -116,49 +116,49 @@ pub fn compile(request: &CompileRequest) -> Result<CompileReport> {
 pub(crate) fn compile_contract_path(
     path: &Path,
     format: ContractFormat,
-    behavior_paths: &[PathBuf],
+    module_paths: &[PathBuf],
     heuristic_policy: Policy,
 ) -> Result<CompiledService> {
     let loaded = load_contract(path, format)?;
-    compile_loaded(&loaded, behavior_paths, heuristic_policy)
+    compile_loaded(&loaded, module_paths, heuristic_policy)
 }
 
 pub(crate) fn compile_contract_source(
     name: &str,
     contents: &str,
     format: ContractFormat,
-    behavior_paths: &[PathBuf],
+    module_paths: &[PathBuf],
     heuristic_policy: Policy,
 ) -> Result<CompiledService> {
     let loaded = LoadedContract {
         format,
         sources: vec![(name.to_owned(), contents.to_owned())],
     };
-    compile_loaded(&loaded, behavior_paths, heuristic_policy)
+    compile_loaded(&loaded, module_paths, heuristic_policy)
 }
 
 fn compile_loaded(
     contract: &LoadedContract,
-    behavior_paths: &[PathBuf],
+    module_paths: &[PathBuf],
     heuristic_policy: Policy,
 ) -> Result<CompiledService> {
-    let behavior_contents = behavior_paths
+    let module_contents = module_paths
         .iter()
         .map(|path| read(path))
         .collect::<Result<Vec<_>>>()?;
-    let behavior_names = behavior_paths
+    let module_names = module_paths
         .iter()
         .map(|path| path.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
-    let behaviors = behavior_names
+    let modules = module_names
         .iter()
-        .zip(&behavior_contents)
+        .zip(&module_contents)
         .map(|(name, contents)| Source::new(name, contents))
         .collect();
     Compiler::new()
         .compile_source(SourceCompileRequest {
             contract: compiler_source(contract),
-            behaviors,
+            modules,
             heuristic_policy,
         })
         .map_err(Into::into)
@@ -369,7 +369,7 @@ mod tests {
         let report = compile(&CompileRequest {
             contract: fixtures.join("orders.yaml"),
             contract_format: ContractFormat::Auto,
-            behaviors: vec![fixtures.join("orders.hcl")],
+            modules: vec![fixtures.join("orders.hcl")],
             artifact: None,
             heuristic_policy: Policy::Standard,
         })
@@ -399,7 +399,7 @@ mod tests {
         let report = compile(&CompileRequest {
             contract: fixtures.join("orders.yaml"),
             contract_format: ContractFormat::Auto,
-            behaviors: vec![fixtures.join("orders.hcl")],
+            modules: vec![fixtures.join("orders.hcl")],
             artifact: Some(artifact.clone()),
             heuristic_policy: Policy::Standard,
         })

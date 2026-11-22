@@ -135,17 +135,17 @@ pub(crate) fn prepare_loaded_service(
             }
         }
     };
-    let mut behaviors = Vec::with_capacity(document.service.behaviors.len() + 1);
-    if !module_is_empty(&document.inline_behavior) {
-        behaviors.push(document.inline_behavior);
+    let mut modules = Vec::with_capacity(document.service.modules.len() + 1);
+    if !module_is_empty(&document.inline_module) {
+        modules.push(document.inline_module);
     }
-    for behavior in &document.service.behaviors {
-        let path = config.resolve(behavior, "behavior")?;
+    for module in &document.service.modules {
+        let path = config.resolve(module, "module")?;
         let contents = std::fs::read_to_string(&path).map_err(|source| Error::ReadSource {
             path: path.clone(),
             source,
         })?;
-        behaviors.push(simile_hcl::parse(simile_hcl::Source::new(
+        modules.push(simile_hcl::parse(simile_hcl::Source::new(
             &path.to_string_lossy(),
             &contents,
         ))?);
@@ -153,7 +153,7 @@ pub(crate) fn prepare_loaded_service(
 
     let mut compiled = Compiler::new().compile_source_parsed(ParsedSourceCompileRequest {
         contract: compiler_source(&contract),
-        behaviors,
+        modules,
         heuristic_policy: Policy::Standard,
     })?;
     compiled.principal_setups = simile_hcl::compile_principal_setups(

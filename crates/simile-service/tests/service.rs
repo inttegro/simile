@@ -1108,7 +1108,7 @@ fn service_with_contract(openapi: &str, behavior: &str) -> simile_service::Servi
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("service.yml", openapi),
-            behaviors: vec![Source::new("service.hcl", behavior)],
+            modules: vec![Source::new("service.hcl", behavior)],
             heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -1151,7 +1151,7 @@ paths:
                   product: { type: string }
 "#,
             ),
-            behaviors: vec![Source::new(
+            modules: vec![Source::new(
                 "orders.hcl",
                 r#"
 backend "db" "orders" {}
@@ -1202,7 +1202,7 @@ paths:
                   id: { type: string, pattern: '^ord_' }
 "#,
             ),
-            behaviors: vec![Source::new(
+            modules: vec![Source::new(
                 "orders.hcl",
                 r#"
 backend "event_bus" "events" {}
@@ -1251,7 +1251,7 @@ paths:
                   id: { type: string, pattern: '^ord_' }
 "#,
             ),
-            behaviors: vec![Source::new(
+            modules: vec![Source::new(
                 "orders.hcl",
                 r#"
 webhook "payment.succeeded" {}

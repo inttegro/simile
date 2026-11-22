@@ -112,7 +112,7 @@ pub struct Cli {
 pub enum Command {
     /// Audit provider fidelity and explain every remaining contract gap.
     Audit(AuditArgs),
-    /// Compile an OpenAPI, Smithy, or semantic TypeScript contract with optional HCL behavior.
+    /// Compile an OpenAPI, Smithy, or semantic TypeScript contract with optional HCL modules.
     Compile(CompileArgs),
     /// Replay one or more executable examples as a conformance suite.
     Conformance(ConformanceArgs),
@@ -207,9 +207,15 @@ pub struct CompileArgs {
     #[arg(long, value_enum, default_value_t)]
     pub contract_format: ContractFormatChoice,
 
-    /// HCL behavior module. Repeat to compile multiple modules.
-    #[arg(short, long, value_name = "FILE")]
-    pub behavior: Vec<PathBuf>,
+    /// HCL module. Repeat to compile multiple modules.
+    #[arg(
+        short = 'm',
+        long = "module",
+        alias = "behavior",
+        short_alias = 'b',
+        value_name = "FILE"
+    )]
+    pub module: Vec<PathBuf>,
 
     /// Write the compiled runtime artifact to this path.
     #[arg(short, long, value_name = "FILE")]
@@ -254,9 +260,15 @@ pub struct RunArgs {
     #[arg(long, value_enum, default_value_t)]
     pub contract_format: ContractFormatChoice,
 
-    /// HCL behavior module. Repeat to compile multiple modules.
-    #[arg(short, long, value_name = "FILE")]
-    pub behavior: Vec<PathBuf>,
+    /// HCL module. Repeat to compile multiple modules.
+    #[arg(
+        short = 'm',
+        long = "module",
+        alias = "behavior",
+        short_alias = 'b',
+        value_name = "FILE"
+    )]
+    pub module: Vec<PathBuf>,
 
     /// Select an operation by its structural `METHOD /path` key.
     #[arg(long, value_name = "METHOD /path")]

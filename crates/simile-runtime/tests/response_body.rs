@@ -1403,13 +1403,13 @@ components:
 }
 
 fn compile_artifact(openapi: &str, behavior: Option<&str>) -> simile_artifact::Artifact {
-    let behaviors = behavior
+    let modules = behavior
         .map(|contents| vec![Source::new("behavior.hcl", contents)])
         .unwrap_or_default();
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("service.yaml", openapi),
-            behaviors,
+            modules,
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));

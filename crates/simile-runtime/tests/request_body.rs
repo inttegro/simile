@@ -339,7 +339,7 @@ components:
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", source),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -381,7 +381,7 @@ paths:
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("messages.yaml", source),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -466,7 +466,7 @@ components:
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("invoices.yaml", source),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));

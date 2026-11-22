@@ -108,7 +108,7 @@ components:
     Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("products.yml", &openapi),
-            behaviors: vec![Source::new("products.hcl", behavior)],
+            modules: vec![Source::new("products.hcl", behavior)],
             heuristic_policy: Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"))

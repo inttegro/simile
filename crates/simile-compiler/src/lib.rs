@@ -27,14 +27,14 @@ impl<'a> Source<'a> {
 #[derive(Debug)]
 pub struct CompileRequest<'a> {
     pub openapi: Source<'a>,
-    pub behaviors: Vec<Source<'a>>,
+    pub modules: Vec<Source<'a>>,
     pub heuristic_policy: Policy,
 }
 
 #[derive(Debug)]
 pub struct ParsedCompileRequest<'a> {
     pub openapi: Source<'a>,
-    pub behaviors: Vec<simile_hcl::Module>,
+    pub modules: Vec<simile_hcl::Module>,
     pub heuristic_policy: Policy,
 }
 
@@ -49,14 +49,14 @@ pub enum ContractSource<'a> {
 #[derive(Debug)]
 pub struct SourceCompileRequest<'a> {
     pub contract: ContractSource<'a>,
-    pub behaviors: Vec<Source<'a>>,
+    pub modules: Vec<Source<'a>>,
     pub heuristic_policy: Policy,
 }
 
 #[derive(Debug)]
 pub struct ParsedSourceCompileRequest<'a> {
     pub contract: ContractSource<'a>,
-    pub behaviors: Vec<simile_hcl::Module>,
+    pub modules: Vec<simile_hcl::Module>,
     pub heuristic_policy: Policy,
 }
 
@@ -72,20 +72,20 @@ impl Compiler {
     pub fn compile(&self, request: CompileRequest<'_>) -> Result<CompiledService> {
         self.compile_source(SourceCompileRequest {
             contract: ContractSource::OpenApi(request.openapi),
-            behaviors: request.behaviors,
+            modules: request.modules,
             heuristic_policy: request.heuristic_policy,
         })
     }
 
     pub fn compile_source(&self, request: SourceCompileRequest<'_>) -> Result<CompiledService> {
         let modules = request
-            .behaviors
+            .modules
             .into_iter()
             .map(|source| simile_hcl::parse(simile_hcl::Source::new(source.name, source.contents)))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         self.compile_source_parsed(ParsedSourceCompileRequest {
             contract: request.contract,
-            behaviors: modules,
+            modules,
             heuristic_policy: request.heuristic_policy,
         })
     }
@@ -93,7 +93,7 @@ impl Compiler {
     pub fn compile_parsed(&self, request: ParsedCompileRequest<'_>) -> Result<CompiledService> {
         self.compile_source_parsed(ParsedSourceCompileRequest {
             contract: ContractSource::OpenApi(request.openapi),
-            behaviors: request.behaviors,
+            modules: request.modules,
             heuristic_policy: request.heuristic_policy,
         })
     }
@@ -103,7 +103,7 @@ impl Compiler {
         request: ParsedSourceCompileRequest<'_>,
     ) -> Result<CompiledService> {
         let contract = parse_contract(request.contract)?;
-        let mut behaviors = simile_hcl::compile(request.behaviors, &contract)?;
+        let mut behaviors = simile_hcl::compile(request.modules, &contract)?;
         stateful::infer_default_effects(&contract, &mut behaviors);
 
         let operations = contract

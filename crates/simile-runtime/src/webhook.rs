@@ -121,7 +121,7 @@ paths:
         "201": { description: Created }
 "#,
                 ),
-                behaviors: vec![Source::new("orders.hcl", behavior)],
+                modules: vec![Source::new("orders.hcl", behavior)],
                 heuristic_policy: Policy::Standard,
             })
             .unwrap_or_else(|error| panic!("{error}"));

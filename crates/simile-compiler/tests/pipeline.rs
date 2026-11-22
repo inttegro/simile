@@ -6,7 +6,7 @@ fn openapi_is_a_complete_default_behavior_source() {
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", openapi()),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -45,7 +45,7 @@ service Orders {
 }
 "#,
             )),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("Smithy must compile: {error}"));
@@ -67,7 +67,7 @@ export interface OrdersOperations {
 }
 "#,
             )]),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("TypeScript must compile: {error}"));
@@ -84,7 +84,7 @@ fn hcl_refines_only_the_operation_it_names() {
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", openapi()),
-            behaviors: vec![Source::new(
+            modules: vec![Source::new(
                 "orders.hcl",
                 r#"
 backend "queue" "orders" {}
@@ -135,7 +135,7 @@ paths:
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("health.yaml", source),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -176,7 +176,7 @@ paths:
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("payments.yaml", source),
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -225,7 +225,7 @@ apply_error_set "write_conflicts" {
     let compiled = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", source),
-            behaviors: vec![Source::new("orders.hcl", behavior)],
+            modules: vec![Source::new("orders.hcl", behavior)],
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));

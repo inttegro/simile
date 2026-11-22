@@ -18,7 +18,7 @@ use crate::{Error, Result};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 
-/// Parse a complete runnable-service document and any inline behavior declarations it contains.
+/// Parse a complete runnable-service document and any inline module declarations it contains.
 pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
     let body = hcl::parse(source.contents).map_err(|error| Error::Parse {
         name: source.name.to_owned(),
@@ -26,7 +26,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
     })?;
     let mut service = None;
     let mut principal_setups = Vec::new();
-    let mut inline_behavior = Module {
+    let mut inline_module = Module {
         source: source.name.to_owned(),
         backends: Vec::new(),
         behaviors: Vec::new(),
@@ -65,43 +65,39 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
                 "principal_setup" => {
                     principal_setups.push(principal_setup(block, source.name)?);
                 }
-                "backend" => inline_behavior.backends.push(backend(block, source.name)?),
-                "behavior" => inline_behavior
-                    .behaviors
-                    .push(behavior(block, source.name)?),
-                "error_set" => inline_behavior
+                "backend" => inline_module.backends.push(backend(block, source.name)?),
+                "behavior" => inline_module.behaviors.push(behavior(block, source.name)?),
+                "error_set" => inline_module
                     .error_sets
                     .push(error_set(block, source.name)?),
-                "apply_error_set" => inline_behavior
+                "apply_error_set" => inline_module
                     .error_set_applications
                     .push(apply_error_set(block, source.name)?),
-                "protocol_error" => inline_behavior
+                "protocol_error" => inline_module
                     .protocol_errors
                     .push(protocol_error(block, source.name)?),
-                "scenario" => inline_behavior
-                    .scenarios
-                    .push(scenario(block, source.name)?),
-                "faults" => inline_behavior
+                "scenario" => inline_module.scenarios.push(scenario(block, source.name)?),
+                "faults" => inline_module
                     .fault_uses
                     .extend(fault_uses(block, source.name)?),
-                "fault" => inline_behavior.faults.push(fault(block, source.name)?),
-                "fault_profile" => inline_behavior
+                "fault" => inline_module.faults.push(fault(block, source.name)?),
+                "fault_profile" => inline_module
                     .fault_profiles
                     .push(fault_profile(block, source.name)?),
-                "async" => inline_behavior
+                "async" => inline_module
                     .async_operations
                     .push(async_operation(block, source.name)?),
-                "effect" => inline_behavior.effects.push(effect(block, source.name)?),
-                "webhook" => inline_behavior
+                "effect" => inline_module.effects.push(effect(block, source.name)?),
+                "webhook" => inline_module
                     .webhooks
                     .push(webhook_contract(block, source.name)?),
-                "webhooks" => inline_behavior
+                "webhooks" => inline_module
                     .webhook_policies
                     .push(webhook_policy(block, source.name)?),
-                "principal" => inline_behavior
+                "principal" => inline_module
                     .principals
                     .push(principal(block, source.name)?),
-                "profile" => inline_behavior.profiles.push(profile(block, source.name)?),
+                "profile" => inline_module.profiles.push(profile(block, source.name)?),
                 unknown => {
                     return Err(Error::UnknownBlock {
                         file: source.name.to_owned(),
@@ -118,7 +114,7 @@ pub fn parse_service(source: Source<'_>) -> Result<ServiceDocument> {
     Ok(ServiceDocument {
         service,
         principal_setups,
-        inline_behavior,
+        inline_module,
     })
 }
 
@@ -137,10 +133,25 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         block.body(),
         source,
         "service",
-        &["behaviors", "description"],
+        &["modules", "behaviors", "description"],
     )?;
-    let behaviors = attribute(block.body(), "behaviors")
-        .map(|value| string_array(value, source, "service", "behaviors"))
+    let modules = attribute(block.body(), "modules");
+    let legacy_behaviors = attribute(block.body(), "behaviors");
+    if modules.is_some() && legacy_behaviors.is_some() {
+        return Err(Error::ConflictingAttributes {
+            file: source.to_owned(),
+            block: "service".to_owned(),
+            left: "modules",
+            right: "behaviors",
+        });
+    }
+    // Why: existing Simfiles used `behaviors` as a generic module loader. Accept it as a
+    // compatibility alias while the public language moves to the semantically correct `modules`.
+    let modules = modules
+        .map(|value| string_array(value, source, "service", "modules"))
+        .or_else(|| {
+            legacy_behaviors.map(|value| string_array(value, source, "service", "behaviors"))
+        })
         .transpose()?
         .unwrap_or_default();
     let listen = one_nested(block.body(), source, "service", "listen", parse_listen)?;
@@ -172,7 +183,7 @@ fn parse_service_block(block: &Block, source: &str) -> Result<ServiceDeclaration
         description: optional_description(block.body(), source, "service")?,
         listen,
         contract,
-        behaviors,
+        modules,
         reporting,
     })
 }
@@ -344,7 +355,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_a_service_and_inline_behavior() {
+    fn parses_a_service_and_inline_module() {
         let document = parse_service(Source::new(
             "inttegro.hcl",
             r#"
@@ -362,7 +373,7 @@ service "inttegro" {
     endpoint = "https://reports.inttegro.dev/v1/reports"
   }
 
-  behaviors = ["./orders.hcl"]
+  modules = ["./orders.hcl"]
 }
 
 backend "queue" "orders" {}
@@ -410,23 +421,23 @@ webhooks {
             document.service.contract,
             ContractDeclaration::OpenApi(SourceDeclaration::Path("./commerce.yml".to_owned()))
         );
-        assert_eq!(document.service.behaviors, ["./orders.hcl"]);
+        assert_eq!(document.service.modules, ["./orders.hcl"]);
         assert_eq!(
             document.service.reporting,
             Some(ReportingDeclaration {
                 endpoint: "https://reports.inttegro.dev/v1/reports".to_owned(),
             })
         );
-        assert_eq!(document.inline_behavior.backends.len(), 1);
-        assert_eq!(document.inline_behavior.async_operations.len(), 1);
-        assert_eq!(document.inline_behavior.behaviors.len(), 1);
-        assert_eq!(document.inline_behavior.fault_uses.len(), 1);
-        assert_eq!(document.inline_behavior.faults.len(), 1);
-        assert_eq!(document.inline_behavior.fault_profiles.len(), 1);
-        assert_eq!(document.inline_behavior.scenarios[0].faults.len(), 1);
-        assert_eq!(document.inline_behavior.webhook_policies.len(), 1);
+        assert_eq!(document.inline_module.backends.len(), 1);
+        assert_eq!(document.inline_module.async_operations.len(), 1);
+        assert_eq!(document.inline_module.behaviors.len(), 1);
+        assert_eq!(document.inline_module.fault_uses.len(), 1);
+        assert_eq!(document.inline_module.faults.len(), 1);
+        assert_eq!(document.inline_module.fault_profiles.len(), 1);
+        assert_eq!(document.inline_module.scenarios[0].faults.len(), 1);
+        assert_eq!(document.inline_module.webhook_policies.len(), 1);
         assert_eq!(
-            document.inline_behavior.webhook_policies[0],
+            document.inline_module.webhook_policies[0],
             crate::WebhookPolicyDeclaration {
                 ordering: simile_spec::WebhookOrdering::BestEffort,
                 out_of_order_probability_ppm: Some(200_000),
@@ -435,6 +446,40 @@ webhooks {
                 signing: None,
             }
         );
+    }
+
+    #[test]
+    fn accepts_behaviors_as_a_legacy_modules_alias() {
+        let document = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  openapi { path = "./openapi.yml" }
+  behaviors = ["./legacy.hcl"]
+}
+"#,
+        ))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(document.service.modules, ["./legacy.hcl"]);
+    }
+
+    #[test]
+    fn rejects_modules_and_legacy_behaviors_together() {
+        let result = parse_service(Source::new(
+            "service.hcl",
+            r#"
+service "demo" {
+  listen { port = 4242 }
+  openapi { path = "./openapi.yml" }
+  modules = ["./principals.hcl"]
+  behaviors = ["./orders.hcl"]
+}
+"#,
+        ));
+
+        assert!(matches!(result, Err(Error::ConflictingAttributes { .. })));
     }
 
     #[test]

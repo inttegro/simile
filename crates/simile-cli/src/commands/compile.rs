@@ -14,7 +14,7 @@ pub fn execute(arguments: CompileArgs, terminal: &Terminal) -> Result<Status> {
     let result = ops::compile(&ops::CompileRequest {
         contract: arguments.contract,
         contract_format: arguments.contract_format.into(),
-        behaviors: arguments.behavior,
+        modules: arguments.module,
         artifact: arguments.artifact,
         heuristic_policy: arguments.heuristics.into(),
     });

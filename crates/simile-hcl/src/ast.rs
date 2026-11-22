@@ -255,7 +255,7 @@ pub struct Module {
 pub struct ServiceDocument {
     pub service: ServiceDeclaration,
     pub principal_setups: Vec<PrincipalSetupDeclaration>,
-    pub inline_behavior: Module,
+    pub inline_module: Module,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -294,7 +294,7 @@ pub struct ServiceDeclaration {
     pub description: Option<String>,
     pub listen: ListenDeclaration,
     pub contract: ContractDeclaration,
-    pub behaviors: Vec<String>,
+    pub modules: Vec<String>,
     pub reporting: Option<ReportingDeclaration>,
 }
 

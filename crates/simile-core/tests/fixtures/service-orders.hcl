@@ -8,5 +8,5 @@ service "orders" {
     path = "./run-orders.yaml"
   }
 
-  behaviors = ["./orders.hcl"]
+  modules = ["./orders.hcl"]
 }

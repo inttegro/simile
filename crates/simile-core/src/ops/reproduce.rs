@@ -454,7 +454,7 @@ paths:
         let compiled = Compiler::new()
             .compile(CompileRequest {
                 openapi: Source::new("reports.yml", source),
-                behaviors: Vec::new(),
+                modules: Vec::new(),
                 heuristic_policy: Policy::Standard,
             })
             .unwrap_or_else(|error| panic!("fixture must compile: {error}"));

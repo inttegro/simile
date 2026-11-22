@@ -1038,7 +1038,7 @@ fn writes_and_inspects_a_compiled_artifact() {
         .args([
             "compile",
             &fixture("orders.yaml"),
-            "--behavior",
+            "--module",
             &fixture("orders.hcl"),
             "--artifact",
             &artifact_path,
@@ -1141,7 +1141,7 @@ fn colors_task_progress_and_results_when_requested() {
             "always",
             "compile",
             &fixture("orders.yaml"),
-            "--behavior",
+            "--module",
             &fixture("orders.hcl"),
         ])
         .output()

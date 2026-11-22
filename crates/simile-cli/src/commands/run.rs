@@ -31,7 +31,7 @@ pub fn execute(arguments: RunArgs, terminal: &Terminal) -> Result<Status> {
     let report = ops::run(&ops::RunRequest {
         spec,
         contract_format: arguments.contract_format.into(),
-        behaviors: arguments.behavior,
+        modules: arguments.module,
         operation,
         outcome: arguments.outcome,
         scenario: arguments.scenario,

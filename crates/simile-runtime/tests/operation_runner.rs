@@ -638,7 +638,7 @@ profile "revoked_app" {
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("auth.yaml", openapi),
-            behaviors: vec![Source::new("auth.hcl", behavior)],
+            modules: vec![Source::new("auth.hcl", behavior)],
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
@@ -868,7 +868,7 @@ behavior "createOrder" {
     let service = Compiler::new()
         .compile(CompileRequest {
             openapi: Source::new("orders.yaml", openapi),
-            behaviors: vec![Source::new("orders.hcl", behavior)],
+            modules: vec![Source::new("orders.hcl", behavior)],
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));

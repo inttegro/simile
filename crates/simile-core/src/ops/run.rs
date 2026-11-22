@@ -57,7 +57,7 @@ impl RequestInput {
 pub struct RunRequest {
     pub spec: SpecSource,
     pub contract_format: ContractFormat,
-    pub behaviors: Vec<PathBuf>,
+    pub modules: Vec<PathBuf>,
     pub operation: OperationSelector,
     pub outcome: Option<String>,
     pub scenario: Option<String>,
@@ -166,7 +166,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
         SpecSource::Path(path) => compile_contract_path(
             path,
             request.contract_format,
-            &request.behaviors,
+            &request.modules,
             request.heuristic_policy,
         )?,
         SpecSource::Url(_) => {
@@ -180,7 +180,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
                 &source_name,
                 &source,
                 format,
-                &request.behaviors,
+                &request.modules,
                 request.heuristic_policy,
             )?
         }
@@ -464,7 +464,7 @@ mod tests {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
             scenario: None,
@@ -515,7 +515,7 @@ mod tests {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
             scenario: None,
@@ -550,7 +550,7 @@ mod tests {
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
             scenario: None,
@@ -594,7 +594,7 @@ mod tests {
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
             outcome: None,
             scenario: None,
@@ -628,7 +628,7 @@ mod tests {
         let result = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
             scenario: None,
@@ -651,7 +651,7 @@ mod tests {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Key("GET /health".to_owned()),
             outcome: None,
             scenario: None,
@@ -674,7 +674,7 @@ mod tests {
         let report = run(&RunRequest {
             spec: SpecSource::Path(fixture("run-orders.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("optionalForm".to_owned()),
             outcome: None,
             scenario: None,
@@ -728,7 +728,7 @@ mod tests {
         let report = run(&RunRequest {
             spec: SpecSource::Url(format!("http://{address}/openapi.yaml")),
             contract_format: ContractFormat::Auto,
-            behaviors: Vec::new(),
+            modules: Vec::new(),
             operation: OperationSelector::Id("createOrder".to_owned()),
             outcome: None,
             scenario: None,

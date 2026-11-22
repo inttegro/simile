@@ -1274,7 +1274,7 @@ profile "merchant" {
         let compiled = Compiler::new()
             .compile(CompileRequest {
                 openapi: Source::new("orders.yml", source),
-                behaviors: (!behavior.is_empty())
+                modules: (!behavior.is_empty())
                     .then(|| Source::new("faults.hcl", behavior))
                     .into_iter()
                     .collect(),
