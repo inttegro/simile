@@ -73,7 +73,7 @@ upgrades, and submits it to the destination captured with consent. The HTTP adap
 sanitized candidate incident.
 
 One-off reports use the same verifier and store. An explicit `--contact` authorizes that submission
-without enabling future automatic reports. See [Report emulator issues](/issue-reporting).
+without enabling future automatic reports. See [Report an issue](/issue-reporting).
 
 ## Ownership boundary
 

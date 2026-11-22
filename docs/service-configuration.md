@@ -149,7 +149,7 @@ automatic reporting for the new profile and provide a contact address. One-off r
 available to users who leave automatic reporting off.
 
 Production destinations require HTTPS. Loopback HTTP is accepted for receiver development. Read
-[Report emulator issues](/issue-reporting) for consent, verification, and submission behavior.
+[Report an issue](/issue-reporting) for consent, verification, and submission behavior.
 
 ## Webhooks
 
@@ -267,4 +267,4 @@ Reporting preferences contain user-owned consent and contact information, so the
 permissions. Reports retain their verified reproduction cases for local review and resubmission.
 
 For the runtime path from configuration to listener, continue with [HTTP server](/http-server).
-Current protocol and fidelity limits are tracked in [Current boundaries](/current-boundaries).
+Current protocol and fidelity limits are tracked in [Capabilities and limits](/current-boundaries).

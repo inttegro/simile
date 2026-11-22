@@ -163,4 +163,4 @@ examples and scenario names.
 
 Read [Contract sources and HCL](/contract-sources-and-hcl) for the source boundary and
 [Fault injection](/fault-injection) for delivery disruptions, or
-[Current boundaries](/current-boundaries) for what an exact outcome does—and does not—prove.
+[Capabilities and limits](/current-boundaries) for what an exact outcome proves.

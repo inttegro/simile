@@ -1,166 +1,99 @@
 ---
-title: Current boundaries
-description: Know which parts of service emulation are implemented and which remain explicit future layers.
+title: Capabilities and limits
+sidebarTitle: Capabilities
+description: See what Simile v0.3.0 can emulate, where provider authorship is required, and which boundaries remain explicit.
 ---
 
-Simile earns trust by stating the authority behind each result. The current implementation runs
-stateful HTTP services with durable consequences, contract authentication, and outbound webhooks.
-Several production behaviors still require explicit provider authorship or remain outside the
-emulator.
+Simile v0.3.0 runs stateful HTTP service emulators from public contracts. It compiles the service
+before startup, validates each request, constructs a reachable result, commits declared
+consequences, and exposes the service through an ordinary local HTTP endpoint.
 
-## Implemented now
+This page describes the current product boundary. The [CLI reference](/cli-reference) covers
+commands, while [Architecture](/architecture) explains how the components enforce these promises.
 
-### Source and compilation
+## Capability map
 
-- OpenAPI 3.0, 3.1, and 3.2 ingestion from JSON or YAML
-- Smithy 2.0 IDL ingestion for HTTP services
-- declarations-only semantic TypeScript ingestion, including split packages and relative imports
-- optional HCL behavior modules and service configuration
-- named outcomes, reusable error sets, public request predicates, and opaque scenarios
-- backend and async-operation declarations
-- supported JSON Schema compilation, explicit soundness constraints, and generation heuristics
-- deterministic, versioned `.similec` artifacts with integrity validation
-- compiled path, query, header, and cookie parameter contracts
-- typed synchronous effects, named asynchronous units, and conservative database-write inference
-- OpenAPI callback and OpenAPI 3.1/3.2 top-level webhook ingestion
-- provider-authored webhook contracts and compact multi-webhook effect emissions
+| Area | Current support |
+| --- | --- |
+| Contract sources | OpenAPI 3.0, 3.1, and 3.2; Smithy 2.0 HTTP services; declarations-only semantic TypeScript. |
+| Requests | Path, query, header, cookie, JSON, form URL-encoded, multipart, and text decoding with compiled validation. Simile can synthesize a valid request when one is omitted. |
+| Responses | Schema-valid and request-aware JSON, text, form, multipart, binary, bodyless, and redirect outcomes with final proof before delivery. |
+| Public behavior | Named outcomes, reusable error sets, request predicates, opaque scenarios, protocol errors, request-to-response relations, and payload soundness constraints. |
+| State | Durable database, cache, queue, mail, object store, event bus, scheduler, outbound HTTP, logical time, and causal journal capabilities through Simile Stack. |
+| Consequences | Transactional synchronous effects, durable asynchronous work, retries, crash recovery, and dead-letter storage. |
+| Authentication | API key, Basic, Bearer, OAuth 2.0, and OpenID Connect test principals, setup workflows, grants, profiles, and credential lifecycle states. |
+| Webhooks | OpenAPI callbacks and webhooks, HCL contracts, committed emissions, causal dependencies, delays, ordering policy, HMAC-SHA256 signing, retries, and durable delivery. |
+| Failure testing | Deterministic scenarios and bounded stochastic transport-fault profiles. |
+| Reproduction | Seeded runs, self-contained bundles, replay, conformance suites, causal inspection, and verified issue reports. |
+| Learning | Buffered local HTTP proxying with sanitized evidence and conservative draft contract inference. |
 
-### Operation runtime
+## Sources of authority
 
-- operation lookup by stable key or `operationId`
-- JSON, form URL-encoded, multipart form-data, and text request decoding with compiled-schema validation
-- request synthesis when `simile run` receives no request
-- response selection with minimal schema-valid synthesis
-- structural request-to-response value projection
-- provider-declared body, path, query, header, and cookie bindings; derived values; reachable
-  lifecycle rules; and optional-data eligibility proofs
-- request-derived concatenation, substring, masking, and conditional-default transformations
-- JSON, text, form URL-encoded, multipart, and octet-stream response encoding
-- compiled response-header synthesis, including bodyless redirects with a declared `Location`
-- provider-declared protocol-error rendering, with Simile diagnostics as a fallback
-- process-local replay by idempotency key and GET URI
-- deterministic scenario faults and bounded, seeded stochastic fault profiles
-- compiled best-effort or strict webhook ordering policy with bounded, reproducible pair decisions
-- schema-checked webhook occurrence planning with body-derived callback targets, hard dependencies,
-  explicit delays, and destination overrides
-- response delay before delivery and disconnect after commit
-- resolved planning of HCL-declared async work
-- transactional synchronous effect execution with durable Stack checkpoints
-- a durable work outbox committed atomically with operation state
-- leased background dispatch with bounded retries, crash recovery, and dead-letter storage
-- signed outbound webhook delivery over HTTP with retry and redelivery primitives
-- API key, Basic, Bearer, OAuth 2.0, and OpenID Connect test-principal authentication
-- conservative database-backed create, read, list, and delete behavior when one entity is unambiguous
-- deterministic reproduction bundles and batch conformance replay
-- user-prepared and automatic issue reports backed by verified reproduction cases
-- profile-owned automatic-reporting consent, one-time manual contact, upgrade preflight, and local
-  report history
+Every behavior has a visible source:
 
-### Stack backend layer
+1. **Contract-derived** behavior comes from OpenAPI, Smithy, or semantic TypeScript.
+2. **Provider-authored** behavior comes from public HCL outcomes, effects, scenarios, faults, and
+   setup declarations.
+3. **Convention-inferred** behavior covers conservative cases such as one unambiguous database
+   entity and ordinary create, read, list, or delete operations.
+4. **Observed** behavior comes from sanitized proxy evidence and remains a draft until a provider
+   reviews it.
 
-- typed deterministic engines for database, cache, queue, mail, object store, event bus,
-  scheduler, and outbound HTTP capabilities
-- one versioned command/result protocol with backend-kind validation and idempotent replay
-- one logical-time model for cache TTLs, queue visibility, scheduled work, and timestamps
-- serializable snapshots, reset, stable backend errors, and a payload-free causal journal
-- separately runnable `simile-*` component processes with uniform lifecycle endpoints
-- automatic redb checkpoints under `SIMILE_HOME` that restore complete component state, time,
-  journal, counters, and replay records after restart
-- read-only state and causal-journal inspection with explicit payload opt-in
+`simile describe service --verbose` shows the assembled model. `simile audit` identifies gaps,
+unconstrained synthesis, and inferred behavior that still needs review.
 
-### HTTP server
+## Where provider authorship is required
 
-- literal and `{parameter}` path matching, preferring literal routes
-- `404` and `405` transport responses
-- an 8 MiB body limit
-- request body content-type handling
-- OpenAPI serialization for simple, label, matrix, form, space-delimited, pipe-delimited, and
-  deep-object parameters where their locations permit them
-- one process-wide opaque scenario selection
-- one optional process-wide stochastic fault profile
-- one-line safe access logs and graceful Ctrl-C shutdown
+Simile deliberately asks the provider to describe public behavior when the contract cannot prove
+it. Common examples include:
 
-## Deliberate boundaries
+- lifecycle transitions controlled by public request fields;
+- operation-specific errors and their public triggers;
+- multi-entity mutations or custom lookup keys;
+- totals, currencies, eligibility, or optional data that must reconcile across a payload;
+- background work, outbound calls, and webhook emissions; and
+- authentication setup that issues local credentials or collects caller configuration.
 
-### Request surface
+Use [`x-simile-from-request`](/request-response-relations) and
+[`x-simile-constraints`](/x-simile-constraints) for payload relationships. Use HCL for public
+outcomes and consequences. Private risk models and internal implementation decision trees do not
+belong in either source.
 
-OpenAPI security requirements are enforced with local HCL principal contracts and profiles. Mutual TLS still needs
-a TLS-aware listener capable of exposing verified client identity to the runtime. Unsupported
-parameter styles remain audit errors, and media types without a codec fail explicitly.
+## Explicit limits
 
-### Stateful behavior
+### Transport
 
-The service supervisor infers ordinary create, read, list, and delete behavior only when the
-contract identifies one database, one entity, and one stable identity. Reads may use conventional
-GET routes or unambiguous POST `/lookup` and `/page` JSON routes. Ambiguous projections,
-multi-entity responses, composite or custom lookup keys, and provider-specific transitions still
-require provider-authored behavior. Operation-response replay remains process-local, while Stack
-state and deferred work survive restarts.
+The built-in server handles buffered HTTP requests. TLS termination, mutual TLS identity,
+WebSockets, server-sent events, `CONNECT` tunnels, and streaming bodies require another adapter or
+remain future work. Unsupported media types and parameter styles fail clearly during compilation or
+request handling.
 
-### Effect execution
+### State and replay
 
-Synchronous effects, the outbox publication, and the Stack checkpoint share one commit boundary.
-Workers lease deferred work, retry failures, and move exhausted items to durable dead-letter
-storage. The service library exposes inspection and redelivery primitives. Dead-letter operations
-currently use that library API; a dedicated operator CLI is a future interface.
+Simile persists Stack state, deferred work, profiles, and reports under `SIMILE_HOME`. Automatic
+CRUD inference applies only when the entity, database, and identity are unambiguous. More complex
+state transitions need authored effects or state projections.
 
-### Webhook delivery
+Operation response replay for idempotency keys and GET resource identities currently belongs to
+one running service process. Reproduction bundles remain portable across processes because they
+carry the compiled artifact, request, and seed.
 
-Simile extracts OpenAPI callbacks and OpenAPI 3.1/3.2 top-level webhooks, compiles provider-authored
-fallback contracts, and plans schema-checked occurrences from committed effects. It resolves body
-pointer callback targets, explicit destination overrides, delays, and hard causal dependencies.
-The service-wide policy can then make bounded, reproducible ordering decisions for independent
-occurrences.
+### Proxy learning
 
-Committed occurrences enter the durable outbox. The worker applies hard dependencies and the
-service ordering policy, sends HTTP requests, attaches configured HMAC-SHA256 signatures, and
-acknowledges only successful responses. Retry exhaustion moves the occurrence to dead-letter
-storage. Delivery logs and durable state show emulator activity; they do not establish behavior of
-the provider's production webhook infrastructure.
+`simile proxy --learn` is designed for local development. It buffers request and response bodies,
+limits each body to 16 MiB, redacts recognized credentials, and may retain business values needed
+for inference. Review its evidence directory before sharing it. Production capture and transparent
+streaming proxy support are outside the current workflow.
 
-### Production equivalence
+### Production fidelity
 
-Provider latency, capacity, private risk decisions, undocumented behavior, and infrastructure need
-explicit public evidence before Simile can reproduce them. Explicit delays and
-disconnect-after-commit faults are testing controls rather than measurements. Schema-synthesized
-outcomes carry contract-derived provenance. Authored outcomes and effects carry provider-authored
-provenance. Convention-derived state behavior remains visibly inferred in `simile audit` and
-`simile describe service --verbose`.
+Simile can reproduce published behavior and provider-reviewed examples. It cannot discover private
+fraud decisions, undocumented capacity limits, production topology, or measured provider latency
+from a schema. Model only the behavior that an integration is entitled to rely on.
 
-### Issue reporting
+## A practical testing boundary
 
-Simile prepares automatic reports only for internal runtime failures and only when the selected
-profile granted consent. It sanitizes recognized secret fields, requires local reproduction, and
-deduplicates the verification fingerprint. Opaque request bodies are skipped because their secret
-boundaries cannot be established safely.
-
-The sender accepts `pending_verification` as a receipt. A provider-operated receiver still needs an
-isolated verifier before it promotes the report into an accepted issue. Upgrade discovery for the
-Simile binary and provider definition depends on the receiver's preflight response.
-
-## How to write tests today
-
-You can confidently test:
-
-- whether a supported JSON, form, multipart, or text request satisfies the published schema;
-- whether supported path, query, header, and cookie values satisfy their schemas;
-- how your integration handles declared success and error bodies;
-- how your integration handles declared binary bodies and redirects;
-- public scenarios published by the provider;
-- same-path values returned from a request-aware response;
-- values related from body, path, query, header, and cookie request locations;
-- request-constrained results when the provider publishes `x-simile-from-request`;
-- idempotency conflict handling and stable process-local replay;
-- how an integration handles declared latency or a lost response after commit; and
-- whether declared credentials and grants produce `401`, `403`, or operation execution;
-- whether inferred and authored database consequences survive restart;
-- whether synchronous backend consequences and deferred-work publication commit atomically;
-- whether named post-response actions retry and recover after restart; and
-- whether webhook occurrences deliver schema-valid, optionally signed payloads with causal edges.
-
-Do not treat convention inference as provider authorship, a successful local webhook as production
-acceptance, or a synthesized payload as evidence of an undocumented provider decision.
-
-Read [Outcome fidelity](/outcome-fidelity) to distinguish exact evidence from synthesis and
-[Fault injection](/fault-injection) for the environmental failure model, or
-[State, identity, and replay](/state-and-replay) for the current persistence model.
+Use Simile to test contract validation, reachable success and error outcomes, authentication,
+idempotency, stateful resource flows, asynchronous consequences, webhooks, transport faults, and
+recovery after restart. Keep a smaller set of provider-hosted tests for production credentials,
+network policy, account configuration, and behavior the public definition does not cover.

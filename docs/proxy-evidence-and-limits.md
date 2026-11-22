@@ -57,4 +57,4 @@ Production capture will be designed separately. Use the current proxy for local 
 service discovery.
 
 See [Review learned output](/proxy-learning-output) for the next step. See
-[Current boundaries](/current-boundaries) for limits that apply to the rest of Simile.
+[Capabilities and limits](/current-boundaries) for limits that apply to the rest of Simile.

@@ -99,5 +99,4 @@ or a future host without making schema logic depend on any transport.
 - Published behavior describes what an integrator can observe, not private production decision
   trees or provider-specific infrastructure.
 
-See [Current boundaries](/current-boundaries) for the fidelity Simile deliberately does not claim
-yet.
+See [Capabilities and limits](/current-boundaries) for the current fidelity boundary.

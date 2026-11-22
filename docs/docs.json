@@ -10,9 +10,9 @@
 	},
 	"favicon": "/favicon.svg",
 	"colors": {
-		"primary": "#16A34A",
+		"primary": "#15803D",
 		"light": "#22C55E",
-		"dark": "#22C55E"
+		"dark": "#15803D"
 	},
 	"navigation": {
 		"groups": [
@@ -21,64 +21,19 @@
 				"pages": ["index", "why-simile", "downloads", "quickstart"]
 			},
 			{
-				"group": "Build a service",
+				"group": "Trust",
 				"pages": [
-					"define-a-service",
-					"contract-sources-and-hcl",
-					{
-						"group": "Contract sources",
-						"pages": [
-							"openapi-and-hcl",
-							"smithy-contracts",
-							"typescript-contracts"
-						]
-					},
-					"service-configuration",
-					"describe-service",
-					"fidelity-audit",
-					"service-authoring-prompt"
+					"design-trade-offs",
+					"hosted-test-environment-risks",
+					"test-infrastructure-costs"
 				]
 			},
 			{
-				"group": "Proxy and learn",
-				"pages": [
-					"proxy-and-learn",
-					"proxy-api-calls",
-					"proxy-learning-output",
-					"proxy-evidence-and-limits"
-				]
-			},
-			{
-				"group": "Model behavior",
-				"pages": [
-					"outcome-fidelity",
-					"dependencies-and-effects",
-					"stateful-services",
-					"durable-work",
-					"webhook-delivery",
-					{
-						"group": "Faults",
-						"pages": ["fault-injection", "fault-glossary"]
-					},
-					"payload-soundness",
-					"generation-heuristics"
-				]
-			},
-			{
-				"group": "Run and test",
+				"group": "Use a service",
 				"pages": [
 					"service-lifecycle",
 					{
-						"group": "Test applications",
-						"pages": [
-							"local-testing",
-							"ci-testing",
-							"github-actions",
-							"docker"
-						]
-					},
-					{
-						"group": "Set up callers",
+						"group": "Set up access",
 						"pages": [
 							"principals",
 							"service-setup",
@@ -87,13 +42,22 @@
 						]
 					},
 					{
-						"group": "Exercise operations",
+						"group": "Call operations",
 						"pages": [
 							"run-operation",
 							"http-contract",
 							"request-encoding",
 							"request-validation",
 							"response-synthesis"
+						]
+					},
+					{
+						"group": "Test an application",
+						"pages": [
+							"local-testing",
+							"ci-testing",
+							"github-actions",
+							"docker"
 						]
 					},
 					{
@@ -108,12 +72,60 @@
 				]
 			},
 			{
+				"group": "Author a service",
+				"pages": [
+					"define-a-service",
+					{
+						"group": "Contract and composition",
+						"pages": [
+							"contract-sources-and-hcl",
+							"openapi-and-hcl",
+							"smithy-contracts",
+							"typescript-contracts",
+							"service-configuration"
+						]
+					},
+					{
+						"group": "Model public behavior",
+						"pages": [
+							"outcome-fidelity",
+							"dependencies-and-effects",
+							"stateful-services",
+							"durable-work",
+							"webhook-delivery",
+							"fault-injection",
+							"payload-soundness",
+							"generation-heuristics"
+						]
+					},
+					{
+						"group": "Review the definition",
+						"pages": [
+							"describe-service",
+							"fidelity-audit",
+							"service-authoring-prompt"
+						]
+					}
+				]
+			},
+			{
+				"group": "Proxy and learn",
+				"pages": [
+					"proxy-and-learn",
+					"proxy-api-calls",
+					"proxy-learning-output",
+					"proxy-evidence-and-limits"
+				]
+			},
+			{
 				"group": "Issues and reporting",
 				"pages": ["issue-reporting", "reporting-endpoint"]
 			},
 			{
 				"group": "Reference",
 				"pages": [
+					"cli-reference",
+					"current-boundaries",
 					{
 						"group": "Simile HCL",
 						"pages": ["hcl-language-specification", "hcl-glossary", "learn-simile-hcl"]
@@ -129,14 +141,15 @@
 							"constraint-conditional-derived",
 							"constraint-lifecycle-template"
 						]
-					}
+					},
+					"fault-glossary"
 				]
 			},
 			{
-				"group": "Internals",
+				"group": "Architecture",
 				"pages": [
 					{
-						"group": "Architecture",
+						"group": "How Simile works",
 						"pages": [
 							"architecture",
 							"source-model",
@@ -146,8 +159,7 @@
 							"operation-execution",
 							"http-server",
 							"application-registry",
-							"compatibility",
-							"current-boundaries"
+							"compatibility"
 						]
 					},
 					{

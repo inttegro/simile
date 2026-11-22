@@ -161,7 +161,7 @@ authentication errors stay within the emulated API. Choosing no still permits a 
 report later.
 
 Use `simile reporting inttegro` to inspect profile choices and `--mode off` to withdraw automatic
-reporting consent. See [Report emulator issues](/issue-reporting) for the complete evidence and
+reporting consent. See [Report an issue](/issue-reporting) for the complete evidence and
 privacy flow.
 
 ## Credential handling

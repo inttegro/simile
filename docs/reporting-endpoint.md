@@ -119,4 +119,4 @@ no internal network access, bounded CPU and memory, and a disposable filesystem.
 Report IDs are supplied by Simile and use the `rpt_` prefix. A duplicate identifier should be
 idempotent only when every stored digest agrees; otherwise return a conflict.
 
-Read [Report emulator issues](/issue-reporting) for the sender workflow.
+Read [Report an issue](/issue-reporting) for the sender workflow.

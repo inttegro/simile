@@ -63,4 +63,4 @@ Literal routes win over templates. Unknown paths return `404`, a known path with
 returns `405`, and both are decided before operation execution. Bodies are limited to 8 MiB.
 
 Mutual TLS remains an explicit adapter boundary because the listener has no verified client
-certificate input. See [Current boundaries](/current-boundaries).
+certificate input. See [Capabilities and limits](/current-boundaries).

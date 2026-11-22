@@ -3,9 +3,9 @@ title: Logical time
 description: One deterministic clock for expiry, visibility, scheduling, delays, and timestamps.
 ---
 
-Stack has one authoritative logical timeline. It is an internal shared primitive—not a ninth
-public resource—because caches, queues, schedules, mail transitions, and journal entries must agree
-about time.
+Stack has one authoritative logical timeline shared by caches, queues, schedules, mail transitions,
+and journal entries. The clock remains an internal primitive so every backend observes the same
+instant during one transition.
 
 ```mermaid
 flowchart TD
@@ -33,7 +33,7 @@ Realtime mode follows monotonic host elapsed time from a supplied starting insta
 is rejected in this mode. It is useful for interactive local use, but manual mode is preferable for
 repeatable CI assertions.
 
-## Why this is not `simile-clock`
+## Why the clock is shared
 
 A separate clock service would let components observe slightly different instants or fail
 independently while testing one operation. Stack instead gives every command an authoritative

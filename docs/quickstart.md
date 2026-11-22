@@ -1,17 +1,21 @@
 ---
 title: Quickstart
-description: Build a minimal service definition, register it, and send a local HTTP request.
+description: Define, verify, and run a local Orders service in a few minutes.
 ---
 
-This walkthrough builds a small Orders service, registers the compiled artifact, starts the HTTP
-emulator, and sends it a request. Choose OpenAPI, Smithy, or semantic TypeScript; each source below
-defines the same public operation and compiles into the same runtime model.
+This guide builds one complete service with OpenAPI. You will verify an operation, register the
+service, start its HTTP endpoint, and run an application test against it.
 
-## 1. Choose the public contract
+Install Simile first, then confirm the binary is ready:
 
-Use one of the following contract files. You do not need to maintain all three.
+```bash
+simile version
+simile doctor
+```
 
-### OpenAPI
+See [Downloads](/downloads) when Simile is not installed yet.
+
+## 1. Write the public contract
 
 Create `orders.yaml`:
 
@@ -33,12 +37,8 @@ paths:
               additionalProperties: false
               required: [product, quantity]
               properties:
-                product:
-                  type: string
-                  minLength: 1
-                quantity:
-                  type: integer
-                  minimum: 1
+                product: { type: string, minLength: 1 }
+                quantity: { type: integer, minimum: 1 }
       responses:
         "201":
           description: Order created
@@ -49,147 +49,26 @@ paths:
                 additionalProperties: false
                 required: [id, product, quantity]
                 properties:
-                  id:
-                    type: string
-                  product:
-                    type: string
-                  quantity:
-                    type: integer
+                  id: { type: string, pattern: "^or_[a-z0-9]{12}$" }
+                  product: { type: string }
+                  quantity: { type: integer }
+              x-simile-from-request:
+                bindings:
+                  - { from: /product, to: /product }
+                  - { from: /quantity, to: /quantity }
 ```
 
-### Smithy
+The extension makes `product` and `quantity` hard request-to-response postconditions. Simile may
+generate the order ID, while the response must preserve the values supplied by the caller.
 
-Create `orders.smithy`:
+## 2. Compose the service
 
-```smithy
-$version: "2.0"
-namespace example.orders
-
-@trait(selector: "member")
-string contentType
-
-@trait(selector: "operation")
-document responseRelations
-
-structure CreateOrderRequest {
-    @required
-    product: String
-
-    @required
-    @range(min: 1)
-    quantity: Integer
-}
-
-structure Order {
-    @required
-    id: String
-
-    @required
-    product: String
-
-    @required
-    quantity: Integer
-}
-
-structure CreateOrderInput {
-    @httpPayload
-    @required
-    @contentType("application/json")
-    body: CreateOrderRequest
-}
-
-structure CreateOrderOutput {
-    @httpPayload
-    @required
-    @contentType("application/json")
-    body: Order
-}
-
-@http(method: "POST", uri: "/orders", code: 201)
-@responseRelations({
-    "201": {
-        "application/json": {
-            bindings: [
-                { from: "/product", to: "/product" }
-                { from: "/quantity", to: "/quantity" }
-            ]
-        }
-    }
-})
-operation createOrder {
-    input: CreateOrderInput
-    output: CreateOrderOutput
-}
-
-service Orders {
-    version: "1.0.0"
-    operations: [createOrder]
-}
-```
-
-### Semantic TypeScript
-
-Create `orders.d.ts`:
-
-```ts
-export type ServiceName = "Orders";
-export type CollectionVersion = "1.0.0";
-export type Closed<Value> = Value;
-
-export type CreateOrderRequest = Closed<{
-  readonly product: string;
-  readonly quantity: number;
-}>;
-
-export type Order = Closed<{
-  readonly id: `or_${string}`;
-  readonly product: string;
-  readonly quantity: number;
-}>;
-
-export interface OrdersOperations {
-  readonly createOrder: {
-    readonly method: "POST";
-    readonly path: "/orders";
-    readonly request: {
-      readonly required: true;
-      readonly content: {
-        readonly "application/json": CreateOrderRequest;
-      };
-    };
-    readonly responses: {
-      readonly "201": {
-        readonly content: {
-          readonly "application/json": Order;
-        };
-      };
-    };
-  };
-}
-
-export interface ResponseRelations {
-  readonly createOrder: {
-    readonly "201": {
-      readonly "application/json": {
-        readonly bindings: readonly [
-          { readonly from: "/product"; readonly to: "/product" },
-          { readonly from: "/quantity"; readonly to: "/quantity" },
-        ];
-      };
-    };
-  };
-}
-```
-
-Each contract gives Simile enough information to validate a request and build a valid response.
-There is no HCL file yet because this service has no additional public behavior to declare.
-
-## 2. Add the service composition
-
-Create `Simfile` next to the selected contract. Use exactly one of these source blocks:
+Create `Simfile` beside the contract:
 
 ```hcl
 service "orders" {
+  description = "A local Orders service for integration tests."
+
   listen {
     host = "127.0.0.1"
     port = 4242
@@ -201,53 +80,34 @@ service "orders" {
 }
 ```
 
-```hcl
-service "orders" {
-  listen {
-    host = "127.0.0.1"
-    port = 4242
-  }
-  smithy { path = "./orders.smithy" }
-}
+The contract owns the HTTP surface. The `Simfile` names the runnable service, selects its contract,
+and sets its local listener.
+
+## 3. Verify one operation
+
+Describe the assembled service, then execute `createOrder` directly:
+
+```bash
+simile describe
+simile run ./orders.yaml \
+  --operation-id createOrder \
+  --request '{"body":{"product":"beat_pack","quantity":2}}'
 ```
 
-```hcl
-service "orders" {
-  listen {
-    host = "127.0.0.1"
-    port = 4242
-  }
-  typescript { path = "./orders.d.ts" }
-}
-```
+`run` validates the request, constructs a reachable response, proves the declared relation, and
+prints the response payload. Add `--verbose` to see the normalized request, selected outcome, and
+response metadata.
 
-The configuration answers operational questions—what the service is called, where it listens,
-and where its contract comes from. Routes and schemas remain in the selected contract.
+## 4. Register and start
 
-## 3. Register and start it
+Registration compiles the service into an immutable local revision:
 
 ```bash
 simile register
 simile start orders
 ```
 
-Registration compiles the source and atomically installs a validated `.similec` artifact under
-`~/.simile`. Starting by name loads that artifact; it does not reopen the contract source.
-
-A service that declares `principal_setup` adds one command between registration and start:
-
-```bash
-simile register inttegro --config ./inttegro.simile.hcl
-simile setup inttegro
-simile start inttegro
-```
-
-The profile keeps that application's credentials and webhook configuration together while its
-principal owns the shared credential grants.
-See [Service profiles](/service-profiles) for the model and [Setup](/service-setup) for the complete
-workflow.
-
-Keep the server running and use another terminal for the request:
+Keep the server running. In another terminal, call it as an ordinary HTTP service:
 
 ```bash
 curl --request POST http://127.0.0.1:4242/orders \
@@ -255,72 +115,34 @@ curl --request POST http://127.0.0.1:4242/orders \
   --data '{"product":"beat_pack","quantity":2}'
 ```
 
-One possible response is:
+One response may look like:
 
 ```json
 {
-  "id": "p6r2x9k1",
+  "id": "or_k7m2p9x4q1vz",
   "product": "beat_pack",
   "quantity": 2
 }
 ```
 
-The exact generated `id` varies. `product` and `quantity` are projected from the validated request.
-OpenAPI can use compatible same-path projection; the Smithy and TypeScript examples declare those
-bindings explicitly. The complete response is validated again before it is returned.
+Generated values vary between new requests. Idempotency and resource identity can make repeated
+calls replay the first committed result when the contract supports those identities.
 
-## 4. Run an operation without a server
+## 5. Run an application test
 
-`simile run` is useful for authoring and CI checks:
-
-```bash
-simile run ./orders.yaml --operation-id createOrder
-simile run ./orders.smithy --operation-id createOrder
-simile run ./orders.d.ts --operation-id createOrder
-```
-
-Run only the command for the contract you selected.
-
-Because no request was provided, Simile synthesizes one, validates it, executes the operation, and
-prints only the pretty JSON response. Pass `--verbose` to see the normalized request, response
-metadata, and outcome provenance.
-
-You can also provide a full request document:
-
-```bash
-simile run ./orders.yaml \
-  --operation-id createOrder \
-  --request '{"headers":{"Content-Type":"application/json"},"body":{"product":"jingle","quantity":1}}'
-```
-
-Replace `./orders.yaml` with the Smithy or TypeScript path when that is the contract you selected.
-The same `--request` option accepts a file path or `-` for standard input.
-
-## 5. Update the registered service
-
-After editing the selected contract, compile a new immutable revision and move the registration to
-it:
-
-```bash
-simile update orders
-```
-
-If compilation fails, the current revision remains active. Restart the service process to load the
-new artifact.
-
-## 6. Run an application test
-
-When an application test suite should own the emulator's lifetime, run it through Simile:
+Let Simile own the emulator's lifetime during a test:
 
 ```bash
 simile test orders -- npm test
 ```
 
-The child command receives `SIMILE_BASE_URL`. Simile binds before starting the tests, selects an
-available port, returns the test command's exit status, and shuts down afterward. Continue with
-[Local testing](/local-testing) or [GitHub Actions](/github-actions).
+Simile starts the service on an available port, exports that address as `SIMILE_BASE_URL`, runs the
+test command, returns its exit status, and shuts the service down.
 
-Next, read the authoring standard for [OpenAPI](/openapi-and-hcl),
-[Smithy](/smithy-contracts), or [semantic TypeScript](/typescript-contracts). Use
-[Contract sources and HCL](/contract-sources-and-hcl) to add named outcomes and effects, and
-[Service lifecycle](/service-lifecycle) to understand what registration stores.
+## Continue
+
+- [Use a service](/service-lifecycle) explains registration, setup, profiles, updates, and removal.
+- [Define a service](/define-a-service) is the complete provider authoring workflow.
+- [Contract sources and HCL](/contract-sources-and-hcl) covers OpenAPI, Smithy, semantic TypeScript,
+  and optional public behavior.
+- [Local testing](/local-testing) and [CI testing](/ci-testing) cover application test environments.

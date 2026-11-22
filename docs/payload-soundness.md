@@ -24,13 +24,14 @@ For source syntax, use the [OpenAPI extension reference](/openapi-extensions),
 [TypeScript contract standard](/typescript-contracts). This page explains the shared proof and
 construction model behind those forms.
 
-## Valid shape is not enough
+## Four levels of payload correctness
 
-An ordinary field schema can say that `amount_due`, `amount_paid`, and `amount_remaining` are
-non-negative integers.
-That makes each field individually valid, but it does not prove the accounting identity between
-them. Likewise, four nullable status timestamps can each be valid while describing an impossible
-lifecycle.
+Payload correctness has four useful levels: valid JSON, schema-valid fields, a result reachable
+from the submitted request, and a coherent business outcome. An ordinary field schema can say that
+`amount_due`, `amount_paid`, and `amount_remaining` are non-negative integers. That reaches the
+second level. The accounting identity between them still needs an explicit relationship. Four
+nullable status timestamps can likewise pass their individual schemas while describing an
+impossible lifecycle.
 
 `x-simile-constraints` closes that gap with typed relationships that Simile can both evaluate and
 construct. A relationship is accepted only when the compiler can resolve its paths, prove type

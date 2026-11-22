@@ -290,4 +290,4 @@ A service definition is ready for other integrators when:
 
 Continue with [Contract sources and HCL](/contract-sources-and-hcl) for the ownership model,
 [Configuration](/service-configuration) for composition syntax, and
-[Model behavior](/outcome-fidelity) for higher-fidelity outcomes and consequences.
+[Outcome fidelity](/outcome-fidelity) for higher-fidelity results and consequences.

@@ -3,9 +3,9 @@ title: Reproduction bundles
 description: Capture one execution as a portable, deterministic debugging artifact.
 ---
 
-A seed alone is not a reproduction. The contract may change, an example may move, or a generated
-request may select a different operation. A Simile reproduction bundle freezes the inputs required
-to explain and repeat one execution.
+A complete reproduction needs more than a seed. The contract may change, an example may move, or a
+generated request may select a different operation. A Simile reproduction bundle freezes the
+inputs required to explain and repeat one execution.
 
 ## Capture a run
 
@@ -54,4 +54,4 @@ Replaying the bundled artifact answers “Why did this exact test produce this r
 useful, but they are not interchangeable.
 
 Use [Conformance suites](/conformance-suites) to run many bundles as one provider or integration
-test gate. Use [Report emulator issues](/issue-reporting) to turn a verified bundle into a report.
+test gate. Use [Report an issue](/issue-reporting) to turn a verified bundle into a report.

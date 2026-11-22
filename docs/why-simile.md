@@ -11,6 +11,18 @@ the developer remains dependent on it.
 Simile explores a third model: the provider publishes a versioned, executable description of its
 public behavior, and the developer runs that behavior locally.
 
+## The shift toward local emulation
+
+AWS now publishes
+[AWS Emulator](https://docs.aws.amazon.com/emulator/latest/userguide/what-is-service.html), a local
+AWS API endpoint for developer machines and CI. AWS says these tests need no AWS account, create no
+AWS resources, and carry no additional AWS service fee. Requests stay with the emulator.
+
+That is a useful market signal: a provider-hosted dev or test environment is no longer the only
+credible way to support integrations. AWS still directs teams to real AWS for security and final
+production validation. Simile follows the same division while making the model available to any
+service that can publish a contract and observable behavior.
+
 ## The real unit is an operation
 
 An HTTP exchange is only the visible edge of an operation. Creating an order may return `201`,
@@ -30,7 +42,7 @@ flowchart LR
 The runtime validates input, produces a request-aware immediate response, commits synchronous state,
 and publishes declared follow-up work durably. Background workers lease async actions and webhooks,
 retry failure, and preserve causal ordering across restarts. See
-[Current boundaries](/current-boundaries) for the precise fidelity of each layer.
+[Capabilities and limits](/current-boundaries) for the precise fidelity of each layer.
 
 ## Who owns the truth
 
@@ -79,7 +91,7 @@ Independent calls should not all receive one permanent fixture. Simile generates
 values. A repeated idempotency key or GET resource identity replays the first completed outcome
 within the running process.
 
-### Fidelity is reported, not implied
+### Fidelity has visible provenance
 
 A provider example is stronger evidence than a schema-generated body. Simile records outcome
 provenance so tooling can distinguish exact provider-authored results from contract-valid
@@ -93,4 +105,7 @@ the real service. Simile focuses on the provider's published contract and observ
 and reports the provenance of each approximation so the user can see where evidence ends.
 
 Continue with the [Quickstart](/quickstart), or read
-[Contract sources and HCL](/contract-sources-and-hcl) for the definition model.
+[Contract sources and HCL](/contract-sources-and-hcl) for the definition model. Before adopting
+Simile, review the [design trade-offs](/design-trade-offs),
+[hosted-environment risks](/hosted-test-environment-risks), and
+[test-infrastructure costs](/test-infrastructure-costs).

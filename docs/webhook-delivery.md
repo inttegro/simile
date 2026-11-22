@@ -318,4 +318,4 @@ windows, private signing rotation, and receiver acceptance remain separate evide
 - [Dependencies and effects](/dependencies-and-effects) - How operation consequences enter an effect plan
 - [Durable work](/durable-work) - Checkpoint, lease, retry, and crash-recovery semantics
 - [Describe a service](/describe-service) - Inspect the public meaning of a compiled service
-- [Current boundaries](/current-boundaries#webhook-delivery) - Implemented webhook behavior and explicit future layers
+- [Capabilities and limits](/current-boundaries) - Current webhook support and service-emulation boundaries

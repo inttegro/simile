@@ -141,4 +141,4 @@ contracts. The fidelity audit marks each affected operation because the listener
 verified client-certificate input.
 
 Continue with [Configuration](/service-configuration) for composition, [Fidelity audit](/fidelity-audit)
-for coverage checks, or [Current boundaries](/current-boundaries) for the full support map.
+for coverage checks, or [Capabilities and limits](/current-boundaries) for the full support map.

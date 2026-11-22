@@ -209,7 +209,7 @@ service artifact. One-off reports require an explicit send action and contact ad
 
 Simile appends `/preflight` to this URL for version and service-definition checks. It sends the
 technical report, reproduction attachments, and reporter contact as separate multipart fields to
-the declared endpoint. See [Report emulator issues](/issue-reporting).
+the declared endpoint. See [Report an issue](/issue-reporting).
 
 ### `openapi`, `smithy`, and `typescript`
 

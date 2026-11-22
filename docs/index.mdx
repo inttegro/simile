@@ -1,60 +1,75 @@
 ---
-title: Run services locally
+title: Test against the service you expect
 sidebarTitle: Simile
-description: A local HTTP emulator generated from a provider's public contract.
+description: Run faithful service emulators locally and in CI.
 mode: wide
 ---
 
 *Videri quam esse.*
 
-Simile compiles a provider's public OpenAPI, Smithy, or semantic TypeScript contract and optional
-behavior into a local HTTP service your application can call normally. Start with the idea, run a
-service, or go directly to the parts of the design you want to understand.
+Simile turns a provider's public contract and behavior into a local HTTP service. Your application
+uses its normal client, credentials, and requests while Simile validates inputs, returns reachable
+results, persists declared state, and reproduces failures.
+
+Choose the path that matches what you need to do.
+
+Evaluating Simile for a team? Start with the [design trade-offs](/design-trade-offs),
+[security boundary](/hosted-test-environment-risks), and
+[cost model](/test-infrastructure-costs).
 
 <Columns cols={2}>
-  <Card
-    title="Why Simile exists"
-    icon="compass"
-    href="/why-simile"
-    cta="Discover the idea"
-    arrow="true"
-  >
-    See why a local service emulator provides more confidence than fixtures or a hosted sandbox.
-  </Card>
   <Card
     title="Run your first service"
     icon="terminal"
     href="/quickstart"
-    cta="Open the quickstart"
+    cta="Start the quickstart"
     arrow="true"
   >
-    Install Simile, register a definition, and call its local HTTP endpoint.
+    Define one operation, start its local endpoint, and run an application test.
   </Card>
   <Card
-    title="Define a service"
+    title="Use a service"
+    icon="play"
+    href="/service-lifecycle"
+    cta="Follow the lifecycle"
+    arrow="true"
+  >
+    Register a provider definition, create caller profiles, start it, test, inspect, and update it.
+  </Card>
+  <Card
+    title="Author a service"
     icon="file-code"
     href="/define-a-service"
-    cta="Follow the authoring guide"
+    cta="Build a definition"
     arrow="true"
   >
-    Move from public evidence to a validated contract, configuration, audit, and running emulator.
+    Turn public provider evidence into a reviewed contract, behavior layer, and runnable Simfile.
   </Card>
   <Card
-    title="Create service profiles"
-    icon="id-card"
-    href="/service-profiles"
-    cta="Explore profiles"
+    title="Learn from real traffic"
+    icon="route"
+    href="/proxy-and-learn"
+    cta="Open proxy and learn"
     arrow="true"
   >
-    Give each application or integration its own credentials, permissions, and webhook settings.
+    Proxy a local integration through a real service and review the draft Simile creates.
   </Card>
   <Card
-    title="Understand the runtime"
-    icon="boxes-stacked"
+    title="Report an inconsistency"
+    icon="bug"
+    href="/issue-reporting"
+    cta="Prepare a report"
+    arrow="true"
+  >
+    Capture a reproducible mismatch, verify it locally, and send it with explicit consent.
+  </Card>
+  <Card
+    title="Understand the system"
+    icon="diagram-project"
     href="/architecture"
-    cta="Read the architecture"
+    cta="Explore the architecture"
     arrow="true"
   >
-    Follow a definition through compilation, execution, fidelity, and current boundaries.
+    Follow sources through compilation, execution, durable state, and delivery.
   </Card>
 </Columns>

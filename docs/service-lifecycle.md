@@ -3,9 +3,23 @@ title: Lifecycle
 description: Understand how register, update, start, test, remove, and run manage service definitions.
 ---
 
-Simile has two execution paths. `run` compiles and executes one operation in a short-lived process.
-`register` and `start` create a reusable local service. They share the compiler but deliberately
-have different persistence and replay behavior.
+This page is the entry point for using a service definition. Most application work follows
+`register` → `setup` → `test` or `start`. Contract authors can use `run` while refining one
+operation, then register the complete definition when it is ready for repeated use.
+
+| Goal | Command path |
+| --- | --- |
+| Try one operation | `simile run CONTRACT --operation-id ID` |
+| Install a reusable service | `simile register` |
+| Create local caller credentials | `simile setup SERVICE` |
+| Run an application test | `simile test SERVICE -- COMMAND…` |
+| Keep the emulator running | `simile start SERVICE` |
+| Refresh the installed definition | `simile update SERVICE` |
+| Delete the local service | `simile remove SERVICE --confirm SERVICE` |
+
+`run` compiles and executes one operation in a short-lived process. Registered services use an
+immutable compiled revision and can retain profiles, backend state, reports, and deferred work
+under `SIMILE_HOME`.
 
 ```mermaid
 flowchart TD
@@ -176,6 +190,10 @@ sidecar ownership locks; the registry revisions themselves remain immutable. `lo
 for broader registry coordination; installation currently relies on same-filesystem staging and
 atomic rename.
 
-See [Configuration](/service-configuration) for configuration rules and
-[Compiled artifact](/compiled-artifact) for what the installed runtime reads. The component
-ownership and atomic installation flow are described in [Application and registry](/application-registry).
+## Continue
+
+- [Set up a service](/service-setup) when the provider provisions credentials or caller settings.
+- [Run one operation](/run-operation) to exercise the contract without a long-running server.
+- [Local testing](/local-testing) to supervise an application test process.
+- [State inspection](/state-inspection) to follow persisted resources and causal history.
+- [Application and registry](/application-registry) for the installation and ownership internals.

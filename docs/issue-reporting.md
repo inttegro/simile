@@ -1,5 +1,5 @@
 ---
-title: Report emulator issues
+title: Report an issue
 sidebarTitle: Report an issue
 description: Prepare reproducible reports, review their evidence, and control automatic submission.
 ---
