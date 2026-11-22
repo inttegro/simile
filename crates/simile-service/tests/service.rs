@@ -940,6 +940,152 @@ paths:
     );
 }
 
+#[test]
+fn state_projection_failures_select_declared_public_outcomes() {
+    let service = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Catalog orders, version: 1.0.0 }
+paths:
+  /prices:
+    post:
+      operationId: createPrice
+      responses:
+        "200":
+          description: stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, active, amount]
+                properties:
+                  id: { type: string }
+                  active: { type: boolean }
+                  amount: { type: integer }
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [price_id]
+              properties:
+                price_id: { type: string }
+                amount: { type: integer }
+      responses:
+        "200":
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount]
+                properties:
+                  amount: { type: integer }
+              x-simile-from-request:
+                bindings:
+                  - { from: /amount, to: /amount }
+        "400":
+          description: rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code]
+                properties:
+                  code: { type: string, enum: [price_not_found, price_inactive] }
+"#,
+        r#"
+backend "db" "resources" {}
+
+behavior "createPrice" {
+  outcome "inactive" {
+    status = 200
+    body = { id = "pr_test", active = false, amount = 1200 }
+  }
+}
+
+effect "store_price" {
+  operations = ["createPrice"]
+  action "db.resources" "put" {
+    collection = "prices"
+    key        = response.id
+    value      = response
+  }
+}
+
+behavior "createOrder" {
+  outcome "price_not_found" {
+    status = 400
+    body   = { code = "price_not_found" }
+  }
+  outcome "price_inactive" {
+    status = 400
+    body   = { code = "price_inactive" }
+  }
+
+  resolve "db.resources" {
+    collection      = "prices"
+    key             = "/price_id"
+    select          = "/amount"
+    into            = "/amount"
+    missing_outcome = "price_not_found"
+
+    where {
+      stored    = "/active"
+      equals    = true
+      otherwise = "price_inactive"
+    }
+  }
+}
+"#,
+    );
+
+    let missing = service
+        .execute_value(OperationValueCall {
+            operation: "POST /orders",
+            content_type: Some("application/json"),
+            body: Some(&serde_json::json!({ "price_id": "pr_missing" })),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(missing.selected_outcome(), Some("price_not_found"));
+    assert_eq!(missing.response().status(), 400);
+    assert_eq!(
+        missing.response().value(),
+        Some(&serde_json::json!({ "code": "price_not_found" }))
+    );
+
+    service
+        .execute_value_with_options(
+            OperationValueCall {
+                operation: "POST /prices",
+                content_type: None,
+                body: None,
+            },
+            ExecutionOptions {
+                outcome: Some("inactive"),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let inactive = service
+        .execute_value(OperationValueCall {
+            operation: "POST /orders",
+            content_type: Some("application/json"),
+            body: Some(&serde_json::json!({ "price_id": "pr_test" })),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(inactive.selected_outcome(), Some("price_inactive"));
+    assert_eq!(inactive.response().status(), 400);
+    assert_eq!(
+        inactive.response().value(),
+        Some(&serde_json::json!({ "code": "price_inactive" }))
+    );
+}
+
 fn product_parameters(
     service: &simile_service::Service,
     operation: &str,

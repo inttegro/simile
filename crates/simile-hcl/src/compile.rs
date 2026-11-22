@@ -440,6 +440,7 @@ fn collect_behaviors(
                     key: projection.key,
                     select: projection.select,
                     into: projection.into,
+                    missing_outcome: projection.missing_outcome,
                     predicates: projection
                         .predicates
                         .into_iter()
@@ -447,15 +448,30 @@ fn collect_behaviors(
                             crate::ast::StateProjectionPredicateDeclaration::Equals {
                                 stored,
                                 value,
-                            } => StateProjectionPredicate::Equals { stored, value },
+                                otherwise,
+                            } => StateProjectionPredicate::Equals {
+                                stored,
+                                value,
+                                otherwise,
+                            },
                             crate::ast::StateProjectionPredicateDeclaration::EqualsRequest {
                                 stored,
                                 request,
-                            } => StateProjectionPredicate::EqualsRequest { stored, request },
+                                otherwise,
+                            } => StateProjectionPredicate::EqualsRequest {
+                                stored,
+                                request,
+                                otherwise,
+                            },
                             crate::ast::StateProjectionPredicateDeclaration::State {
                                 stored,
                                 state,
-                            } => StateProjectionPredicate::State { stored, state },
+                                otherwise,
+                            } => StateProjectionPredicate::State {
+                                stored,
+                                state,
+                                otherwise,
+                            },
                         })
                         .collect(),
                 })
@@ -1011,6 +1027,18 @@ fn validate_behaviors(spec: &BehaviorSpec, api: &ApiContract) -> Result<()> {
 }
 
 fn validate_state_projections(spec: &BehaviorSpec, behavior: &Behavior) -> Result<()> {
+    let outcome_names = behavior
+        .outcomes
+        .iter()
+        .map(|outcome| outcome.name.as_str())
+        .chain(
+            behavior
+                .error_sets
+                .iter()
+                .filter_map(|name| spec.error_sets.get(name))
+                .flat_map(|set| set.outcomes.iter().map(|outcome| outcome.name.as_str())),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
     for projection in &behavior.state_projections {
         if !spec.resources.contains_key(&projection.resource) {
             return Err(Error::UnknownEffectBackend {
@@ -1027,6 +1055,14 @@ fn validate_state_projections(spec: &BehaviorSpec, behavior: &Behavior) -> Resul
         validate_projection_pointer(behavior, "key", &projection.key, true)?;
         validate_projection_pointer(behavior, "select", &projection.select, false)?;
         validate_projection_pointer(behavior, "into", &projection.into, true)?;
+        if let Some(outcome) = &projection.missing_outcome {
+            if !outcome_names.contains(outcome.as_str()) {
+                return Err(invalid_state_projection(
+                    behavior,
+                    format!("`missing_outcome` references unknown outcome `{outcome}`"),
+                ));
+            }
+        }
         let key_wildcards = wildcard_count(&projection.key);
         if wildcard_count(&projection.into) != key_wildcards {
             return Err(invalid_state_projection(
@@ -1040,7 +1076,9 @@ fn validate_state_projections(spec: &BehaviorSpec, behavior: &Behavior) -> Resul
                 | StateProjectionPredicate::State { stored, .. } => {
                     validate_projection_pointer(behavior, "where.stored", stored, false)?;
                 }
-                StateProjectionPredicate::EqualsRequest { stored, request } => {
+                StateProjectionPredicate::EqualsRequest {
+                    stored, request, ..
+                } => {
                     validate_projection_pointer(behavior, "where.stored", stored, false)?;
                     validate_projection_pointer(behavior, "where.request", request, true)?;
                     if wildcard_count(request) != key_wildcards {
@@ -1049,6 +1087,14 @@ fn validate_state_projections(spec: &BehaviorSpec, behavior: &Behavior) -> Resul
                             "`where.request` and `key` must contain the same number of array wildcards",
                         ));
                     }
+                }
+            }
+            if let Some(outcome) = predicate.otherwise() {
+                if !outcome_names.contains(outcome) {
+                    return Err(invalid_state_projection(
+                        behavior,
+                        format!("`where.otherwise` references unknown outcome `{outcome}`"),
+                    ));
                 }
             }
         }

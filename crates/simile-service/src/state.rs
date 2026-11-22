@@ -15,6 +15,12 @@ pub(crate) enum StateResolution {
     Missing,
 }
 
+#[derive(Default)]
+pub(crate) struct ResponseRequestResolution {
+    pub(crate) body: Option<Value>,
+    pub(crate) outcome: Option<String>,
+}
+
 /// Build the private synthesis view declared by an operation's HCL state projections.
 ///
 /// The returned value is never exposed as the caller's request and is never used by effects. This
@@ -25,16 +31,16 @@ pub(crate) fn response_request_body(
     operation_key: &str,
     request_body: Option<&Value>,
     profile: Option<&str>,
-) -> Result<Option<Value>> {
+) -> Result<ResponseRequestResolution> {
     let Some(request_body) = request_body else {
-        return Ok(None);
+        return Ok(ResponseRequestResolution::default());
     };
     let Some(operation) = service.artifact().operation(operation_key) else {
-        return Ok(None);
+        return Ok(ResponseRequestResolution::default());
     };
     let projections = operation.state_projections();
     if projections.is_empty() {
-        return Ok(None);
+        return Ok(ResponseRequestResolution::default());
     }
     let mut enriched = request_body.clone();
     for projection in projections {
@@ -70,19 +76,32 @@ pub(crate) fn response_request_body(
                 _ => return Err(Error::InvalidStateRead("db.get")),
             };
             let Some(document) = document else {
+                if let Some(outcome) = projection.missing_outcome {
+                    return Ok(ResponseRequestResolution {
+                        body: None,
+                        outcome: Some(outcome),
+                    });
+                }
                 return Err(Error::InvalidStateProjection {
                     operation: operation_key.to_owned(),
                     reason: format!("stored `{}` resource was not found", projection.collection),
                 });
             };
-            if !projection.predicates.iter().all(|predicate| {
-                state_projection_predicate_matches(
+            for predicate in &projection.predicates {
+                if state_projection_predicate_matches(
                     predicate,
                     &document.value,
                     &enriched,
                     &selection.captures,
-                )
-            }) {
+                ) {
+                    continue;
+                }
+                if let Some(outcome) = predicate.otherwise() {
+                    return Ok(ResponseRequestResolution {
+                        body: None,
+                        outcome: Some(outcome.to_owned()),
+                    });
+                }
                 return Err(Error::InvalidStateProjection {
                     operation: operation_key.to_owned(),
                     reason: format!(
@@ -117,7 +136,10 @@ pub(crate) fn response_request_body(
             }
         }
     }
-    Ok(Some(enriched))
+    Ok(ResponseRequestResolution {
+        body: Some(enriched),
+        outcome: None,
+    })
 }
 
 struct PatternSelection {
@@ -203,16 +225,19 @@ fn state_projection_predicate_matches(
         StateProjectionPredicate::Equals {
             stored: path,
             value,
+            ..
         } => stored.pointer(path) == Some(value),
         StateProjectionPredicate::EqualsRequest {
             stored: stored_path,
             request: request_pattern,
+            ..
         } => materialize_pattern(request_pattern, captures)
             .and_then(|path| request.pointer(&path))
             .is_some_and(|request| stored.pointer(stored_path) == Some(request)),
         StateProjectionPredicate::State {
             stored: path,
             state,
+            ..
         } => {
             let value = stored.pointer(path);
             match state {
@@ -398,8 +423,18 @@ pub(crate) fn mutation_baseline(
     let Some(document) = document else {
         return Ok(StateResolution::None);
     };
-    entity_candidate(operation, &collection, document.value, request_body)
-        .map(StateResolution::Found)
+    match entity_candidate(operation, &collection, document.value.clone(), request_body) {
+        Ok(candidate) => Ok(StateResolution::Found(candidate)),
+        Err(Error::StateResponseUnavailable) => {
+            // Why: lifecycle mutations can make a response field newly required even though the
+            // previously stored snapshot cannot contain it. Preserve the conventional resource
+            // envelope so runtime synthesis can fill that field from the response contract.
+            let mut envelope = Map::new();
+            envelope.insert(singular(&collection), document.value);
+            Ok(StateResolution::Found(Value::Object(envelope)))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn delete_command(

@@ -233,7 +233,7 @@ fn state_projection(block: &Block, source: &str) -> Result<StateProjectionDeclar
         block.body(),
         source,
         "resolve",
-        &["collection", "key", "select", "into"],
+        &["collection", "key", "select", "into", "missing_outcome"],
     )?;
     let backend = block.labels()[0].as_str();
     let (kind, name) =
@@ -275,6 +275,9 @@ fn state_projection(block: &Block, source: &str) -> Result<StateProjectionDeclar
         key: required_string(block.body(), source, "resolve", "key")?,
         select: required_string(block.body(), source, "resolve", "select")?,
         into: required_string(block.body(), source, "resolve", "into")?,
+        missing_outcome: attribute(block.body(), "missing_outcome")
+            .map(|value| non_empty_string(value, source, "resolve", "missing_outcome"))
+            .transpose()?,
         predicates,
     })
 }
@@ -289,12 +292,15 @@ fn state_projection_predicate(
         block.body(),
         source,
         "where",
-        &["stored", "equals", "request", "state"],
+        &["stored", "equals", "request", "state", "otherwise"],
     )?;
     let stored = required_string(block.body(), source, "where", "stored")?;
     let equals = attribute(block.body(), "equals");
     let request = attribute(block.body(), "request");
     let state = attribute(block.body(), "state");
+    let otherwise = attribute(block.body(), "otherwise")
+        .map(|value| non_empty_string(value, source, "where", "otherwise"))
+        .transpose()?;
     if usize::from(equals.is_some()) + usize::from(request.is_some()) + usize::from(state.is_some())
         != 1
     {
@@ -306,12 +312,14 @@ fn state_projection_predicate(
         return Ok(StateProjectionPredicateDeclaration::Equals {
             stored,
             value: literal_value(equals, source, "where", "equals")?,
+            otherwise,
         });
     }
     if let Some(request) = request {
         return Ok(StateProjectionPredicateDeclaration::EqualsRequest {
             stored,
             request: non_empty_string(request, source, "where", "request")?,
+            otherwise,
         });
     }
     // Why: malformed public configuration must produce a provider-facing diagnostic, not panic
@@ -337,7 +345,11 @@ fn state_projection_predicate(
             });
         }
     };
-    Ok(StateProjectionPredicateDeclaration::State { stored, state })
+    Ok(StateProjectionPredicateDeclaration::State {
+        stored,
+        state,
+        otherwise,
+    })
 }
 
 pub(crate) fn error_set(block: &Block, source: &str) -> Result<ErrorSetDeclaration> {

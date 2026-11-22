@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use simile_artifact::{Artifact, ArtifactParameter};
 use simile_schema::ValidationIssue;
@@ -13,7 +13,8 @@ use crate::{Error, Result};
 /// Values remain repeated strings here because OpenAPI style and schema decide
 /// whether a repeated or delimited representation means a scalar, array, or
 /// object. The runtime performs that interpretation once for every adapter.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IncomingParameters {
     pub path: BTreeMap<String, Vec<String>>,
     pub query: BTreeMap<String, Vec<String>>,

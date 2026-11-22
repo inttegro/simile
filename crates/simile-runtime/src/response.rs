@@ -81,7 +81,7 @@ pub fn synthesize_response(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, rand::random(), None)
+    synthesize_response_inner(artifact, request, rand::random(), None, None)
 }
 
 /// Synthesize a reproducible response from a caller-provided seed.
@@ -90,7 +90,7 @@ pub fn synthesize_response_with_seed(
     request: ResponseSynthesisRequest<'_>,
     seed: u64,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, seed, None)
+    synthesize_response_inner(artifact, request, seed, None, None)
 }
 
 pub(crate) fn synthesize_response_with_context(
@@ -98,7 +98,29 @@ pub(crate) fn synthesize_response_with_context(
     request: ResponseSynthesisRequest<'_>,
     response_request_body: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, rand::random(), response_request_body)
+    synthesize_response_inner(
+        artifact,
+        request,
+        rand::random(),
+        response_request_body,
+        None,
+    )
+}
+
+pub(crate) fn synthesize_response_with_candidate_context(
+    artifact: &Artifact,
+    request: ResponseSynthesisRequest<'_>,
+    response_request_body: Option<&Value>,
+    response_candidate: &Value,
+    seed: Option<u64>,
+) -> Result<SynthesizedResponse> {
+    synthesize_response_inner(
+        artifact,
+        request,
+        seed.unwrap_or_else(rand::random),
+        response_request_body,
+        Some(response_candidate),
+    )
 }
 
 pub(crate) fn synthesize_response_with_seed_and_context(
@@ -107,7 +129,7 @@ pub(crate) fn synthesize_response_with_seed_and_context(
     seed: u64,
     response_request_body: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, seed, response_request_body)
+    synthesize_response_inner(artifact, request, seed, response_request_body, None)
 }
 
 fn synthesize_response_inner(
@@ -115,6 +137,7 @@ fn synthesize_response_inner(
     request: ResponseSynthesisRequest<'_>,
     seed: u64,
     response_request_body: Option<&Value>,
+    response_candidate: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
     let operation =
         artifact
@@ -153,7 +176,15 @@ fn synthesize_response_inner(
             soundness: ResponseSoundness::SchemaOnly,
         });
     };
-    synthesize_body(request, status, headers, body, seed, response_request_body)
+    synthesize_body(
+        request,
+        status,
+        headers,
+        body,
+        seed,
+        response_request_body,
+        response_candidate,
+    )
 }
 
 fn synthesize_headers(response: &ArtifactResponse<'_>, seed: u64) -> Result<Vec<(String, String)>> {
@@ -231,6 +262,7 @@ fn synthesize_body(
     body: BoundResponseBody<'_>,
     seed: u64,
     response_request_body: Option<&Value>,
+    response_candidate: Option<&Value>,
 ) -> Result<SynthesizedResponse> {
     let content_type = request
         .content_type
@@ -265,6 +297,19 @@ fn synthesize_body(
         request_values.as_ref().map_or_else(
             || Ok(body.clone()),
             |request| selected.project_exact_from_request(body, request),
+        )
+    } else if let Some(candidate) = response_candidate {
+        request_values.as_ref().map_or_else(
+            || Ok(candidate.clone()),
+            |request| {
+                if selected.validate(candidate).is_empty() {
+                    // Why: a complete stored read is authoritative state. Re-synthesizing around
+                    // it could replace array items or union branches even though no repair is needed.
+                    selected.project_exact_from_request(candidate, request)
+                } else {
+                    selected.complete_fuzz_from_request(candidate, request, seed)
+                }
+            },
         )
     } else {
         request_values.as_ref().map_or_else(

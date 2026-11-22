@@ -24,7 +24,9 @@ use crate::{Error, Result};
 
 // Why: operation state projections add runtime-bearing records; a new envelope version prevents
 // an older runtime from silently ignoring the provider-authored lookup semantics.
-pub const FORMAT_VERSION: u16 = 23;
+// Why: state-projection failure outcomes change the executable contract encoded in an artifact;
+// rejecting older bytes is safer than silently dropping their public error-selection semantics.
+pub const FORMAT_VERSION: u16 = 24;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -371,26 +373,37 @@ impl<'a> ArtifactOperation<'a> {
                 key: self.strings[projection.2 as usize].clone(),
                 select: self.strings[projection.3 as usize].clone(),
                 into: self.strings[projection.4 as usize].clone(),
+                missing_outcome: projection
+                    .6
+                    .map(|outcome| self.strings[outcome as usize].clone()),
                 predicates: projection
                     .5
                     .iter()
                     .map(|predicate| match predicate {
-                        StateProjectionPredicateRecord::Equals(stored, value) => {
+                        StateProjectionPredicateRecord::Equals(stored, value, otherwise) => {
                             StateProjectionPredicate::Equals {
                                 stored: self.strings[*stored as usize].clone(),
                                 value: decode_value(*value, self.strings, self.values()),
+                                otherwise: otherwise
+                                    .map(|outcome| self.strings[outcome as usize].clone()),
                             }
                         }
-                        StateProjectionPredicateRecord::EqualsRequest(stored, request) => {
-                            StateProjectionPredicate::EqualsRequest {
-                                stored: self.strings[*stored as usize].clone(),
-                                request: self.strings[*request as usize].clone(),
-                            }
-                        }
-                        StateProjectionPredicateRecord::State(stored, state) => {
+                        StateProjectionPredicateRecord::EqualsRequest(
+                            stored,
+                            request,
+                            otherwise,
+                        ) => StateProjectionPredicate::EqualsRequest {
+                            stored: self.strings[*stored as usize].clone(),
+                            request: self.strings[*request as usize].clone(),
+                            otherwise: otherwise
+                                .map(|outcome| self.strings[outcome as usize].clone()),
+                        },
+                        StateProjectionPredicateRecord::State(stored, state, otherwise) => {
                             StateProjectionPredicate::State {
                                 stored: self.strings[*stored as usize].clone(),
                                 state: decode_state_projection_value_state(*state),
+                                otherwise: otherwise
+                                    .map(|outcome| self.strings[outcome as usize].clone()),
                             }
                         }
                     })
@@ -1777,13 +1790,14 @@ struct StateProjectionRecord(
     StringId,
     StringId,
     Vec<StateProjectionPredicateRecord>,
+    Option<StringId>,
 );
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum StateProjectionPredicateRecord {
-    Equals(StringId, ValueId),
-    EqualsRequest(StringId, StringId),
-    State(StringId, u8),
+    Equals(StringId, ValueId, Option<StringId>),
+    EqualsRequest(StringId, StringId, Option<StringId>),
+    State(StringId, u8, Option<StringId>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2924,20 +2938,48 @@ impl Payload {
                 validate_index(projection.2, strings, "state projection key")?;
                 validate_index(projection.3, strings, "state projection selection")?;
                 validate_index(projection.4, strings, "state projection target")?;
+                if let Some(outcome) = projection.6 {
+                    validate_index(outcome, strings, "state projection missing outcome")?;
+                }
                 for predicate in &projection.5 {
                     match predicate {
-                        StateProjectionPredicateRecord::Equals(stored, value) => {
+                        StateProjectionPredicateRecord::Equals(stored, value, otherwise) => {
                             validate_index(*stored, strings, "state projection stored path")?;
                             validate_index(*value, values, "state projection comparison value")?;
+                            if let Some(outcome) = otherwise {
+                                validate_index(
+                                    *outcome,
+                                    strings,
+                                    "state projection failure outcome",
+                                )?;
+                            }
                         }
-                        StateProjectionPredicateRecord::EqualsRequest(stored, request) => {
+                        StateProjectionPredicateRecord::EqualsRequest(
+                            stored,
+                            request,
+                            otherwise,
+                        ) => {
                             validate_index(*stored, strings, "state projection stored path")?;
                             validate_index(*request, strings, "state projection request path")?;
+                            if let Some(outcome) = otherwise {
+                                validate_index(
+                                    *outcome,
+                                    strings,
+                                    "state projection failure outcome",
+                                )?;
+                            }
                         }
-                        StateProjectionPredicateRecord::State(stored, state) => {
+                        StateProjectionPredicateRecord::State(stored, state, otherwise) => {
                             validate_index(*stored, strings, "state projection stored path")?;
                             if *state > 4 {
                                 return Err(Error::Invalid("state projection value state"));
+                            }
+                            if let Some(outcome) = otherwise {
+                                validate_index(
+                                    *outcome,
+                                    strings,
+                                    "state projection failure outcome",
+                                )?;
                             }
                         }
                     }
@@ -3327,18 +3369,40 @@ fn audit_public_export(service: &CompiledService) -> Result<()> {
                 audit_public_name(&projection.key)?;
                 audit_public_name(&projection.select)?;
                 audit_public_name(&projection.into)?;
+                if let Some(outcome) = &projection.missing_outcome {
+                    audit_public_name(outcome)?;
+                }
                 for predicate in &projection.predicates {
                     match predicate {
-                        StateProjectionPredicate::Equals { stored, value } => {
+                        StateProjectionPredicate::Equals {
+                            stored,
+                            value,
+                            otherwise,
+                        } => {
                             audit_public_name(stored)?;
                             audit_public_value(value)?;
+                            if let Some(outcome) = otherwise {
+                                audit_public_name(outcome)?;
+                            }
                         }
-                        StateProjectionPredicate::EqualsRequest { stored, request } => {
+                        StateProjectionPredicate::EqualsRequest {
+                            stored,
+                            request,
+                            otherwise,
+                        } => {
                             audit_public_name(stored)?;
                             audit_public_name(request)?;
+                            if let Some(outcome) = otherwise {
+                                audit_public_name(outcome)?;
+                            }
                         }
-                        StateProjectionPredicate::State { stored, .. } => {
+                        StateProjectionPredicate::State {
+                            stored, otherwise, ..
+                        } => {
                             audit_public_name(stored)?;
+                            if let Some(outcome) = otherwise {
+                                audit_public_name(outcome)?;
+                            }
                         }
                     }
                 }
@@ -3467,18 +3531,40 @@ impl StringTable {
                     values.insert(projection.key.clone());
                     values.insert(projection.select.clone());
                     values.insert(projection.into.clone());
+                    if let Some(outcome) = &projection.missing_outcome {
+                        values.insert(outcome.clone());
+                    }
                     for predicate in &projection.predicates {
                         match predicate {
-                            StateProjectionPredicate::Equals { stored, value } => {
+                            StateProjectionPredicate::Equals {
+                                stored,
+                                value,
+                                otherwise,
+                            } => {
                                 values.insert(stored.clone());
                                 collect_value_strings(value, &mut values);
+                                if let Some(outcome) = otherwise {
+                                    values.insert(outcome.clone());
+                                }
                             }
-                            StateProjectionPredicate::EqualsRequest { stored, request } => {
+                            StateProjectionPredicate::EqualsRequest {
+                                stored,
+                                request,
+                                otherwise,
+                            } => {
                                 values.insert(stored.clone());
                                 values.insert(request.clone());
+                                if let Some(outcome) = otherwise {
+                                    values.insert(outcome.clone());
+                                }
                             }
-                            StateProjectionPredicate::State { stored, .. } => {
+                            StateProjectionPredicate::State {
+                                stored, otherwise, ..
+                            } => {
                                 values.insert(stored.clone());
+                                if let Some(outcome) = otherwise {
+                                    values.insert(outcome.clone());
+                                }
                             }
                         }
                     }
@@ -3821,24 +3907,42 @@ fn compile_state_projection(
         .iter()
         .map(|predicate| {
             Ok(match predicate {
-                StateProjectionPredicate::Equals { stored, value } => {
-                    StateProjectionPredicateRecord::Equals(
-                        strings.id(stored)?,
-                        values.push(value, strings)?,
-                    )
-                }
-                StateProjectionPredicate::EqualsRequest { stored, request } => {
-                    StateProjectionPredicateRecord::EqualsRequest(
-                        strings.id(stored)?,
-                        strings.id(request)?,
-                    )
-                }
-                StateProjectionPredicate::State { stored, state } => {
-                    StateProjectionPredicateRecord::State(
-                        strings.id(stored)?,
-                        encode_state_projection_value_state(*state),
-                    )
-                }
+                StateProjectionPredicate::Equals {
+                    stored,
+                    value,
+                    otherwise,
+                } => StateProjectionPredicateRecord::Equals(
+                    strings.id(stored)?,
+                    values.push(value, strings)?,
+                    otherwise
+                        .as_ref()
+                        .map(|outcome| strings.id(outcome))
+                        .transpose()?,
+                ),
+                StateProjectionPredicate::EqualsRequest {
+                    stored,
+                    request,
+                    otherwise,
+                } => StateProjectionPredicateRecord::EqualsRequest(
+                    strings.id(stored)?,
+                    strings.id(request)?,
+                    otherwise
+                        .as_ref()
+                        .map(|outcome| strings.id(outcome))
+                        .transpose()?,
+                ),
+                StateProjectionPredicate::State {
+                    stored,
+                    state,
+                    otherwise,
+                } => StateProjectionPredicateRecord::State(
+                    strings.id(stored)?,
+                    encode_state_projection_value_state(*state),
+                    otherwise
+                        .as_ref()
+                        .map(|outcome| strings.id(outcome))
+                        .transpose()?,
+                ),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -3849,6 +3953,11 @@ fn compile_state_projection(
         strings.id(&projection.select)?,
         strings.id(&projection.into)?,
         predicates,
+        projection
+            .missing_outcome
+            .as_ref()
+            .map(|outcome| strings.id(outcome))
+            .transpose()?,
     ))
 }
 

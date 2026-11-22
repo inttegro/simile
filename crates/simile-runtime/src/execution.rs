@@ -36,8 +36,8 @@ pub struct ExecutionOptions<'a> {
     pub fault_profile: Option<&'a str>,
     pub response_status: Option<u16>,
     pub response_content_type: Option<&'a str>,
-    /// An exact state-derived response candidate. Named outcomes retain
-    /// precedence when a request deliberately selects one.
+    /// A state-derived response baseline. Runtime synthesis fills required fields that were not
+    /// present in the stored snapshot. Named outcomes retain precedence when selected.
     pub response_body: Option<&'a Value>,
     /// A provider-authored, state-enriched view used only by request-to-response relations. The
     /// validated request retained by the outcome and effects remains the caller's original value.

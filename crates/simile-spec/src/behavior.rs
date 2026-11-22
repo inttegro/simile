@@ -387,6 +387,9 @@ pub struct StateProjection {
     pub key: String,
     pub select: String,
     pub into: String,
+    /// Public outcome selected when the referenced document does not exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_outcome: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub predicates: Vec<StateProjectionPredicate>,
 }
@@ -399,15 +402,29 @@ pub enum StateProjectionPredicate {
     Equals {
         stored: String,
         value: Value,
+        otherwise: Option<String>,
     },
     EqualsRequest {
         stored: String,
         request: String,
+        otherwise: Option<String>,
     },
     State {
         stored: String,
         state: StateProjectionValueState,
+        otherwise: Option<String>,
     },
+}
+
+impl StateProjectionPredicate {
+    #[must_use]
+    pub fn otherwise(&self) -> Option<&str> {
+        match self {
+            Self::Equals { otherwise, .. }
+            | Self::EqualsRequest { otherwise, .. }
+            | Self::State { otherwise, .. } => otherwise.as_deref(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

@@ -337,25 +337,32 @@ fn compiles_provider_authored_state_projections() {
 backend "db" "resources" {}
 
 behavior "createOrder" {
+  outcome "price_not_found" { status = 201 }
+  outcome "price_invalid" { status = 201 }
+
   resolve "db.resources" {
     collection = "prices"
     key        = "/line_items/*/product/price_id"
     select     = "/fixed_amount"
     into       = "/line_items/*/product/price"
+    missing_outcome = "price_not_found"
 
     where {
       stored  = "/product_id"
       request = "/line_items/*/product/product_id"
+      otherwise = "price_invalid"
     }
 
     where {
       stored = "/active"
       equals = true
+      otherwise = "price_invalid"
     }
 
     where {
       stored = "/archived_at"
       state  = "null-or-absent"
+      otherwise = "price_invalid"
     }
   }
 }
@@ -374,21 +381,53 @@ behavior "createOrder" {
     assert_eq!(projection.select, "/fixed_amount");
     assert_eq!(projection.into, "/line_items/*/product/price");
     assert_eq!(
+        projection.missing_outcome.as_deref(),
+        Some("price_not_found")
+    );
+    assert_eq!(
         projection.predicates,
         [
             StateProjectionPredicate::EqualsRequest {
                 stored: "/product_id".to_owned(),
                 request: "/line_items/*/product/product_id".to_owned(),
+                otherwise: Some("price_invalid".to_owned()),
             },
             StateProjectionPredicate::Equals {
                 stored: "/active".to_owned(),
                 value: serde_json::Value::Bool(true),
+                otherwise: Some("price_invalid".to_owned()),
             },
             StateProjectionPredicate::State {
                 stored: "/archived_at".to_owned(),
                 state: StateProjectionValueState::NullOrAbsent,
+                otherwise: Some("price_invalid".to_owned()),
             },
         ]
+    );
+}
+
+#[test]
+fn rejects_unknown_state_projection_failure_outcomes() {
+    let error = compile_error([module(
+        r#"
+backend "db" "resources" {}
+
+behavior "createOrder" {
+  resolve "db.resources" {
+    collection      = "prices"
+    key             = "/price_id"
+    select          = "/fixed_amount"
+    into            = "/price"
+    missing_outcome = "price_not_found"
+  }
+}
+"#,
+    )]);
+
+    assert!(
+        error
+            .to_string()
+            .contains("`missing_outcome` references unknown outcome `price_not_found`")
     );
 }
 

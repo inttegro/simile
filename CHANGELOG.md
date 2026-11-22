@@ -16,7 +16,11 @@ All notable changes to Simile will be documented in this file.
 - Compile and synthesize declared response headers, including bodyless redirects with `Location`.
 - Add provider-authored state projections that resolve stored public references into a private
   response-synthesis view without changing the validated caller request.
-- Advance the compiled artifact format to version 23. Existing artifacts must be recompiled.
+- Let state projections select declared public outcomes for missing references and failed public
+  predicates while retaining provider-facing errors for undeclared failures.
+- Complete schema-required response fields around stored mutation snapshots before applying the
+  operation's published request-to-response relations.
+- Advance the compiled artifact format to version 24. Existing artifacts must be recompiled.
 
 ## 0.3.0 - 2026-11-20
 

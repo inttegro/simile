@@ -463,6 +463,25 @@ impl<'a> BoundMediaType<'a> {
         self.project_from(body.clone(), request, false)
     }
 
+    /// Fill schema-required fields around a state-derived response baseline, then apply only the
+    /// request relations explicitly published by the provider.
+    pub fn complete_fuzz_from_request(
+        &self,
+        body: &Value,
+        request: &RequestValues<'_>,
+        seed: u64,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let baseline = self.synthesize_fuzz_minimal(seed)?;
+        let Some(schema) = self.selected.schema() else {
+            return Ok(body.clone());
+        };
+        // Why: mutation state can predate a newly required response field. Projecting it over a
+        // valid baseline preserves known public values without letting an incomplete snapshot
+        // turn an otherwise sound operation into an emulator-only 500 response.
+        let completed = self.schemas.project(schema, &baseline, body);
+        self.project_from(completed, request, false)
+    }
+
     fn project_from(
         &self,
         baseline: Value,

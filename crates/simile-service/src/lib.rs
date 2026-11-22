@@ -178,7 +178,7 @@ impl Service {
                 *content_type == "application/json" || content_type.ends_with("+json")
             })
             .and_then(|_| serde_json::from_slice(call.body).ok());
-        let response_request_body = state::response_request_body(
+        let response_request = state::response_request_body(
             self,
             call.operation,
             request_body.as_ref(),
@@ -222,9 +222,11 @@ impl Service {
         let execution = self.runtime.execute_with_options(
             call,
             ExecutionOptions {
+                outcome: response_request.outcome.as_deref().or(options.outcome),
                 response_body,
                 response_status,
-                response_request_body: response_request_body
+                response_request_body: response_request
+                    .body
                     .as_ref()
                     .or(options.response_request_body),
                 ..options
@@ -243,8 +245,7 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let response_request_body =
-            state::response_request_body(self, call.operation, call.body, None)?;
+        let response_request = state::response_request_body(self, call.operation, call.body, None)?;
         let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
         let mutation = if matches!(state, state::StateResolution::None) {
             state::mutation_baseline(self, call.operation, call.body, None)?
@@ -272,9 +273,11 @@ impl Service {
         let execution = self.runtime.execute_value_with_options(
             call,
             ExecutionOptions {
+                outcome: response_request.outcome.as_deref().or(options.outcome),
                 response_body,
                 response_status,
-                response_request_body: response_request_body
+                response_request_body: response_request
+                    .body
                     .as_ref()
                     .or(options.response_request_body),
                 ..options

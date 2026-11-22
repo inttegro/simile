@@ -643,14 +643,17 @@ behavior "createOrder" {
     key        = "/line_items/*/product/price_id"
     select     = "/fixed_amount"
     into       = "/line_items/*/product/price"
+    missing_outcome = "price_not_found"
 
     where {
       stored  = "/product_id"
       request = "/line_items/*/product/product_id"
+      otherwise = "invalid_line_items"
     }
     where {
       stored = "/active"
       equals = true
+      otherwise = "price_inactive"
     }
     where {
       stored = "/archived_at"
@@ -672,6 +675,7 @@ safe to enrich a reference branch with a field that is mutually exclusive on the
 | `key` | yes | Request JSON Pointer selecting stored keys; complete `*` segments iterate arrays. |
 | `select` | yes | JSON Pointer into each stored public document. Wildcards are not allowed. |
 | `into` | yes | Request-view JSON Pointer receiving the selected value. It must have the same wildcard count as `key`. |
+| `missing_outcome` | no | Provider-authored outcome selected when the stored public document does not exist. |
 | `where` | no | Public predicates a stored document must satisfy before projection. |
 
 Every `where` block requires `stored` and exactly one predicate:
@@ -681,9 +685,14 @@ Every `where` block requires `stored` and exactly one predicate:
   or
 - `state = "present|absent|null|non-null|null-or-absent"` checks presence and nullability.
 
+`otherwise` may name a provider-authored outcome on any `where` block. The named outcome must
+belong to the same behavior or one of its applied error sets. Predicates are evaluated in source
+order, so authors can preserve a documented precedence between overlapping public lifecycle states.
+
 State projections must use public resource names and public fields. They are not a way to publish
 private tables, thresholds, routing rules, or production decision trees. A missing document,
 missing selected value, or failed predicate cannot be used to construct a successful response.
+Without an explicit failure outcome, those conditions remain provider-configuration errors.
 
 ### `response`
 

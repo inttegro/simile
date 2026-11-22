@@ -48,6 +48,7 @@ pub struct StateProjectionDeclaration {
     pub key: String,
     pub select: String,
     pub into: String,
+    pub missing_outcome: Option<String>,
     pub predicates: Vec<StateProjectionPredicateDeclaration>,
 }
 
@@ -56,14 +57,17 @@ pub enum StateProjectionPredicateDeclaration {
     Equals {
         stored: String,
         value: Value,
+        otherwise: Option<String>,
     },
     EqualsRequest {
         stored: String,
         request: String,
+        otherwise: Option<String>,
     },
     State {
         stored: String,
         state: simile_spec::StateProjectionValueState,
+        otherwise: Option<String>,
     },
 }
 

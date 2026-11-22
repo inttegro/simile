@@ -1,7 +1,8 @@
 use simile_artifact::{Artifact, ArtifactOutcome};
 
 use crate::response::{
-    synthesize_response_with_context, synthesize_response_with_seed_and_context,
+    synthesize_response_with_candidate_context, synthesize_response_with_context,
+    synthesize_response_with_seed_and_context,
 };
 use crate::{
     Error, ExecutionOptions, OperationOutcome, ResponseSynthesisRequest, Result, ValidatedBody,
@@ -28,20 +29,40 @@ pub(crate) fn produce(
         content_type: response_content_type,
         request_body: request_body.as_ref(),
         request_parameters: options.parameters,
-        body: selected
-            .as_ref()
-            .and_then(ArtifactOutcome::body)
-            .or(options.response_body),
+        body: selected.as_ref().and_then(ArtifactOutcome::body),
     };
-    let response = match options.response_seed {
-        Some(seed) => synthesize_response_with_seed_and_context(
+    let selected_has_body = selected.as_ref().and_then(ArtifactOutcome::body).is_some();
+    let response = if selected_has_body {
+        match options.response_seed {
+            Some(seed) => synthesize_response_with_seed_and_context(
+                artifact,
+                synthesis,
+                seed,
+                options.response_request_body,
+            ),
+            None => {
+                synthesize_response_with_context(artifact, synthesis, options.response_request_body)
+            }
+        }
+    } else if let Some(candidate) = options.response_body {
+        synthesize_response_with_candidate_context(
             artifact,
             synthesis,
-            seed,
             options.response_request_body,
-        ),
-        None => {
-            synthesize_response_with_context(artifact, synthesis, options.response_request_body)
+            candidate,
+            options.response_seed,
+        )
+    } else {
+        match options.response_seed {
+            Some(seed) => synthesize_response_with_seed_and_context(
+                artifact,
+                synthesis,
+                seed,
+                options.response_request_body,
+            ),
+            None => {
+                synthesize_response_with_context(artifact, synthesis, options.response_request_body)
+            }
         }
     }?;
     Ok(OperationOutcome::new(

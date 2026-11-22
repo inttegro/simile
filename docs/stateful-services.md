@@ -129,10 +129,12 @@ behavior "createOrder" {
     key        = "/line_items/*/price_id"
     select     = "/fixed_amount"
     into       = "/line_items/*/price"
+    missing_outcome = "price_not_found"
 
     where {
       stored  = "/product_id"
       request = "/line_items/*/product_id"
+      otherwise = "invalid_line_items"
     }
   }
 }
@@ -142,6 +144,16 @@ The stored amount exists only in the relation-synthesis view. Request validation
 matching, replay identity, and effects continue to see the exact request sent by the caller. This
 separation prevents the emulator from weakening a mutually exclusive request shape merely to make
 the response constructible.
+
+`missing_outcome` selects a declared public result when the referenced document is absent.
+`otherwise` on a `where` predicate selects a declared result when that public condition fails.
+Leave either unset when failure indicates a broken Simfile or corrupt test state rather than a
+documented service outcome.
+
+For mutations, a stored snapshot is a baseline rather than an exact response fixture. Simile keeps
+compatible stored values, constructs any newly required response fields from the schema, and then
+applies the operation's declared request-to-response relation. This lets lifecycle operations add
+public timestamps without erasing the resource fields already stored by an earlier request.
 
 ## Inspect authority
 
