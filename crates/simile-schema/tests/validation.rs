@@ -367,6 +367,90 @@ fn projects_compatible_request_values_without_reflecting_write_only_fields() {
 }
 
 #[test]
+fn nested_bindings_construct_required_response_owned_siblings() {
+    let request = RequestBodyContract {
+        required: true,
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "required": ["price_id"],
+                    "properties": {"price_id": {"type": "string", "pattern": "^pr_"}}
+                })),
+                example: None,
+                examples: BTreeMap::new(),
+                request_relation: None,
+            },
+        )]),
+    };
+    let response = ResponseBodyContract {
+        content: BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaTypeContract {
+                schema: Some(json!({
+                    "type": "object",
+                    "required": ["purchase_intent"],
+                    "properties": {
+                        "purchase_intent": {
+                            "type": "object",
+                            "properties": {
+                                "price": {
+                                    "type": "object",
+                                    "required": ["id", "active", "nominal"],
+                                    "properties": {
+                                        "id": {"type": "string", "pattern": "^pr_"},
+                                        "active": {"type": "boolean"},
+                                        "nominal": {
+                                            "type": "object",
+                                            "required": ["currency", "value"],
+                                            "properties": {
+                                                "currency": {"type": "string"},
+                                                "value": {"type": "integer"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                })),
+                example: None,
+                examples: BTreeMap::new(),
+                request_relation: Some(json!({
+                    "bindings": [{"from": "/price_id", "to": "/purchase_intent/price/id"}]
+                })),
+            },
+        )]),
+    };
+    let components = BTreeMap::new();
+    let mut compiler = BodySchemaCompiler::new(&components, OpenApiFeature::V3_1);
+    let request_plan = compiler
+        .compile_request(&request)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let response_plan = compiler
+        .compile_response_for(&response, Some(&request_plan))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let schemas = compiler.finish().unwrap_or_else(|error| panic!("{error}"));
+    let response_media = BoundResponseBody::new(&response_plan, &schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("response media type should be present"));
+
+    // Why: a request-owned nested ID must not leave its optional parent structurally incomplete;
+    // Simile remains responsible for constructing every required response-owned sibling.
+    let value = response_media
+        .synthesize_from(&json!({"price_id": "pr_selected"}))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        value.pointer("/purchase_intent/price/id"),
+        Some(&json!("pr_selected"))
+    );
+    assert!(value.pointer("/purchase_intent/price/active").is_some());
+    assert!(value.pointer("/purchase_intent/price/nominal").is_some());
+    assert!(response_media.validate(&value).is_empty());
+}
+
+#[test]
 fn rejects_empty_type_arrays() {
     let body = RequestBodyContract {
         required: true,

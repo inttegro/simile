@@ -22,6 +22,7 @@ impl Plan {
             else {
                 continue;
             };
+            ensure_target_parents(catalog, response_schema, response, &mapping.target)?;
             let baseline = response.pointer(&mapping.target).cloned().or_else(|| {
                 catalog
                     .synthesize_representative(SchemaRef(mapping.target_schema))
@@ -167,6 +168,34 @@ impl Plan {
                     || rule.omit.iter().any(|candidate| candidate == target))
         })
     }
+}
+
+fn ensure_target_parents(
+    catalog: &SchemaCatalog,
+    response_schema: SchemaRef,
+    response: &mut Value,
+    target: &str,
+) -> std::result::Result<(), SynthesisError> {
+    let segments =
+        path::segments(target).map_err(|_| unreachable(target, "is not a valid response path"))?;
+    let mut parent = String::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        parent.push('/');
+        parent.push_str(&path::encode_segment(segment));
+        if response.pointer(&parent).is_some() {
+            continue;
+        }
+        let resolved = path::resolve_property(catalog, response_schema.0, &parent)
+            .ok_or_else(|| unreachable(&parent, "is not declared"))?;
+        // Why: setting a nested request-owned leaf can materialize an optional response object.
+        // Constructing that parent from its schema supplies required response-owned siblings
+        // without weakening the binding or inventing provider-specific repair rules.
+        let value = catalog.synthesize_representative(SchemaRef(resolved.schema))?;
+        if !path::apply(response, &parent, value) {
+            return Err(unreachable(&parent, "cannot be constructed"));
+        }
+    }
+    Ok(())
 }
 
 impl Expression {
