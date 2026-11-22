@@ -6,7 +6,7 @@
 	"logo": {
 		"light": "/logo-dark.svg",
 		"dark": "/logo-light.svg",
-		"href": "/"
+		"href": "https://os.inttegro.dev/simile"
 	},
 	"favicon": "/favicon.svg",
 	"colors": {
@@ -211,15 +211,15 @@
 				"items": [
 					{
 						"label": "Why Simile",
-						"href": "/why-simile"
+						"href": "https://os.inttegro.dev/simile/why-simile"
 					},
 					{
 						"label": "Quickstart",
-						"href": "/quickstart"
+						"href": "https://os.inttegro.dev/simile/quickstart"
 					},
 					{
 						"label": "Downloads",
-						"href": "/downloads"
+						"href": "https://os.inttegro.dev/simile/downloads"
 					},
 					{
 						"label": "Source code",
@@ -227,7 +227,7 @@
 					},
 					{
 						"label": "Releases",
-						"href": "/release-notes"
+						"href": "https://os.inttegro.dev/simile/release-notes"
 					}
 				]
 			},
