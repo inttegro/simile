@@ -83,6 +83,23 @@ pub enum ReportStatus {
     Rejected,
 }
 
+impl ReportStatus {
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::AwaitingUpgrade => "awaiting upgrade",
+            Self::VerificationFailed => "verification failed",
+            Self::Verified => "verified",
+            Self::Submitted => "submitted",
+            Self::Accepted => "accepted",
+            Self::NeedsInformation => "needs information",
+            Self::Resolved => "resolved",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportDiagnostic {

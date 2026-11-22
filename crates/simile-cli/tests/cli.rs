@@ -732,6 +732,23 @@ fn keeps_reporting_consent_profile_owned_and_contact_private() {
         .assert()
         .success();
 
+    let description = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .env("SIMILE_HOME", &home)
+        .args(["--output", "json", "describe", "service", "payments"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        description.status.success(),
+        "{}",
+        String::from_utf8_lossy(&description.stderr)
+    );
+    let description: serde_json::Value =
+        serde_json::from_slice(&description.stdout).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        description["reportingEndpoint"],
+        "http://127.0.0.1:8787/v1/reports"
+    );
+
     let setup = Command::new(snapbox::cmd::cargo_bin!("simile"))
         .env("SIMILE_HOME", &home)
         .args([

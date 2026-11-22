@@ -111,7 +111,7 @@ fn render(report: &ops::PreparedReport, sent: bool, terminal: &Terminal) -> Resu
     }
     terminal.line(format_args!(
         "{MUTED}status{MUTED:#} {}",
-        status_name(report.report.status)
+        report.report.status.display_name()
     ))?;
     terminal.line(format_args!(
         "{MUTED}review{MUTED:#} {}",
@@ -124,18 +124,4 @@ fn render(report: &ops::PreparedReport, sent: bool, terminal: &Terminal) -> Resu
         ))?;
     }
     Ok(())
-}
-
-const fn status_name(status: ReportStatus) -> &'static str {
-    match status {
-        ReportStatus::Prepared => "prepared",
-        ReportStatus::AwaitingUpgrade => "awaiting upgrade",
-        ReportStatus::VerificationFailed => "verification failed",
-        ReportStatus::Verified => "verified",
-        ReportStatus::Submitted => "submitted",
-        ReportStatus::Accepted => "accepted",
-        ReportStatus::NeedsInformation => "needs information",
-        ReportStatus::Resolved => "resolved",
-        ReportStatus::Rejected => "rejected",
-    }
 }

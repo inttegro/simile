@@ -20,8 +20,11 @@ pub fn execute(arguments: ReportsArgs, ctx: &Context, terminal: &Terminal) -> Re
             }
             for report in report.reports {
                 terminal.line(format_args!(
-                    "{} · {} · {:?} · {}",
-                    report.id, report.service, report.status, report.title
+                    "{} · {} · {} · {}",
+                    report.id,
+                    report.service,
+                    report.status.display_name(),
+                    report.title
                 ))?;
             }
         }

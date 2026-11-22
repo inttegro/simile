@@ -30,6 +30,8 @@ pub struct DescribeServiceReport {
     pub listen: SocketAddr,
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reporting_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
     pub operation_count: usize,
     pub operations: Vec<DescribedOperation>,
@@ -226,46 +228,59 @@ pub fn describe_service(
     ctx: &Context,
     request: &DescribeServiceRequest,
 ) -> Result<DescribeServiceReport> {
-    let (service, artifact, listen, source, revision) = match (&request.service, &request.config) {
-        (requested, Some(config)) => {
-            let loaded =
-                LoadedServiceConfig::load(ctx, ServiceConfigSource::from_argument(config.clone()))?;
-            let prepared =
-                prepare_loaded_service(requested.as_deref(), None, None, &loaded)?.service;
-            (
-                prepared.report.service,
-                prepared.artifact,
-                prepared.report.listen,
-                config.clone(),
-                None,
-            )
-        }
-        (Some(service), None) => {
-            let registered = Registry::new(ctx.simile_home()?).load(service)?;
-            let listen = SocketAddr::new(
-                registered.manifest.listen.host,
-                registered.manifest.listen.port,
-            );
-            (
-                registered.manifest.name,
-                registered.artifact,
-                listen,
-                "registry".to_owned(),
-                Some(registered.revision),
-            )
-        }
-        (None, None) => {
-            let loaded = LoadedServiceConfig::load_simfile(ctx)?;
-            let prepared = prepare_loaded_service(None, None, None, &loaded)?.service;
-            (
-                prepared.report.service,
-                prepared.artifact,
-                prepared.report.listen,
-                loaded.name,
-                None,
-            )
-        }
-    };
+    let (service, artifact, listen, source, reporting_endpoint, revision) =
+        match (&request.service, &request.config) {
+            (requested, Some(config)) => {
+                let loaded = LoadedServiceConfig::load(
+                    ctx,
+                    ServiceConfigSource::from_argument(config.clone()),
+                )?;
+                let prepared =
+                    prepare_loaded_service(requested.as_deref(), None, None, &loaded)?.service;
+                (
+                    prepared.report.service,
+                    prepared.artifact,
+                    prepared.report.listen,
+                    config.clone(),
+                    prepared.reporting_endpoint,
+                    None,
+                )
+            }
+            (Some(service), None) => {
+                let registered = Registry::new(ctx.simile_home()?).load(service)?;
+                let listen = SocketAddr::new(
+                    registered.manifest.listen.host,
+                    registered.manifest.listen.port,
+                );
+                let document = simile_hcl::parse_service(simile_hcl::Source::new(
+                    &registered.manifest.name,
+                    &registered.config_contents,
+                ))?;
+                (
+                    registered.manifest.name,
+                    registered.artifact,
+                    listen,
+                    "registry".to_owned(),
+                    document
+                        .service
+                        .reporting
+                        .map(|reporting| reporting.endpoint),
+                    Some(registered.revision),
+                )
+            }
+            (None, None) => {
+                let loaded = LoadedServiceConfig::load_simfile(ctx)?;
+                let prepared = prepare_loaded_service(None, None, None, &loaded)?.service;
+                (
+                    prepared.report.service,
+                    prepared.artifact,
+                    prepared.report.listen,
+                    loaded.name,
+                    prepared.reporting_endpoint,
+                    None,
+                )
+            }
+        };
 
     Ok(report(
         &service,
@@ -273,6 +288,7 @@ pub fn describe_service(
         &artifact,
         listen,
         source,
+        reporting_endpoint,
         revision,
     ))
 }
@@ -283,6 +299,7 @@ fn report(
     artifact: &Artifact,
     listen: SocketAddr,
     source: String,
+    reporting_endpoint: Option<String>,
     revision: Option<String>,
 ) -> DescribeServiceReport {
     let summary = artifact.summary();
@@ -514,6 +531,7 @@ fn report(
         openapi_version: summary.openapi_version,
         listen,
         source,
+        reporting_endpoint,
         revision,
         operation_count: summary.operations,
         operations,

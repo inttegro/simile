@@ -52,6 +52,9 @@ fn overview(report: &ops::DescribeServiceReport, terminal: &Terminal) -> Result<
     if let Some(revision) = &report.revision {
         fact(terminal, "Revision", revision)?;
     }
+    if let Some(endpoint) = &report.reporting_endpoint {
+        fact(terminal, "Issue reports", endpoint)?;
+    }
 
     section(terminal, "Contract")?;
     fact(

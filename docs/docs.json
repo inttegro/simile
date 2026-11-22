@@ -104,12 +104,12 @@
 							"reproduction-bundles",
 							"conformance-suites"
 						]
-					},
-					{
-						"group": "Report emulator issues",
-						"pages": ["issue-reporting", "reporting-endpoint"]
 					}
 				]
+			},
+			{
+				"group": "Issues and reporting",
+				"pages": ["issue-reporting", "reporting-endpoint"]
 			},
 			{
 				"group": "Reference",

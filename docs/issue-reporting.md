@@ -1,6 +1,6 @@
 ---
 title: Report emulator issues
-sidebarTitle: Reporting
+sidebarTitle: Report an issue
 description: Prepare reproducible reports, review their evidence, and control automatic submission.
 ---
 
@@ -73,7 +73,9 @@ simile reporting inttegro --profile ci --mode off
 ```
 
 Contact addresses are stored in private files under `~/.simile/reporting/`. Human-readable output
-masks the address.
+masks the address. The preference also remembers the destination shown during consent. If a service
+update changes that destination, run `simile reporting … --mode automatic --contact …` again to
+consent to the new receiver; Simile does not silently move automatic reports elsewhere.
 
 ## What automatic reporting does
 

@@ -26,6 +26,7 @@ An emulator for order integration tests.
 Runtime
   Listen               http://127.0.0.1:4242
   Source               registry
+  Issue reports        https://reports.example.com/v1/reports
 
 Contract
   Format               OpenAPI 3.1.2
@@ -46,6 +47,10 @@ Service model
 ```
 
 Credential values are omitted from every human-readable view.
+
+`Issue reports` appears only when the service declares a reporting destination. Consent and
+contact remain profile-owned and appear through `simile reporting SERVICE`, with the address
+masked.
 
 Add `--verbose` to expand the inventory into named, indented entries. This includes every
 operation, its compiled outcomes, its authentication surface, whether its behavior came from the
