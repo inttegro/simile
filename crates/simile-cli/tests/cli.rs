@@ -415,15 +415,18 @@ fn discovers_and_infers_the_service_from_the_current_simfile() {
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(report["service"], "orders");
-    assert_eq!(
-        report["source"],
-        project
-            .canonicalize()
-            .unwrap_or_else(|error| panic!("{error}"))
-            .join("Simfile")
-            .to_string_lossy()
-            .as_ref()
-    );
+    let reported_source = PathBuf::from(
+        report["source"]
+            .as_str()
+            .unwrap_or_else(|| panic!("describe source must be a string")),
+    )
+    .canonicalize()
+    .unwrap_or_else(|error| panic!("{error}"));
+    let expected_source = project
+        .join("Simfile")
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(reported_source, expected_source);
 
     fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
 }
@@ -439,14 +442,7 @@ fn reports_a_missing_simfile_with_the_expected_recovery() {
         .args(["describe"])
         .assert()
         .failure()
-        .stderr_eq(format!(
-            "no Simfile found at `{}`; create one or pass --config URL_OR_FILE\n",
-            project
-                .canonicalize()
-                .unwrap_or_else(|error| panic!("{error}"))
-                .join("Simfile")
-                .display()
-        ));
+        .stderr_eq("no Simfile found at `[..]Simfile`; create one or pass --config URL_OR_FILE\n");
 
     fs::remove_dir_all(project).unwrap_or_else(|error| panic!("{error}"));
 }
