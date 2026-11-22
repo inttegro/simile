@@ -9,7 +9,7 @@ atomicity, not on a provider's private SQL dialect or storage topology.
 
 ## Capabilities
 
-- `get`, `put`, and `delete` by collection and key
+- `get`, `put`, `merge`, and `delete` by collection and key
 - equality queries using JSON Pointer paths
 - monotonically increasing document versions
 - conditional writes requiring absence or an exact version
@@ -17,6 +17,11 @@ atomicity, not on a provider's private SQL dialect or storage topology.
 
 A transaction executes against an isolated candidate state. If any condition fails, none of its
 mutations become visible.
+
+`put` is a complete replacement. `merge` is an upsert that recursively combines object fields,
+replaces supplied scalar and array values, and leaves omitted fields unchanged. Use `merge` only
+when the public operation returns or accepts a partial resource snapshot; it is not an inferred
+substitute for an undeclared production update rule.
 
 ```mermaid
 flowchart LR

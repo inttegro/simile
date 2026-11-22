@@ -99,6 +99,11 @@ Request and response projections also define when an effect applies. An action t
 accepted-without-entity outcome therefore does not accidentally run the write or turn the public
 outcome into an execution failure.
 
+Use `db.put` when the projected value is the complete public document. Use `db.merge` when the
+operation deliberately exposes a partial public snapshot and omitted fields must survive. Merge is
+recursive for objects and replaces supplied arrays and scalars, so the behavior remains explicit
+and portable rather than depending on a provider's private patch implementation.
+
 ## Convention inference
 
 When a service declares exactly one database, a `POST`, `PUT`, or `PATCH` operation has a stable

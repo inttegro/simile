@@ -294,7 +294,9 @@ fn lock(state: &ProcessState) -> std::result::Result<MutexGuard<'_, Stack>, ApiE
 
 const fn capabilities(kind: ResourceKind) -> &'static [&'static str] {
     match kind {
-        ResourceKind::Db => &["get", "put", "delete", "query", "transact"],
+        // Why: remote Stack clients must be able to discover merge before relying on partial
+        // mutation persistence; advertising it keeps capability negotiation truthful.
+        ResourceKind::Db => &["get", "put", "merge", "delete", "query", "transact"],
         ResourceKind::Cache => &["get", "set", "delete", "increment", "compare_and_set"],
         ResourceKind::Queue => &[
             "publish",

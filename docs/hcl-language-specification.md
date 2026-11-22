@@ -592,7 +592,7 @@ Supported mutation commands are:
 
 | Backend | Commands |
 | --- | --- |
-| `db` | `put`, `delete` |
+| `db` | `put`, `merge`, `delete` |
 | `cache` | `set`, `delete`, `increment`, `compare_and_set` |
 | `queue` | `publish` |
 | `mail` | `send` |
@@ -601,10 +601,11 @@ Supported mutation commands are:
 | `scheduler` | `schedule`, `cancel` |
 | `http` | `register`, `call` |
 
-The command determines required and optional arguments. For example, `db.put` requires
-`collection`, `key`, and `value`; `queue.publish` requires `body` and optionally accepts
-`attributes` and `delay_ms`. Unsupported reads such as `db.get` are rejected because an effect
-describes consequences, not an alternate query API.
+The command determines required and optional arguments. For example, `db.put` and `db.merge`
+require `collection`, `key`, and `value`; `queue.publish` requires `body` and optionally accepts
+`attributes` and `delay_ms`. `db.put` replaces the stored document. `db.merge` recursively merges
+object fields, replaces supplied scalars and arrays, and preserves omitted fields. Unsupported reads
+such as `db.get` are rejected because an effect describes consequences, not an alternate query API.
 
 ### `behavior`
 

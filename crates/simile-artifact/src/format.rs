@@ -21,7 +21,9 @@ use simile_spec::{
 
 use crate::{Error, Result};
 
-pub const FORMAT_VERSION: u16 = 21;
+// Why: `DbMerge` extends the serialized action vocabulary; a new envelope version prevents an
+// older runtime from accepting an artifact whose action tag it cannot interpret.
+pub const FORMAT_VERSION: u16 = 22;
 pub const EXTENSION: &str = "similec";
 
 const MAGIC: &[u8; 8] = b"SIMILEC\0";
@@ -3072,7 +3074,7 @@ fn validate_effect_action(
     value_records: &[ValueRecord],
 ) -> Result<()> {
     validate_index(action.0, resources, "effect action resource")?;
-    if action.1 > 14 {
+    if action.1 > 15 {
         return Err(Error::Invalid("effect action kind"));
     }
     for (name, value) in &action.2 {
@@ -3968,6 +3970,9 @@ const fn encode_effect_action_kind(kind: EffectActionKind) -> u8 {
         EffectActionKind::SchedulerCancel => 12,
         EffectActionKind::HttpRegister => 13,
         EffectActionKind::HttpCall => 14,
+        // Why: new action kinds append to the wire vocabulary so existing compiled artifacts keep
+        // their established numeric meaning across Simile upgrades.
+        EffectActionKind::DbMerge => 15,
     }
 }
 
@@ -3988,6 +3993,7 @@ fn decode_effect_action_kind(kind: u8) -> EffectActionKind {
         12 => EffectActionKind::SchedulerCancel,
         13 => EffectActionKind::HttpRegister,
         14 => EffectActionKind::HttpCall,
+        15 => EffectActionKind::DbMerge,
         _ => unreachable!("artifact validation rejects unknown effect action kinds"),
     }
 }

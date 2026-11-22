@@ -70,6 +70,13 @@ pub enum DbCommand {
         #[serde(default)]
         condition: WriteCondition,
     },
+    Merge {
+        collection: String,
+        key: String,
+        value: Value,
+        #[serde(default)]
+        condition: WriteCondition,
+    },
     Delete {
         collection: String,
         key: String,
@@ -98,6 +105,7 @@ impl DbCommand {
         match self {
             Self::Get { .. } => "get",
             Self::Put { .. } => "put",
+            Self::Merge { .. } => "merge",
             Self::Delete { .. } => "delete",
             Self::Query { .. } => "query",
             Self::Transact { .. } => "transact",
@@ -138,6 +146,14 @@ impl DbEngine {
                 condition,
             } => self
                 .put(resource, context, &collection, &key, value, &condition)
+                .map(DbResult::Written),
+            DbCommand::Merge {
+                collection,
+                key,
+                value,
+                condition,
+            } => self
+                .merge(resource, context, &collection, &key, value, &condition)
                 .map(DbResult::Written),
             DbCommand::Delete {
                 collection,
@@ -261,6 +277,26 @@ impl DbEngine {
             .is_some())
     }
 
+    fn merge(
+        &mut self,
+        resource: &str,
+        context: &CommandContext,
+        collection: &str,
+        key: &str,
+        value: Value,
+        condition: &WriteCondition,
+    ) -> Result<StoredDocument> {
+        // Why: public update responses may be partial snapshots. A distinct merge command keeps
+        // `put` replacement semantics honest while preventing omitted public fields from being
+        // erased when a provider explicitly models a patch-like mutation.
+        let mut merged = self.document(resource, collection, key).map_or_else(
+            || Value::Object(serde_json::Map::new()),
+            |document| document.value.clone(),
+        );
+        merge_values(&mut merged, value);
+        self.put(resource, context, collection, key, merged, condition)
+    }
+
     fn query(
         &self,
         resource: &str,
@@ -281,6 +317,21 @@ impl DbEngine {
             .take(limit)
             .cloned()
             .collect()
+    }
+}
+
+fn merge_values(target: &mut Value, update: Value) {
+    match (target, update) {
+        (Value::Object(target), Value::Object(update)) => {
+            for (name, value) in update {
+                if let Some(existing) = target.get_mut(&name) {
+                    merge_values(existing, value);
+                } else {
+                    target.insert(name, value);
+                }
+            }
+        }
+        (target, update) => *target = update,
     }
 }
 
@@ -345,5 +396,57 @@ mod tests {
             ),
             Ok(DbResult::Document(None))
         );
+    }
+
+    #[test]
+    fn merge_preserves_omitted_fields_and_replaces_supplied_values() {
+        let mut engine = DbEngine::default();
+        engine
+            .execute(
+                "primary",
+                &context(),
+                DbCommand::Put {
+                    collection: "products".to_owned(),
+                    key: "prod_one".to_owned(),
+                    value: json!({
+                        "id": "prod_one",
+                        "name": "First edition",
+                        "active": true,
+                        "dimensions": {"width": 10, "height": 20}
+                    }),
+                    condition: WriteCondition::Any,
+                },
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        let result = engine
+            .execute(
+                "primary",
+                &context(),
+                DbCommand::Merge {
+                    collection: "products".to_owned(),
+                    key: "prod_one".to_owned(),
+                    value: json!({
+                        "name": "Second edition",
+                        "dimensions": {"width": 12}
+                    }),
+                    condition: WriteCondition::Any,
+                },
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        let DbResult::Written(document) = result else {
+            panic!("expected written document");
+        };
+        assert_eq!(
+            document.value,
+            json!({
+                "id": "prod_one",
+                "name": "Second edition",
+                "active": true,
+                "dimensions": {"width": 12, "height": 20}
+            })
+        );
+        assert_eq!(document.version, 2);
     }
 }

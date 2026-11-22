@@ -40,6 +40,8 @@ pub enum EffectValue {
 #[serde(rename_all = "snake_case")]
 pub enum EffectActionKind {
     DbPut,
+    /// Why: partial public snapshots need preservation without changing `put` replacement semantics.
+    DbMerge,
     DbDelete,
     CacheSet,
     CacheDelete,
@@ -62,6 +64,7 @@ impl EffectActionKind {
     pub fn from_resource_and_name(resource: ResourceKind, name: &str) -> Option<Self> {
         Some(match (resource, name) {
             (ResourceKind::Db, "put") => Self::DbPut,
+            (ResourceKind::Db, "merge") => Self::DbMerge,
             (ResourceKind::Db, "delete") => Self::DbDelete,
             (ResourceKind::Cache, "set") => Self::CacheSet,
             (ResourceKind::Cache, "delete") => Self::CacheDelete,
@@ -83,7 +86,7 @@ impl EffectActionKind {
     #[must_use]
     pub const fn resource_kind(self) -> ResourceKind {
         match self {
-            Self::DbPut | Self::DbDelete => ResourceKind::Db,
+            Self::DbPut | Self::DbMerge | Self::DbDelete => ResourceKind::Db,
             Self::CacheSet
             | Self::CacheDelete
             | Self::CacheIncrement
@@ -101,6 +104,7 @@ impl EffectActionKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::DbPut | Self::ObjectStorePut => "put",
+            Self::DbMerge => "merge",
             Self::DbDelete | Self::CacheDelete | Self::ObjectStoreDelete => "delete",
             Self::CacheSet => "set",
             Self::CacheIncrement => "increment",
@@ -117,7 +121,7 @@ impl EffectActionKind {
     #[must_use]
     pub const fn required_arguments(self) -> &'static [&'static str] {
         match self {
-            Self::DbPut => &["collection", "key", "value"],
+            Self::DbPut | Self::DbMerge => &["collection", "key", "value"],
             Self::DbDelete => &["collection", "key"],
             Self::CacheSet => &["key", "value"],
             Self::CacheDelete | Self::CacheIncrement => &["key"],
@@ -137,7 +141,9 @@ impl EffectActionKind {
     #[must_use]
     pub const fn optional_arguments(self) -> &'static [&'static str] {
         match self {
-            Self::DbPut | Self::DbDelete | Self::ObjectStoreDelete => &["condition"],
+            Self::DbPut | Self::DbMerge | Self::DbDelete | Self::ObjectStoreDelete => {
+                &["condition"]
+            }
             Self::CacheSet => &["ttl_ms"],
             Self::CacheDelete | Self::SchedulerCancel | Self::HttpRegister | Self::HttpCall => &[],
             Self::CacheIncrement => &["by", "ttl_ms"],
