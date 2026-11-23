@@ -348,7 +348,16 @@ impl Service {
         limit: usize,
         visibility_timeout_milliseconds: Option<u64>,
     ) -> Result<Vec<WorkLease>> {
-        let receipt = self.execute_stack(
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let has_available_work = limit > 0
+            && inspect_work_queue(&before, OUTBOX, "outbox")?
+                .iter()
+                .any(|item| item.available_at <= before.now());
+        if !has_available_work {
+            return Ok(Vec::new());
+        }
+        let receipt = match stack.execute(
             ResourceAddress::new(ResourceKind::Queue, OUTBOX)?,
             CommandMetadata::default(),
             StackCommand::Queue(QueueCommand::Receive {
@@ -356,7 +365,14 @@ impl Service {
                 visibility_timeout_ms: visibility_timeout_milliseconds
                     .unwrap_or(DEFAULT_VISIBILITY_TIMEOUT_MS),
             }),
-        )?;
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                *stack = Stack::from_snapshot(before);
+                return Err(error.into());
+            }
+        };
+        self.checkpoint(&mut stack, before)?;
         match receipt.result {
             StackResult::Queue(result) => match *result {
                 QueueResult::Messages(messages) => {

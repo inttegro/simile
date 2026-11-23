@@ -86,6 +86,12 @@ pub(crate) struct StackClocks {
 }
 
 impl StackSnapshot {
+    /// Return the logical time captured with this immutable state view.
+    #[must_use]
+    pub const fn now(&self) -> LogicalTime {
+        self.clock.now
+    }
+
     /// Return a JSON view of one resource's engine state.
     ///
     /// State values are intentionally available only through this explicit

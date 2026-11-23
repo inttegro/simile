@@ -59,6 +59,33 @@ fn durable_outbox_survives_restart_and_acknowledgement() {
 }
 
 #[test]
+fn empty_work_polls_do_not_mutate_state() {
+    let service =
+        Service::memory(deferred_work_artifact()).unwrap_or_else(|error| panic!("{error}"));
+    let events_before = service
+        .inspect_state(false)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .events
+        .len();
+
+    for _ in 0..3 {
+        assert!(
+            service
+                .lease_work(10, None)
+                .unwrap_or_else(|error| panic!("{error}"))
+                .is_empty()
+        );
+    }
+
+    let events_after = service
+        .inspect_state(false)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .events
+        .len();
+    assert_eq!(events_after, events_before);
+}
+
+#[test]
 fn hard_webhook_dependencies_wait_without_spending_the_retry_budget() {
     let service =
         Service::memory(webhook_dependency_artifact()).unwrap_or_else(|error| panic!("{error}"));
