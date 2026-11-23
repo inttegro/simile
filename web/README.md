@@ -23,15 +23,25 @@ SIMILE_HOME=/tmp/simile-web-live ./target/debug/simile start --config ../openapi
 python3 -m http.server 4175 --bind 127.0.0.1 --directory web
 ```
 
-Open `http://127.0.0.1:4175/`. The interface polls the running service's read-only inspector and
-switches Exchanges and State from clearly labelled preview data to live runtime data. It uses:
+Open `http://127.0.0.1:4175/`. The interface polls the running service's loopback inspector and
+switches Exchanges, State, and Deferred work from clearly labelled preview data to live runtime
+data. It uses:
 
 - `GET /.simile/inspection` for service and capture counts;
 - `GET /.simile/exchanges` for a bounded, newest-first exchange buffer; and
-- `GET /.simile/state` for the running Stack's resources, values, and payload-free journal.
+- `DELETE /.simile/exchanges` to clear the in-memory exchange buffer;
+- `GET /.simile/state` for the running Stack's resources, values, and payload-free journal;
+- `POST /.simile/state/reset` with `{"confirm":true}` to reset local runtime state;
+- `GET /.simile/deferred` for pending, leased, and dead-lettered work;
+- `POST /.simile/exchanges/:id/report` to reproduce and locally verify an exchange report; and
+- `POST /.simile/reports/:id/submit` to explicitly submit a verified report.
 
 These endpoints exist only when the emulated service is bound to a loopback address. Browser access
 is restricted to loopback origins. Captured request JSON passes through the server's sensitive-field
 redactor, opaque request bodies are omitted, and request or response bodies above 256 KiB are marked
 as truncated. The ring buffer retains at most 200 exchanges in memory and does not alter the durable
 checkpoint.
+
+Destructive controls require an explicit browser confirmation and a server-side confirmation body.
+Report preparation and report submission are separate actions: preparing a report reproduces and
+verifies it locally, while submission is never implied by opening or generating the report.

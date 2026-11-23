@@ -44,20 +44,32 @@ opens the durable checkpoint when no service owns it. A running service instead 
 in-memory Stack through a read-only loopback inspector, so there is still only one state owner and
 the browser cannot observe a torn checkpoint.
 
-The live inspector provides three reserved endpoints:
+The live inspector provides reserved inspection and local-control endpoints:
 
 ```text
 GET /.simile/inspection
 GET /.simile/exchanges
+DELETE /.simile/exchanges
 GET /.simile/state
+POST /.simile/state/reset
+GET /.simile/deferred
+POST /.simile/exchanges/:id/report
+POST /.simile/reports/:id/submit
 ```
 
 The endpoints are registered only when the service listener is bound to a loopback address. Browser
 requests must also come from a loopback origin. State values are present because the Web state view
 is an explicit local inspection surface; journal entries remain payload-free. Exchange capture is
 bounded to 200 entries, redacts sensitive JSON request fields, omits opaque request payloads, and
-does not retain bodies larger than 256 KiB.
+does not retain bodies larger than 256 KiB. Destructive controls require explicit confirmation,
+and state reset requires a `{"confirm":true}` request body in addition to the browser prompt.
+
+Preparing an exchange report reproduces the captured exchange against the current service artifact
+and verifies the resulting evidence locally. Submission remains a separate explicit action, so
+local diagnosis never reports data to a configured endpoint merely because an operator opened or
+generated a report.
 
 Simile Web polls these endpoints while auto-refresh is enabled. If the runtime is unavailable, it
 shows generated preview data and labels that fallback rather than presenting it as observed runtime
-evidence.
+evidence. The inspector is not a remote administration API: every endpoint is registered only for
+a loopback listener and accepts browser requests only from loopback origins.
