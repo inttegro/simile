@@ -16,9 +16,9 @@ mod work;
 #[cfg(feature = "persistence")]
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use simile_artifact::Artifact;
