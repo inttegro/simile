@@ -5,12 +5,13 @@ use std::time::Duration;
 use super::*;
 use crate::access_log::AccessLine;
 use crate::inspection::{sanitize_body, sanitize_parameters};
-use crate::response::{operation_execution_response, validation_error_message};
-use crate::routing::{Match, RouteTable};
+use axum::http::{Method, StatusCode};
 use serde_json::json;
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_heuristics::Policy;
-use simile_runtime::Runtime;
+use simile_http::{Match, RouteTable, validation_error_message};
+use simile_runtime::{ExecutionOptions, OperationCall, Runtime};
+use std::collections::BTreeMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
@@ -968,4 +969,21 @@ fn retains_safe_multipart_evidence_for_reports() {
     assert!(rendered.contains("filename=\"secret.txt\""));
     assert!(rendered.contains("X-Simile-Original-Length: 13"));
     assert!(!rendered.contains("private bytes"));
+}
+
+async fn operation_execution_response(
+    execution: simile_runtime::OperationExecution,
+    head: bool,
+) -> Response {
+    send_exchange(simile_http::HttpExchange {
+        response: simile_http::operation_response(execution.response(), head),
+        transport: execution.transport().clone(),
+        operation: Some(execution.operation().to_owned()),
+        profile: None,
+        seed: 0,
+        fault: execution.fault().cloned(),
+        incident: None,
+        capture: None,
+    })
+    .await
 }

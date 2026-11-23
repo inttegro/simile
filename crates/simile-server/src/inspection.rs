@@ -20,7 +20,7 @@ use crate::access_log::text_header;
 use crate::response::{error_response, json_response};
 use crate::{
     ConfirmDestructiveActionBody, INSPECTION_BODY_LIMIT, InspectionExchange, InspectionMessage,
-    Inspector, PrepareRuntimeReportBody, RecordedExchange, RuntimeExchangeReport, RuntimeIncident,
+    Inspector, PrepareRuntimeReportBody, RecordedExchange, RuntimeExchangeReport,
     RuntimeReportCommand, RuntimeReportError, RuntimeReportSummary, ServerState,
     SubmitRuntimeReportBody,
 };
@@ -487,58 +487,6 @@ fn inspection_json_or_text(content_type: Option<&str>, bytes: &[u8]) -> Option<s
     std::str::from_utf8(bytes)
         .ok()
         .map(|value| serde_json::Value::String(value.to_owned()))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_incident(
-    state: &ServerState,
-    profile: Option<String>,
-    operation: &str,
-    seed: u64,
-    content_type: Option<String>,
-    body: &[u8],
-    parameters: IncomingParameters,
-    error: &simile_runtime::Error,
-) {
-    if !error.is_reportable() {
-        return;
-    }
-    let Some(sender) = state.reporting_sender.as_ref() else {
-        return;
-    };
-    let Some(body) = sanitize_body(content_type.as_deref(), body) else {
-        tracing::debug!(
-            target: "simile::reporting",
-            operation,
-            content_type,
-            "automatic report skipped because the request body cannot be safely sanitized"
-        );
-        return;
-    };
-    let incident = RuntimeIncident {
-        profile,
-        operation: operation.to_owned(),
-        seed,
-        content_type,
-        body,
-        parameters: sanitize_parameters(parameters),
-        scenario: state.scenario.clone(),
-        fault_profile: state.fault_profile.clone(),
-        code: error.code().to_owned(),
-        message: error.to_string(),
-        issues: error
-            .issues()
-            .iter()
-            .filter_map(|issue| serde_json::to_value(issue).ok())
-            .collect(),
-    };
-    if let Err(error) = sender.try_send(RuntimeReportCommand::Automatic(incident)) {
-        tracing::debug!(
-            target: "simile::reporting",
-            %error,
-            "automatic report skipped because the reporting queue is unavailable"
-        );
-    }
 }
 
 pub(super) fn sanitize_parameters(mut parameters: IncomingParameters) -> IncomingParameters {
