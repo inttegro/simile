@@ -23,9 +23,9 @@ use simile_runtime::{
 };
 use simile_spec::ResourceKind;
 use simile_stack::{
-    CommandMetadata, DbCommand, JournalOutcome, LogicalTime, MemoryStateStore, QueueCommand,
-    QueueResult, RedbStateStore, ResourceAddress, ResourceError, Stack, StackCommand, StackResult,
-    StackSnapshot, StateIdentity, StateStore, StateStoreError, WriteCondition,
+    CommandMetadata, DbCommand, JournalEntry, JournalOutcome, LogicalTime, MemoryStateStore,
+    QueueCommand, QueueResult, RedbStateStore, ResourceAddress, ResourceError, Stack, StackCommand,
+    StackResult, StackSnapshot, StateIdentity, StateStore, StateStoreError, WriteCondition,
 };
 use thiserror::Error;
 
@@ -52,6 +52,60 @@ pub struct Service {
     runtime: Runtime,
     stack: Mutex<Stack>,
     store: Arc<dyn StateStore>,
+}
+
+/// Read-only runtime state for local inspection tools.
+///
+/// This view is produced by the running service, so it never competes with the
+/// service for ownership of its durable state file. Journal entries remain
+/// payload-free. Resource values are included only when the caller opts in.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStateInspection {
+    pub resources: Vec<InspectedResource>,
+    pub events: Vec<JournalEntry>,
+}
+
+/// One declared Stack resource and, optionally, its current JSON state.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectedResource {
+    pub address: ResourceAddress,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+}
+
+/// Read-only view of durable work owned by the running service.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredWorkInspection {
+    pub pending: usize,
+    pub leased: usize,
+    pub dead_letters: usize,
+    pub items: Vec<InspectedDeferredWork>,
+}
+
+/// One queued consequence, without its private receipt handle.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectedDeferredWork {
+    pub id: String,
+    pub queue: String,
+    pub published_at: LogicalTime,
+    pub available_at: LogicalTime,
+    pub receive_count: u32,
+    pub leased: bool,
+    pub work: DeferredWork,
+}
+
+#[derive(serde::Deserialize)]
+struct StoredWorkInspection {
+    id: String,
+    body: serde_json::Value,
+    published_at: LogicalTime,
+    available_at: LogicalTime,
+    receive_count: u32,
+    receipt_handle: Option<String>,
 }
 
 /// Authentication result enriched with the durable profile that supplied it.
@@ -504,6 +558,54 @@ impl Service {
         Ok(lock(&self.stack)?.snapshot()?)
     }
 
+    /// Inspect the state currently owned by this running service.
+    ///
+    /// Offline commands open the durable store under an exclusive lock. Live
+    /// tools must use this method instead so there is one state owner and one
+    /// source of truth while the service is serving requests.
+    pub fn inspect_state(&self, include_values: bool) -> Result<ServiceStateInspection> {
+        let stack = lock(&self.stack)?;
+        let snapshot = include_values.then(|| stack.snapshot()).transpose()?;
+        let resources = stack
+            .resources()
+            .iter()
+            .cloned()
+            .map(|address| InspectedResource {
+                value: snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.resource_state(&address)),
+                address,
+            })
+            .collect();
+        let events = stack.journal().entries().to_vec();
+        Ok(ServiceStateInspection { resources, events })
+    }
+
+    /// Inspect queued and exhausted work without leasing or mutating it.
+    pub fn inspect_deferred_work(&self) -> Result<DeferredWorkInspection> {
+        let snapshot = lock(&self.stack)?.snapshot()?;
+        let mut items = inspect_work_queue(&snapshot, OUTBOX, "outbox")?;
+        let dead_letters = inspect_work_queue(&snapshot, DEAD_LETTERS, "dead_letter")?;
+        let leased = items.iter().filter(|item| item.leased).count();
+        let pending = items.len().saturating_sub(leased);
+        let dead_letter_count = dead_letters.len();
+        items.extend(dead_letters);
+        Ok(DeferredWorkInspection {
+            pending,
+            leased,
+            dead_letters: dead_letter_count,
+            items,
+        })
+    }
+
+    /// Reset every resource and journal entry, then checkpoint the empty Stack.
+    pub fn reset_state(&self) -> Result<()> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        stack.reset();
+        self.checkpoint(&mut stack, before)
+    }
+
     fn commit(
         &self,
         execution: &OperationExecution,
@@ -692,6 +794,40 @@ impl Service {
         }
         Ok(())
     }
+}
+
+fn inspect_work_queue(
+    snapshot: &StackSnapshot,
+    resource_name: &str,
+    queue: &str,
+) -> Result<Vec<InspectedDeferredWork>> {
+    let address = ResourceAddress::new(ResourceKind::Queue, resource_name)?;
+    let value = snapshot
+        .resource_state(&address)
+        .unwrap_or_else(|| serde_json::Value::Array(Vec::new()));
+    let value = if value.is_null() {
+        serde_json::Value::Array(Vec::new())
+    } else {
+        value
+    };
+    let messages = serde_json::from_value::<Vec<StoredWorkInspection>>(value)
+        .map_err(|error| Error::InvalidWork(error.to_string()))?;
+    messages
+        .into_iter()
+        .map(|message| {
+            let work = serde_json::from_value(message.body)
+                .map_err(|error| Error::InvalidWork(error.to_string()))?;
+            Ok(InspectedDeferredWork {
+                id: message.id,
+                queue: queue.to_owned(),
+                published_at: message.published_at,
+                available_at: message.available_at,
+                receive_count: message.receive_count,
+                leased: message.receipt_handle.is_some(),
+                work,
+            })
+        })
+        .collect()
 }
 
 fn service_authentication(authenticated: Option<AuthenticatedProfile>) -> ServiceAuthentication {

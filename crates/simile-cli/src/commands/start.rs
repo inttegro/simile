@@ -71,7 +71,7 @@ async fn run(
         simile_server::ServerOptions {
             scenario,
             fault_profile: fault_profile.clone(),
-            incident_sender: reporting.sender(),
+            reporting_sender: reporting.sender(),
         },
     )
     .await;

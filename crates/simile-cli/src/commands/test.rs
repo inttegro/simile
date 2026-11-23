@@ -56,7 +56,7 @@ async fn run(ctx: Context, plan: ops::TestPlan, terminal: &Terminal) -> Result<S
         simile_server::ServerOptions {
             scenario: plan.scenario,
             fault_profile: plan.fault_profile,
-            incident_sender: reporting.sender(),
+            reporting_sender: reporting.sender(),
         },
     )
     .await;

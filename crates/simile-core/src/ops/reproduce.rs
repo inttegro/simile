@@ -6,12 +6,14 @@ use simile_runtime::{
     ExecutionOptions, IncomingParameters, OperationCall, OperationValueCall, Runtime,
     validate_parameters,
 };
+use simile_service::Service;
 
 use super::run::{ExecutedRequest, ExecutedResponse, RunReport};
 use crate::{Error, Result};
 
 const RESPONSE_FORMAT_VERSION: u16 = 1;
 const INCIDENT_FORMAT_VERSION: u16 = 2;
+const EXCHANGE_FORMAT_VERSION: u16 = 3;
 const MANIFEST: &str = "bundle.json";
 const ARTIFACT: &str = "service.similec";
 const REQUEST: &str = "request.json";
@@ -79,6 +81,40 @@ pub struct IncidentBundleRequest<'a> {
     pub expected: ReproductionDiagnostic,
 }
 
+#[derive(Clone, Debug)]
+pub struct ExchangeBundleRequest<'a> {
+    pub path: &'a Path,
+    pub artifact_bytes: &'a [u8],
+    pub service: &'a str,
+    pub service_version: &'a str,
+    pub operation: &'a str,
+    pub response_seed: u64,
+    pub content_type: Option<&'a str>,
+    pub body: &'a [u8],
+    pub parameters: &'a IncomingParameters,
+    pub outcome: Option<&'a str>,
+    pub scenario: Option<&'a str>,
+    pub fault_profile: Option<&'a str>,
+    pub expected: &'a ExecutedResponse,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangeManifest {
+    format_version: u16,
+    simile_version: String,
+    artifact_format: u16,
+    artifact_sha256: String,
+    service: String,
+    service_version: String,
+    operation: String,
+    response_seed: u64,
+    outcome: Option<String>,
+    scenario: Option<String>,
+    fault_profile: Option<String>,
+    expected: ExecutedResponse,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IncidentManifest {
@@ -98,6 +134,13 @@ struct IncidentManifest {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IncidentRequestDocument {
+    content_type: Option<String>,
+    parameters: IncomingParameters,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExchangeRequestDocument {
     content_type: Option<String>,
     parameters: IncomingParameters,
 }
@@ -279,6 +322,57 @@ pub fn write_incident(request: &IncidentBundleRequest<'_>) -> Result<()> {
     result
 }
 
+/// Capture one sanitized HTTP exchange as a deterministic response reproduction.
+pub fn write_exchange(request: &ExchangeBundleRequest<'_>) -> Result<()> {
+    if request.path.exists() {
+        return Err(Error::ReproductionExists {
+            path: request.path.to_path_buf(),
+        });
+    }
+    let artifact = simile_artifact::decode(request.artifact_bytes)?;
+    let manifest = ExchangeManifest {
+        format_version: EXCHANGE_FORMAT_VERSION,
+        simile_version: env!("CARGO_PKG_VERSION").to_owned(),
+        artifact_format: simile_artifact::FORMAT_VERSION,
+        artifact_sha256: artifact.summary().payload_sha256,
+        service: request.service.to_owned(),
+        service_version: request.service_version.to_owned(),
+        operation: request.operation.to_owned(),
+        response_seed: request.response_seed,
+        outcome: request.outcome.map(str::to_owned),
+        scenario: request.scenario.map(str::to_owned),
+        fault_profile: request.fault_profile.map(str::to_owned),
+        expected: request.expected.clone(),
+    };
+    let document = ExchangeRequestDocument {
+        content_type: request.content_type.map(str::to_owned),
+        parameters: request.parameters.clone(),
+    };
+    let parent = request
+        .path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        fs::create_dir_all(parent).map_err(|source| io("create", parent, source))?;
+    }
+    let staging = staging_path(request.path);
+    fs::create_dir(&staging).map_err(|source| io("create", &staging, source))?;
+    let result = (|| {
+        write_json(&staging.join(MANIFEST), &manifest)?;
+        write_json(&staging.join(REQUEST), &document)?;
+        fs::write(staging.join("request.body"), request.body)
+            .map_err(|source| io("write", &staging.join("request.body"), source))?;
+        fs::write(staging.join(ARTIFACT), request.artifact_bytes)
+            .map_err(|source| io("write", &staging.join(ARTIFACT), source))?;
+        fs::rename(&staging, request.path).map_err(|source| io("install", request.path, source))?;
+        Ok(())
+    })();
+    if result.is_err() && staging.exists() {
+        drop(fs::remove_dir_all(&staging));
+    }
+    result
+}
+
 /// Verify either a response reproduction or an incident reproduction without trusting its claim.
 pub fn verify_case(path: &Path) -> Result<CaseVerification> {
     let manifest_path = path.join(MANIFEST);
@@ -318,10 +412,79 @@ pub fn verify_case(path: &Path) -> Result<CaseVerification> {
             diagnostic,
         });
     }
+    if format == EXCHANGE_FORMAT_VERSION {
+        let manifest: ExchangeManifest =
+            serde_json::from_value(manifest_value).map_err(|source| {
+                Error::ReproductionManifest {
+                    path: manifest_path,
+                    source,
+                }
+            })?;
+        if manifest.artifact_format != simile_artifact::FORMAT_VERSION {
+            return Err(Error::ReproductionArtifactFormat {
+                found: manifest.artifact_format,
+                supported: simile_artifact::FORMAT_VERSION,
+            });
+        }
+        let artifact = simile_artifact::decode(&read(&path.join(ARTIFACT))?)?;
+        if artifact.summary().payload_sha256 != manifest.artifact_sha256 {
+            return Err(Error::ReproductionDigest);
+        }
+        let request_path = path.join(REQUEST);
+        let request: ExchangeRequestDocument = serde_json::from_slice(&read(&request_path)?)
+            .map_err(|source| Error::ReproductionManifest {
+                path: request_path,
+                source,
+            })?;
+        let body = read(&path.join("request.body"))?;
+        let parameters = validate_parameters(&artifact, &manifest.operation, &request.parameters)?;
+        let service = Service::memory(artifact)?;
+        let execution = service.execute_with_options(
+            OperationCall {
+                operation: &manifest.operation,
+                content_type: request.content_type.as_deref(),
+                body: &body,
+            },
+            ExecutionOptions {
+                parameters: Some(&parameters),
+                outcome: manifest.outcome.as_deref(),
+                scenario: manifest.scenario.as_deref(),
+                fault_profile: manifest.fault_profile.as_deref(),
+                response_seed: Some(manifest.response_seed),
+                ..ExecutionOptions::default()
+            },
+        )?;
+        let mut actual = ExecutedResponse {
+            status: execution.response().status(),
+            content_type: execution.response().media_type().map(str::to_owned),
+            body: execution.response().value().cloned(),
+        };
+        if let Some(body) = actual.body.as_mut() {
+            redact_exchange_response(body);
+        }
+        let reproduced = actual == manifest.expected;
+        return Ok(CaseVerification {
+            service: manifest.service,
+            service_version: manifest.service_version,
+            operation: manifest.operation.clone(),
+            artifact_digest: manifest.artifact_sha256.clone(),
+            bundle_simile_version: Some(manifest.simile_version),
+            reproduced,
+            fingerprint: format!(
+                "{}:{}:{}",
+                manifest.artifact_sha256, manifest.operation, manifest.response_seed
+            ),
+            diagnostic: ReproductionDiagnostic {
+                code: "emulation_inconsistency".to_owned(),
+                message: "the captured HTTP exchange is reproduced".to_owned(),
+                issues: Vec::new(),
+            },
+        });
+    }
     if format != INCIDENT_FORMAT_VERSION {
         return Err(Error::ReproductionFormat {
             found: format,
-            supported: INCIDENT_FORMAT_VERSION,
+            supported: EXCHANGE_FORMAT_VERSION,
         });
     }
     let manifest: IncidentManifest =
@@ -401,6 +564,45 @@ fn diagnostic_fingerprint(
     )
 }
 
+fn redact_exchange_response(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (name, value) in object {
+                if sensitive_name(name) {
+                    *value = serde_json::Value::String("<redacted>".to_owned());
+                } else {
+                    redact_exchange_response(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            values.iter_mut().for_each(redact_exchange_response);
+        }
+        _ => {}
+    }
+}
+
+fn sensitive_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase().replace(['-', '.'], "_");
+    [
+        "authorization",
+        "cookie",
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_key",
+        "private_key",
+        "card_number",
+        "account_number",
+        "cvc",
+        "cvv",
+    ]
+    .iter()
+    .any(|sensitive| normalized == *sensitive || normalized.ends_with(&format!("_{sensitive}")))
+}
+
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|source| Error::ReproductionManifest {
         path: path.to_path_buf(),
@@ -454,6 +656,42 @@ paths:
         let compiled = Compiler::new()
             .compile(CompileRequest {
                 openapi: Source::new("reports.yml", source),
+                modules: Vec::new(),
+                heuristic_policy: Policy::Standard,
+            })
+            .unwrap_or_else(|error| panic!("fixture must compile: {error}"));
+        simile_artifact::encode(&compiled)
+            .unwrap_or_else(|error| panic!("fixture must encode: {error}"))
+    }
+
+    fn exchange_artifact() -> Vec<u8> {
+        let source = r#"
+openapi: 3.1.0
+info: { title: Exchange reports, version: 1.0.0 }
+paths:
+  /orders/{id}:
+    get:
+      operationId: lookupOrder
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [ready] }
+"#;
+        let compiled = Compiler::new()
+            .compile(CompileRequest {
+                openapi: Source::new("exchange-reports.yml", source),
                 modules: Vec::new(),
                 heuristic_policy: Policy::Standard,
             })
@@ -522,6 +760,67 @@ paths:
         assert_eq!(verified.diagnostic, expected);
         assert_eq!(verified.operation, "POST /reports");
         assert!(verified.fingerprint.contains(&verified.diagnostic.code));
+        drop(fs::remove_dir_all(path));
+    }
+
+    #[test]
+    fn verifies_a_captured_exchange_with_its_parameters_and_response_seed() {
+        let path = temporary_case();
+        drop(fs::remove_dir_all(&path));
+        let artifact_bytes = exchange_artifact();
+        let artifact = simile_artifact::decode(&artifact_bytes)
+            .unwrap_or_else(|error| panic!("fixture must decode: {error}"));
+        let mut parameters = IncomingParameters::default();
+        parameters
+            .path
+            .insert("id".to_owned(), vec!["or_test".to_owned()]);
+        let validated = validate_parameters(&artifact, "GET /orders/{id}", &parameters)
+            .unwrap_or_else(|error| panic!("fixture parameters must validate: {error}"));
+        let execution = Runtime::from_artifact(artifact)
+            .execute_with_options(
+                OperationCall {
+                    operation: "GET /orders/{id}",
+                    content_type: None,
+                    body: b"",
+                },
+                ExecutionOptions {
+                    parameters: Some(&validated),
+                    response_seed: Some(41),
+                    ..ExecutionOptions::default()
+                },
+            )
+            .unwrap_or_else(|error| panic!("fixture exchange must execute: {error}"));
+        let expected = ExecutedResponse {
+            status: execution.response().status(),
+            content_type: execution.response().media_type().map(str::to_owned),
+            body: execution.response().value().cloned(),
+        };
+
+        write_exchange(&ExchangeBundleRequest {
+            path: &path,
+            artifact_bytes: &artifact_bytes,
+            service: "Exchange reports",
+            service_version: "1.0.0",
+            operation: "GET /orders/{id}",
+            response_seed: 41,
+            content_type: None,
+            body: b"",
+            parameters: &parameters,
+            outcome: None,
+            scenario: None,
+            fault_profile: None,
+            expected: &expected,
+        })
+        .unwrap_or_else(|error| panic!("exchange bundle must be written: {error}"));
+
+        let verified =
+            verify_case(&path).unwrap_or_else(|error| panic!("exchange must verify: {error}"));
+        assert!(verified.reproduced);
+        assert_eq!(verified.operation, "GET /orders/{id}");
+        assert_eq!(
+            verified.diagnostic.message,
+            "the captured HTTP exchange is reproduced"
+        );
         drop(fs::remove_dir_all(path));
     }
 }

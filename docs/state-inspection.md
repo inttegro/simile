@@ -36,3 +36,28 @@ JSON output preserves the same boundary.
 
 The command takes the state database's exclusive ownership lock. It therefore refuses to inspect a
 file currently owned by a running service rather than racing a writer or reporting a torn view.
+
+## Inspect a running service in Simile Web
+
+Offline inspection and live inspection deliberately use different ownership paths. `simile state`
+opens the durable checkpoint when no service owns it. A running service instead exposes its own
+in-memory Stack through a read-only loopback inspector, so there is still only one state owner and
+the browser cannot observe a torn checkpoint.
+
+The live inspector provides three reserved endpoints:
+
+```text
+GET /.simile/inspection
+GET /.simile/exchanges
+GET /.simile/state
+```
+
+The endpoints are registered only when the service listener is bound to a loopback address. Browser
+requests must also come from a loopback origin. State values are present because the Web state view
+is an explicit local inspection surface; journal entries remain payload-free. Exchange capture is
+bounded to 200 entries, redacts sensitive JSON request fields, omits opaque request payloads, and
+does not retain bodies larger than 256 KiB.
+
+Simile Web polls these endpoints while auto-refresh is enabled. If the runtime is unavailable, it
+shows generated preview data and labels that fallback rather than presenting it as observed runtime
+evidence.

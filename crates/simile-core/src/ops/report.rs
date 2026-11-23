@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use super::profile::profile_environment;
 use super::reproduce::{
-    IncidentBundleRequest, ReproductionDiagnostic, verify_case, write_incident,
+    ExchangeBundleRequest, IncidentBundleRequest, ReproductionDiagnostic, verify_case,
+    write_exchange, write_incident,
 };
+use super::run::ExecutedResponse;
 use crate::registry::Registry;
 use crate::reporting::{ReportingStore, validate_contact, validate_endpoint};
 use crate::{
@@ -105,6 +107,24 @@ pub struct AutomaticReportRequest {
     pub scenario: Option<String>,
     pub fault_profile: Option<String>,
     pub diagnostic: ReportDiagnostic,
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeExchangeReportRequest {
+    pub service: String,
+    pub profile: Option<String>,
+    pub artifact_bytes: Vec<u8>,
+    pub operation: String,
+    pub response_seed: u64,
+    pub content_type: Option<String>,
+    pub body: Vec<u8>,
+    pub parameters: IncomingParameters,
+    pub outcome: Option<String>,
+    pub scenario: Option<String>,
+    pub fault_profile: Option<String>,
+    pub expected: ExecutedResponse,
+    pub title: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,7 +256,14 @@ pub fn prepare_report(ctx: &Context, request: &PrepareReportRequest) -> Result<P
             reproduced: verified.service,
         });
     }
-    let profile = profile_environment(ctx, &request.service, request.profile.as_deref())?
+    // Why: a reproduction bundle carries the exact artifact needed for independent verification;
+    // requiring a local registry entry would make a clean receiver trust provider-side setup.
+    let profile = request
+        .profile
+        .as_deref()
+        .map(|profile| profile_environment(ctx, &request.service, Some(profile)))
+        .transpose()?
+        .flatten()
         .map(|profile| profile.profile);
     let store = ReportingStore::new(ctx.simile_home()?);
     let report = ReportDocument::verified(
@@ -260,6 +287,47 @@ pub fn prepare_report(ctx: &Context, request: &PrepareReportRequest) -> Result<P
     )?;
     let directory = store.install_report(&report, &request.bundle)?;
     Ok(PreparedReport { report, directory })
+}
+
+/// Reproduce one sanitized runtime exchange and install it as a canonical verified report.
+pub fn prepare_runtime_exchange_report(
+    ctx: &Context,
+    request: RuntimeExchangeReportRequest,
+) -> Result<PreparedReport> {
+    let capture = ctx.simile_home()?.join("tmp").join(format!(
+        ".report-case-{}-{:016x}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    let artifact = simile_artifact::decode(&request.artifact_bytes)?;
+    let summary = artifact.summary();
+    write_exchange(&ExchangeBundleRequest {
+        path: &capture,
+        artifact_bytes: &request.artifact_bytes,
+        service: &request.service,
+        service_version: &summary.service_version,
+        operation: &request.operation,
+        response_seed: request.response_seed,
+        content_type: request.content_type.as_deref(),
+        body: &request.body,
+        parameters: &request.parameters,
+        outcome: request.outcome.as_deref(),
+        scenario: request.scenario.as_deref(),
+        fault_profile: request.fault_profile.as_deref(),
+        expected: &request.expected,
+    })?;
+    let result = prepare_report(
+        ctx,
+        &PrepareReportRequest {
+            service: request.service,
+            profile: request.profile,
+            bundle: capture.clone(),
+            title: request.title,
+            description: request.description,
+        },
+    );
+    drop(fs::remove_dir_all(&capture));
+    result
 }
 
 /// Prepare, verify, preflight, and submit an automatically observed emulator defect.
@@ -549,7 +617,12 @@ fn submit(
             resolution_updates: true,
         },
     };
-    multipart_json(&mut body, &boundary, "report", report)?;
+    // Why: the durable local record becomes `submitted` after a successful attempt, but every
+    // wire submission is a freshly verifiable report. Normalizing the transport copy keeps an
+    // interrupted retry valid without weakening the receiver's initial-state validation.
+    let mut transport_report = report.clone();
+    transport_report.status = ReportStatus::Verified;
+    multipart_json(&mut body, &boundary, "report", &transport_report)?;
     multipart_json(&mut body, &boundary, "reporter", &reporter)?;
     let reproduction = directory.join(&report.reproduction);
     for (name, content_type) in [
@@ -681,7 +754,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("test case directory must exist: {error}"));
         fs::write(root.join("case.simile-repro/bundle.json"), b"{}")
             .unwrap_or_else(|error| panic!("test manifest must exist: {error}"));
-        let report = ReportDocument::verified(
+        let mut report = ReportDocument::verified(
             ReportKind::EmulationInconsistency,
             ReportTrigger::User,
             "response relation mismatch",
@@ -701,6 +774,8 @@ mod tests {
             true,
         )
         .unwrap_or_else(|error| panic!("test report must be valid: {error}"));
+        // A retry reads the durable report after its first successful submission marked it sent.
+        report.status = ReportStatus::Submitted;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .unwrap_or_else(|error| panic!("test receiver must bind: {error}"));
@@ -775,6 +850,8 @@ mod tests {
             .find("name=\"reporter\"")
             .unwrap_or_else(|| panic!("reporter part must exist"));
         assert!(report_start < reporter_start);
+        assert!(body[report_start..reporter_start].contains(r#""status":"verified""#));
+        assert!(!body[report_start..reporter_start].contains(r#""status":"submitted""#));
         assert!(!body[report_start..reporter_start].contains("reporter@example.test"));
         assert!(body[reporter_start..].contains("reporter@example.test"));
         worker

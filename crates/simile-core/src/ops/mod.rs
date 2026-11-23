@@ -39,9 +39,9 @@ pub use remove::{RemoveReport, RemoveRequest, remove};
 pub use report::{
     AutomaticReportRequest, ConfigureReportingReport, ConfigureReportingRequest,
     PrepareReportRequest, PreparedReport, ReportingPreferenceSummary, ReportsReport,
-    SendReportReport, SendReportRequest, configure_reporting, prepare_report,
-    process_automatic_report, report, reporting_destination, reporting_preferences, reports,
-    send_report,
+    RuntimeExchangeReportRequest, SendReportReport, SendReportRequest, configure_reporting,
+    prepare_report, prepare_runtime_exchange_report, process_automatic_report, report,
+    reporting_destination, reporting_preferences, reports, send_report,
 };
 pub use reproduce::{ReplayReport, ReplayRequest, replay};
 pub use run::{
