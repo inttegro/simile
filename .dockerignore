@@ -4,3 +4,6 @@
 target
 docs
 *.similec
+receiver/cloudflare/.wrangler
+receiver/cloudflare/analyzer/generated
+receiver/cloudflare/node_modules

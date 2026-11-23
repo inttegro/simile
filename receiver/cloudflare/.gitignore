@@ -1,0 +1,7 @@
+node_modules/
+.dev.vars
+wrangler.jsonc
+analyzer/wrangler.jsonc
+verifier/wrangler.jsonc
+.wrangler/
+analyzer/generated/

@@ -1,0 +1,39 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "simile-report-analyzer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-23",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "LOCAL_ADMIN_BYPASS": "false",
+    "REPORTER_CONTACT_KEY_VERSION": "v1"
+  },
+  "rules": [
+    { "type": "Text", "globs": ["**/*.html"], "fallthrough": true },
+    { "type": "Text", "globs": ["**/*.css"], "fallthrough": true },
+    { "type": "Text", "globs": ["**/generated/*.client.js"], "fallthrough": true },
+    { "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "simile-reports",
+      "database_id": "replace-with-d1-database-id"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE",
+      "bucket_name": "simile-report-evidence"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "VERIFICATION_QUEUE",
+        "queue": "simile-report-verification"
+      }
+    ]
+  }
+}

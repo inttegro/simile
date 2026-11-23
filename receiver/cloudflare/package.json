@@ -4,12 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --check src/protocol.js",
-    "test": "node --test test/*.test.js",
+    "build:analyzer": "esbuild analyzer/web/app.client.ts --bundle --format=iife --platform=browser --target=es2022 --outfile=analyzer/generated/app.client.js",
+    "check": "npm run types:check && npm run build:analyzer",
+    "test": "tsx --test test/*.test.ts analyzer/test/*.test.ts verifier/test/*.test.ts",
+    "types:check": "tsc --project tsconfig.worker.json --noEmit && tsc --project tsconfig.browser.json --noEmit && tsc --project tsconfig.node.json --noEmit",
+    "types:runtime": "wrangler types runtime.d.ts --config wrangler.jsonc --include-env=false --include-main-module=false",
     "dev": "wrangler dev --config wrangler.jsonc",
-    "deploy": "wrangler deploy --config wrangler.jsonc"
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "deploy:analyzer": "npm run build:analyzer && wrangler deploy --config analyzer/wrangler.jsonc",
+    "deploy:verifier": "wrangler deploy --config verifier/wrangler.jsonc"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
     "wrangler": "^4.0.0"
   }
 }

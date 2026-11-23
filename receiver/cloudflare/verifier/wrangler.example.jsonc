@@ -1,0 +1,44 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "simile-report-verifier",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-23",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "vars": {
+    "ALLOWED_SERVICES": "inttegro",
+    "VERIFIER_POOL_SIZE": "2"
+  },
+  "containers": [
+    {
+      "class_name": "VerifierContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "./container/Dockerfile",
+          "build_context": "../../.."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VERIFIER_CONTAINER",
+        "class_name": "VerifierContainer"
+      }
+    ]
+  },
+  "exports": {
+    "VerifierContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE",
+      "bucket_name": "simile-report-evidence"
+    }
+  ]
+}
