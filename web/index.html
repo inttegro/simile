@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Inspect local Simile services, exchanges, state, scenarios, faults, and fidelity."
+    />
+    <title>Simile Web</title>
+    <script>
+      (() => {
+        const savedTheme = window.localStorage.getItem('simile-theme');
+        document.documentElement.dataset.theme = savedTheme === 'light' ? 'light' : 'dark';
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=20261123w" />
+  </head>
+  <body>
+    <div id="simile-web"></div>
+    <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="./inttegro-service-data.js?v=20261123u"></script>
+    <script src="./app.js?v=20261123u"></script>
+  </body>
+</html>
