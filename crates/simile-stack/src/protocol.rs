@@ -141,7 +141,7 @@ impl StackCommand {
     ) -> crate::Result<Self> {
         let mut fields = arguments
             .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
+            .map(|(name, value)| (protocol_field_name(name), value.clone()))
             .collect::<serde_json::Map<_, _>>();
         fields.insert(
             "action".to_owned(),
@@ -175,6 +175,24 @@ impl StackCommand {
             ResourceKind::Http => Self::Http(serde_json::from_value(value).map_err(invalid)?),
         })
     }
+}
+
+/// Translate the provider-facing effect vocabulary into the Stack wire vocabulary.
+///
+/// Effect arguments are deliberately written as HCL-friendly `snake_case`, while
+/// the versioned Stack protocol uses `camelCase`. Keeping that translation here
+/// makes this the only seam at which the two public representations meet.
+fn protocol_field_name(name: &str) -> String {
+    let mut parts = name.split('_');
+    let mut converted = parts.next().unwrap_or_default().to_owned();
+    for part in parts {
+        let mut characters = part.chars();
+        if let Some(first) = characters.next() {
+            converted.extend(first.to_uppercase());
+            converted.extend(characters);
+        }
+    }
+    converted
 }
 
 /// The exhaustive result vocabulary returned by Stack protocol version 1.
@@ -229,7 +247,7 @@ mod tests {
     use simile_spec::{EffectActionKind, ResourceKind};
 
     use super::{ResourceAddress, StackCommand};
-    use crate::QueueCommand;
+    use crate::{LogicalTime, QueueCommand, SchedulerCommand};
 
     #[test]
     fn resource_addresses_use_the_public_kind_dot_name_form() {
@@ -272,6 +290,22 @@ mod tests {
             command,
             StackCommand::Db(crate::DbCommand::Put { collection, key, .. })
                 if collection == "orders" && key == "or_123"
+        ));
+    }
+
+    #[test]
+    fn rendered_effects_translate_public_snake_case_fields() {
+        let arguments = BTreeMap::from([
+            ("due_at".to_owned(), json!("2030-01-01T12:00:00Z")),
+            ("payload".to_owned(), json!({"kind": "settlement"})),
+        ]);
+        let command = StackCommand::from_effect(EffectActionKind::SchedulerSchedule, &arguments)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(matches!(
+            command,
+            StackCommand::Scheduler(SchedulerCommand::Schedule { due_at, .. })
+                if due_at == LogicalTime::from_unix_millis(1_893_499_200_000)
         ));
     }
 }

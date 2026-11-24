@@ -1,12 +1,38 @@
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 /// Milliseconds on the stack's logical timeline.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct LogicalTime(i64);
+
+impl<'de> Deserialize<'de> for LogicalTime {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireTime {
+            Milliseconds(i64),
+            Rfc3339(String),
+        }
+
+        match WireTime::deserialize(deserializer)? {
+            WireTime::Milliseconds(value) => Ok(Self::from_unix_millis(value)),
+            WireTime::Rfc3339(value) => OffsetDateTime::parse(&value, &Rfc3339)
+                .map_err(serde::de::Error::custom)
+                .and_then(|value| {
+                    i64::try_from(value.unix_timestamp_nanos() / 1_000_000)
+                        .map(Self::from_unix_millis)
+                        .map_err(serde::de::Error::custom)
+                }),
+        }
+    }
+}
 
 impl LogicalTime {
     pub const UNIX_EPOCH: Self = Self(0);
@@ -144,5 +170,13 @@ mod tests {
     fn realtime_time_rejects_manual_advancement() {
         let mut clock = Clock::realtime(LogicalTime::UNIX_EPOCH);
         assert_eq!(clock.advance(1), Err(ClockError::RealtimeAdvance));
+    }
+
+    #[test]
+    fn logical_time_accepts_rfc3339_at_protocol_boundaries() {
+        let parsed: LogicalTime = serde_json::from_str(r#""2030-01-01T12:00:00Z""#)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(parsed.as_unix_millis(), 1_893_499_200_000);
     }
 }
