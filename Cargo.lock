@@ -2132,10 +2132,13 @@ name = "simile-server"
 version = "0.4.0"
 dependencies = [
  "axum",
+ "ciborium",
  "form_urlencoded",
+ "fs2",
  "futures-util",
  "percent-encoding",
  "rand",
+ "redb",
  "serde",
  "serde_json",
  "sha2",

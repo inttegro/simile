@@ -19,88 +19,77 @@ use tokio::sync::oneshot;
 use crate::access_log::text_header;
 use crate::response::{error_response, json_response};
 use crate::{
-    ConfirmDestructiveActionBody, INSPECTION_BODY_LIMIT, INSPECTION_EXCHANGE_LIMIT,
-    InspectionExchange, InspectionMessage, Inspector, PrepareRuntimeReportBody, RecordedExchange,
-    RuntimeExchangeReport, RuntimeIncident, RuntimeReportCommand, RuntimeReportError,
-    RuntimeReportSummary, ServerState, SubmitRuntimeReportBody,
+    ConfirmDestructiveActionBody, INSPECTION_BODY_LIMIT, InspectionExchange, InspectionMessage,
+    Inspector, PrepareRuntimeReportBody, RecordedExchange, RuntimeExchangeReport, RuntimeIncident,
+    RuntimeReportCommand, RuntimeReportError, RuntimeReportSummary, ServerState,
+    SubmitRuntimeReportBody,
 };
 
 impl Inspector {
-    pub(super) fn next_id(&self, started_at_ms: u64) -> String {
+    pub(super) fn memory() -> Self {
+        Self {
+            next_exchange: 0.into(),
+            exchanges: crate::exchange_store::ExchangeStore::memory(),
+        }
+    }
+
+    pub(super) fn durable(
+        path: impl AsRef<std::path::Path>,
+    ) -> crate::exchange_store::Result<Self> {
+        let (exchanges, latest_sequence) = crate::exchange_store::ExchangeStore::durable(path)?;
+        Ok(Self {
+            next_exchange: latest_sequence.into(),
+            exchanges,
+        })
+    }
+
+    pub(super) fn next_id(&self, started_at_ms: u64) -> (String, u64) {
         let sequence = self.next_exchange.fetch_add(1, Ordering::Relaxed) + 1;
-        format!("ex_{started_at_ms}_{sequence}")
+        (format!("ex_{started_at_ms}_{sequence}"), sequence)
     }
 
-    pub(super) fn record(&self, exchange: RecordedExchange) {
-        let Ok(mut exchanges) = self.exchanges.lock() else {
-            tracing::warn!(target: "simile::inspection", "exchange recorder is unavailable");
-            return;
-        };
-        exchanges.push_front(exchange);
-        exchanges.truncate(INSPECTION_EXCHANGE_LIMIT);
+    pub(super) fn record(&self, sequence: u64, exchange: RecordedExchange) {
+        if let Err(error) = self.exchanges.record(sequence, exchange) {
+            tracing::warn!(target: "simile::inspection", %error, "could not persist exchange");
+        }
     }
 
-    fn snapshot(&self) -> Option<Vec<InspectionExchange>> {
-        self.exchanges.lock().ok().map(|exchanges| {
+    fn snapshot(&self) -> crate::exchange_store::Result<Vec<InspectionExchange>> {
+        self.exchanges.snapshot().map(|exchanges| {
             exchanges
-                .iter()
-                .map(|recorded| recorded.exchange.clone())
+                .into_iter()
+                .map(|recorded| recorded.exchange)
                 .collect()
         })
     }
 
-    fn clear(&self) -> Option<usize> {
-        self.exchanges.lock().ok().map(|mut exchanges| {
-            let removed = exchanges.len();
-            exchanges.clear();
-            removed
-        })
+    fn clear(&self) -> crate::exchange_store::Result<usize> {
+        self.exchanges.clear()
     }
 
-    fn report_capture(&self, exchange_id: &str) -> Option<RuntimeExchangeReport> {
-        self.exchanges.lock().ok().and_then(|exchanges| {
-            exchanges
-                .iter()
-                .find(|recorded| recorded.exchange.id == exchange_id)
-                .and_then(|recorded| recorded.report_capture.clone())
-        })
+    fn report_capture(
+        &self,
+        exchange_id: &str,
+    ) -> crate::exchange_store::Result<Option<RuntimeExchangeReport>> {
+        self.exchanges.report_capture(exchange_id)
     }
 
-    fn report(&self, exchange_id: &str) -> Option<RuntimeReportSummary> {
-        self.exchanges.lock().ok().and_then(|exchanges| {
-            exchanges
-                .iter()
-                .find(|recorded| recorded.exchange.id == exchange_id)
-                .and_then(|recorded| recorded.report.clone())
-        })
+    fn report(
+        &self,
+        exchange_id: &str,
+    ) -> crate::exchange_store::Result<Option<RuntimeReportSummary>> {
+        self.exchanges.report(exchange_id)
     }
 
     fn set_report(&self, exchange_id: &str, report: RuntimeReportSummary) {
-        let Ok(mut exchanges) = self.exchanges.lock() else {
-            tracing::warn!(target: "simile::inspection", "exchange recorder is unavailable");
-            return;
-        };
-        if let Some(recorded) = exchanges
-            .iter_mut()
-            .find(|recorded| recorded.exchange.id == exchange_id)
-        {
-            recorded.report = Some(report);
+        if let Err(error) = self.exchanges.set_report(exchange_id, report) {
+            tracing::warn!(target: "simile::inspection", %error, "could not persist prepared report");
         }
     }
 
     fn update_report(&self, report: RuntimeReportSummary) {
-        let Ok(mut exchanges) = self.exchanges.lock() else {
-            tracing::warn!(target: "simile::inspection", "exchange recorder is unavailable");
-            return;
-        };
-        for recorded in &mut *exchanges {
-            if recorded
-                .report
-                .as_ref()
-                .is_some_and(|prepared| prepared.id == report.id)
-            {
-                recorded.report = Some(report.clone());
-            }
+        if let Err(error) = self.exchanges.update_report(report) {
+            tracing::warn!(target: "simile::inspection", %error, "could not persist submitted report");
         }
     }
 }
@@ -130,8 +119,10 @@ pub(super) async fn inspection_response(state: &ServerState, request: Request<Bo
             match state.service.inspect_state(false) {
                 Ok(inspection) => {
                     let summary = state.service.artifact().summary();
-                    let exchange_count =
-                        inspector.snapshot().map_or(0, |exchanges| exchanges.len());
+                    let exchange_count = match inspector.snapshot() {
+                        Ok(exchanges) => exchanges.len(),
+                        Err(error) => return inspection_history_error(error),
+                    };
                     json_response(
                         StatusCode::OK,
                         json!({
@@ -151,20 +142,12 @@ pub(super) async fn inspection_response(state: &ServerState, request: Request<Bo
         }
         "/.simile/exchanges" => match method {
             Method::GET => match inspector.snapshot() {
-                Some(exchanges) => json_response(StatusCode::OK, json!({ "exchanges": exchanges })),
-                None => error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "inspection_unavailable",
-                    "runtime exchange inspection is unavailable",
-                ),
+                Ok(exchanges) => json_response(StatusCode::OK, json!({ "exchanges": exchanges })),
+                Err(error) => inspection_history_error(error),
             },
             Method::DELETE => match inspector.clear() {
-                Some(removed) => json_response(StatusCode::OK, json!({ "removed": removed })),
-                None => error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "inspection_unavailable",
-                    "runtime exchange inspection is unavailable",
-                ),
+                Ok(removed) => json_response(StatusCode::OK, json!({ "removed": removed })),
+                Err(error) => inspection_history_error(error),
             },
             _ => inspection_method_not_allowed("GET, DELETE, OPTIONS"),
         },
@@ -184,16 +167,15 @@ pub(super) async fn inspection_response(state: &ServerState, request: Request<Bo
         _ if exchange_report_id(&path).is_some() => {
             let exchange_id = exchange_report_id(&path).unwrap_or_default();
             match method {
-                Method::GET => inspector.report(exchange_id).map_or_else(
-                    || {
-                        error_response(
-                            StatusCode::NOT_FOUND,
-                            "report_not_prepared",
-                            "this exchange has no prepared report",
-                        )
-                    },
-                    |report| json_response(StatusCode::OK, json!(report)),
-                ),
+                Method::GET => match inspector.report(exchange_id) {
+                    Ok(Some(report)) => json_response(StatusCode::OK, json!(report)),
+                    Ok(None) => error_response(
+                        StatusCode::NOT_FOUND,
+                        "report_not_prepared",
+                        "this exchange has no prepared report",
+                    ),
+                    Err(error) => inspection_history_error(error),
+                },
                 Method::POST => {
                     prepare_exchange_report_response(state, inspector, exchange_id, request).await
                 }
@@ -238,15 +220,21 @@ async fn prepare_exchange_report_response(
     exchange_id: &str,
     request: Request<Body>,
 ) -> Response {
-    if let Some(report) = inspector.report(exchange_id) {
-        return json_response(StatusCode::OK, json!(report));
+    match inspector.report(exchange_id) {
+        Ok(Some(report)) => return json_response(StatusCode::OK, json!(report)),
+        Ok(None) => {}
+        Err(error) => return inspection_history_error(error),
     }
-    let Some(exchange) = inspector.report_capture(exchange_id) else {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "report_evidence_unavailable",
-            "this exchange has no safely reproducible request evidence",
-        );
+    let exchange = match inspector.report_capture(exchange_id) {
+        Ok(Some(exchange)) => exchange,
+        Ok(None) => {
+            return error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "report_evidence_unavailable",
+                "this exchange has no safely reproducible request evidence",
+            );
+        }
+        Err(error) => return inspection_history_error(error),
     };
     let body = match decode_inspection_json::<PrepareRuntimeReportBody>(request).await {
         Ok(body) => body,
@@ -280,6 +268,15 @@ async fn prepare_exchange_report_response(
         Ok(Ok(Err(error))) => runtime_report_error_response(error),
         Ok(Err(_)) | Err(_) => reporting_unavailable(),
     }
+}
+
+fn inspection_history_error(error: crate::exchange_store::Error) -> Response {
+    tracing::error!(target: "simile::inspection", %error, "exchange history is unavailable");
+    error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "inspection_unavailable",
+        "runtime exchange history is unavailable",
+    )
 }
 
 async fn submit_exchange_report_response(

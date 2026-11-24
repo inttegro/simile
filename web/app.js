@@ -440,7 +440,7 @@ async function submitExchangeReport() {
 }
 
 async function clearExchangeHistory() {
-  if (!runtime.connected || !window.confirm('Clear every captured exchange from this local session?')) return;
+  if (!runtime.connected || !window.confirm('Permanently clear every captured exchange for this service?')) return;
   try {
     const result = await inspectorJson('/.simile/exchanges', { method: 'DELETE' });
     state.generatedExchangeReport = null;
@@ -830,7 +830,7 @@ function analyticsStatusChart(groups, { xLabels, empty = false } = {}) {
       return `<rect class="analytics-status analytics-status--${segmentIndex + 1}" x="${(index * (barWidth + gap)).toFixed(1)}" y="${bottom.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${segmentHeight.toFixed(1)}"/>`;
     }).join('');
   }).join('');
-  return `<div class="analytics-chart ${empty ? 'is-empty' : ''}" role="img" aria-label="HTTP response status codes in the captured session">
+  return `<div class="analytics-chart ${empty ? 'is-empty' : ''}" role="img" aria-label="HTTP response status codes in retained exchange history">
     <div class="analytics-gridlines" aria-hidden="true"></div>
     <div class="analytics-y-axis" aria-hidden="true"><span>${ceiling}</span><span>${Math.round(ceiling / 2)}</span><span>0</span></div>
     <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>
@@ -915,7 +915,7 @@ function serviceOverviewPanel() {
     <div class="runtime-analytics-heading"><div><span class="eyebrow">Runtime telemetry</span><h2>Captured service activity</h2><p>${analytics.connected ? analytics.windowLabel : `Waiting for ${localServiceUrl}`}</p></div><a class="text-link" href="/exchanges">Inspect exchanges</a></div>
     <section class="analytics-grid" aria-label="Live service metrics">
       <article class="analytics-panel">
-        <header class="analytics-panel__header"><div><span class="analytics-title">Total requests</span><div class="analytics-kpi"><strong>${analytics.totalRequests}</strong></div></div><span class="analytics-context">captured this session</span></header>
+        <header class="analytics-panel__header"><div><span class="analytics-title">Total requests</span><div class="analytics-kpi"><strong>${analytics.totalRequests}</strong></div></div><span class="analytics-context">retained locally</span></header>
         ${analyticsLegend([['Requests', analytics.totalRequests]])}
         ${analyticsLineChart(analytics.requestCounts, { label: `${analytics.totalRequests} captured requests over time`, max: requestCeiling, yLabels: [String(requestCeiling), String(Math.round(requestCeiling / 2)), '0'], xLabels: analytics.xLabels, empty })}
       </article>
@@ -935,7 +935,7 @@ function serviceOverviewPanel() {
         ${analyticsStatusChart(analytics.statuses, { xLabels: analytics.xLabels, empty })}
       </article>
     </section>
-    <section class="analytics-panel analytics-panel--ranking live-operation-ranking"><header class="analytics-panel__header"><div><span class="analytics-title">Operations</span><p>Requests grouped by operation in the captured session.</p></div><span class="analytics-context">${analytics.operations.length} observed</span></header>${analytics.operations.length ? contractMetricBars(analytics.operations, { limit: 10 }) : '<div class="analytics-ranking-empty">Operations appear here after the service receives a request.</div>'}</section>
+    <section class="analytics-panel analytics-panel--ranking live-operation-ranking"><header class="analytics-panel__header"><div><span class="analytics-title">Operations</span><p>Requests grouped by operation across retained history.</p></div><span class="analytics-context">${analytics.operations.length} observed</span></header>${analytics.operations.length ? contractMetricBars(analytics.operations, { limit: 10 }) : '<div class="analytics-ranking-empty">Operations appear here after the service receives a request.</div>'}</section>
   `;
 }
 
@@ -1134,7 +1134,7 @@ function outcomeDetail(outcome) {
 
 function operationExchangesPanel(operationId) {
   const rows = displayedExchangeRows().filter(([, , , operation]) => operation === operationId);
-  if (!rows.length) return `<section class="empty-state">${icon('exchanges')}<h2>No recorded exchanges</h2><p>This operation has not handled a request in the current local session.</p></section>`;
+  if (!rows.length) return `<section class="empty-state">${icon('exchanges')}<h2>No recorded exchanges</h2><p>This operation has no retained exchange history.</p></section>`;
   return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Recent exchanges</h2><p>Requests handled by <code>${operationId}</code>.</p></div><a class="text-link" href="/exchanges">Open exchange workspace</a></div>${exchangeTable(rows, true, true)}</section>`;
 }
 

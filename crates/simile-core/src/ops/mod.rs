@@ -54,7 +54,9 @@ pub use run::{
     RequestSource, RunReport, RunRequest, SpecSource, run,
 };
 pub use start::{PreparedService, ServiceReport, StartRequest, prepare_service};
-pub use state::{StateReport, StateRequest, inspect_state, service_state_path};
+pub use state::{
+    StateReport, StateRequest, inspect_state, service_exchange_history_path, service_state_path,
+};
 pub use test::{TestPlan, TestRequest, prepare_test};
 pub use update::{UpdateRequest, update};
 pub use version::version;

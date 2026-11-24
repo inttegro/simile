@@ -99,3 +99,12 @@ pub fn service_state_path(ctx: &Context, service: &str) -> Result<PathBuf> {
         .join("services")
         .join(format!("{service}.redb")))
 }
+
+pub fn service_exchange_history_path(ctx: &Context, service: &str) -> Result<PathBuf> {
+    validate_service_name(service)?;
+    Ok(ctx
+        .simile_home()?
+        .join("state")
+        .join("services")
+        .join(format!("{service}.exchanges.redb")))
+}

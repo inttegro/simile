@@ -2,12 +2,14 @@
 
 mod access_log;
 mod delivery;
+mod exchange_store;
 mod inspection;
 mod process;
 mod proxy;
 mod response;
 mod routing;
 
+pub use exchange_store::Error as ExchangeHistoryError;
 pub use process::CommandResult;
 pub use proxy::{ProxyOptions, ProxyServer};
 
@@ -21,12 +23,12 @@ use response::{
 };
 use routing::{Match, RouteTable};
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::Router;
@@ -47,7 +49,6 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
 const DEFAULT_BODY_LIMIT: usize = 8 * 1024 * 1024;
-const INSPECTION_EXCHANGE_LIMIT: usize = 200;
 const INSPECTION_BODY_LIMIT: usize = 256 * 1024;
 const INSPECTION_PREFIX: &str = "/.simile/";
 
@@ -79,6 +80,9 @@ pub enum Error {
 
     #[error("could not initialize service state: {0}")]
     Service(#[from] simile_service::Error),
+
+    #[error("could not initialize exchange history: {0}")]
+    ExchangeHistory(#[from] ExchangeHistoryError),
 
     #[error("a test command is required")]
     CommandMissing,
@@ -126,7 +130,7 @@ pub struct RuntimeIncident {
     pub issues: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeExchangeReport {
     pub exchange_id: String,
     pub profile: Option<String>,
@@ -141,14 +145,14 @@ pub struct RuntimeExchangeReport {
     pub expected: RuntimeExpectedResponse,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeExpectedResponse {
     pub status: u16,
     pub content_type: Option<String>,
     pub body: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeReportSummary {
     pub id: String,
@@ -166,7 +170,7 @@ pub struct RuntimeReportSummary {
     pub upgrade_recommendations: Vec<RuntimeUpgradeRecommendation>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeUpgradeRecommendation {
     pub component: String,
@@ -216,20 +220,19 @@ struct ServerState {
     reporting_sender: Option<mpsc::Sender<RuntimeReportCommand>>,
 }
 
-#[derive(Default)]
 struct Inspector {
     next_exchange: AtomicU64,
-    exchanges: Mutex<VecDeque<RecordedExchange>>,
+    exchanges: exchange_store::ExchangeStore,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RecordedExchange {
     exchange: InspectionExchange,
     report_capture: Option<RuntimeExchangeReport>,
     report: Option<RuntimeReportSummary>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InspectionExchange {
     id: String,
@@ -247,7 +250,7 @@ struct InspectionExchange {
     response: InspectionMessage,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InspectionMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,18 +309,25 @@ impl Server {
         options: ServerOptions,
     ) -> Result<Self> {
         let service = Service::memory(artifact)?;
-        Self::bind_service_with_options(address, service, options).await
+        Self::bind_service(address, service, options, InspectionStorage::Memory).await
     }
 
-    /// Bind a service and persist its complete Stack at `state_path`.
+    /// Bind a service and persist its Stack and sanitized exchange history.
     pub async fn bind_durable_with_options(
         address: SocketAddr,
         artifact: Artifact,
         state_path: impl AsRef<Path>,
         options: ServerOptions,
     ) -> Result<Self> {
+        let state_path = state_path.as_ref();
         let service = Service::durable(artifact, state_path)?;
-        Self::bind_service_with_options(address, service, options).await
+        Self::bind_service(
+            address,
+            service,
+            options,
+            InspectionStorage::Durable(exchange_history_path(state_path)),
+        )
+        .await
     }
 
     /// Bind a service whose state is owned by the supplied supervisor.
@@ -325,6 +335,15 @@ impl Server {
         address: SocketAddr,
         service: Service,
         options: ServerOptions,
+    ) -> Result<Self> {
+        Self::bind_service(address, service, options, InspectionStorage::Memory).await
+    }
+
+    async fn bind_service(
+        address: SocketAddr,
+        service: Service,
+        options: ServerOptions,
+        inspection_storage: InspectionStorage,
     ) -> Result<Self> {
         let artifact = service.artifact();
         if let Some(name) = options.scenario.as_deref() {
@@ -356,10 +375,14 @@ impl Server {
             })
             .transpose()?;
         let service = Arc::new(service);
-        let inspector = address
-            .ip()
-            .is_loopback()
-            .then(|| Arc::new(Inspector::default()));
+        let inspector = if address.ip().is_loopback() {
+            Some(Arc::new(match inspection_storage {
+                InspectionStorage::Memory => Inspector::memory(),
+                InspectionStorage::Durable(path) => Inspector::durable(path)?,
+            }))
+        } else {
+            None
+        };
         let state = Arc::new(ServerState {
             service: Arc::clone(&service),
             routes,
@@ -492,7 +515,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         });
     let response_seed = rand::random::<u64>();
     let profile = authentication.profile().map(str::to_owned);
-    let exchange_id = state
+    let exchange_identity = state
         .inspector
         .as_ref()
         .map(|inspector| inspector.next_id(started_at_ms));
@@ -527,7 +550,9 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             );
             let request_message = inspection_request_body(content_type.as_deref(), &body);
             let response = operation_execution_response(execution, method == Method::HEAD).await;
-            if let (Some(inspector), Some(exchange_id)) = (state.inspector.as_ref(), exchange_id) {
+            if let (Some(inspector), Some((exchange_id, exchange_sequence))) =
+                (state.inspector.as_ref(), exchange_identity)
+            {
                 let report_capture = sanitize_body(content_type.as_deref(), &body).map(|body| {
                     RuntimeExchangeReport {
                         exchange_id: exchange_id.clone(),
@@ -547,27 +572,30 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
                         },
                     }
                 });
-                inspector.record(RecordedExchange {
-                    exchange: InspectionExchange {
-                        id: exchange_id,
-                        operation,
-                        method: method.to_string(),
-                        path: uri.path().to_owned(),
-                        started_at_ms,
-                        duration_micros: started
-                            .elapsed()
-                            .as_micros()
-                            .try_into()
-                            .unwrap_or(u64::MAX),
-                        status,
-                        outcome: selected_outcome,
-                        profile,
-                        request: request_message,
-                        response: response_body,
+                inspector.record(
+                    exchange_sequence,
+                    RecordedExchange {
+                        exchange: InspectionExchange {
+                            id: exchange_id,
+                            operation,
+                            method: method.to_string(),
+                            path: uri.path().to_owned(),
+                            started_at_ms,
+                            duration_micros: started
+                                .elapsed()
+                                .as_micros()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
+                            status,
+                            outcome: selected_outcome,
+                            profile,
+                            request: request_message,
+                            response: response_body,
+                        },
+                        report_capture,
+                        report: None,
                     },
-                    report_capture,
-                    report: None,
-                });
+                );
             }
             response
         }
@@ -598,6 +626,17 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             )
         }
     }
+}
+
+enum InspectionStorage {
+    Memory,
+    Durable(PathBuf),
+}
+
+/// Return the durable exchange-history database beside one service state database.
+#[must_use]
+pub fn exchange_history_path(service_state_path: impl AsRef<Path>) -> PathBuf {
+    service_state_path.as_ref().with_extension("exchanges.redb")
 }
 
 fn incoming_parameters(

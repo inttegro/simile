@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use simile_stack::RedbStateStore;
 
-use crate::ops::service_state_path;
+use crate::ops::{service_exchange_history_path, service_state_path};
 use crate::registry::Registry;
 use crate::{Context, Error, Result};
 
@@ -19,6 +19,7 @@ pub struct RemoveReport {
     pub service: String,
     pub directory: PathBuf,
     pub state_removed: bool,
+    pub exchange_history_removed: bool,
 }
 
 /// Permanently remove one named service after exact-name confirmation.
@@ -32,11 +33,14 @@ pub fn remove(ctx: &Context, request: &RemoveRequest) -> Result<RemoveReport> {
     let registry = Registry::new(ctx.simile_home()?);
     registry.load(&request.service)?;
     let state_removed = RedbStateStore::remove(service_state_path(ctx, &request.service)?)?;
+    let exchange_history_removed =
+        RedbStateStore::remove(service_exchange_history_path(ctx, &request.service)?)?;
     let directory = registry.remove(&request.service)?;
     Ok(RemoveReport {
         service: request.service.clone(),
         directory,
         state_removed,
+        exchange_history_removed,
     })
 }
 
@@ -127,11 +131,13 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         }
         let state_path = root.join("state/services/orders.redb");
+        let exchange_history_path = root.join("state/services/orders.exchanges.redb");
         let state_parent = state_path
             .parent()
             .unwrap_or_else(|| panic!("state path must have a parent"));
         fs::create_dir_all(state_parent).unwrap_or_else(|error| panic!("{error}"));
         fs::write(&state_path, "state").unwrap_or_else(|error| panic!("{error}"));
+        fs::write(&exchange_history_path, "exchanges").unwrap_or_else(|error| panic!("{error}"));
 
         let report = remove(
             &ctx,
@@ -145,8 +151,10 @@ mod tests {
         assert_eq!(report.service, "orders");
         assert_eq!(report.directory, root.join("services/orders"));
         assert!(report.state_removed);
+        assert!(report.exchange_history_removed);
         assert!(!report.directory.exists());
         assert!(!state_path.exists());
+        assert!(!exchange_history_path.exists());
         assert!(root.join("services/payments/current").is_file());
         assert!(root.join("layout-version").is_file());
         fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));

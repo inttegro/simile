@@ -566,6 +566,103 @@ async fn exposes_live_inspection_only_to_loopback_browser_origins() {
 }
 
 #[tokio::test]
+async fn durable_servers_restore_exchange_history_until_it_is_cleared() {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "simile-exchange-history-test-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    drop(std::fs::remove_dir_all(&root));
+    let state_path = root.join("orders.redb");
+    let exchange_path = exchange_history_path(&state_path);
+
+    let server = Server::bind_durable_with_options(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        artifact(),
+        &state_path,
+        ServerOptions::default(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+    let body = br#"{"customer":{"email":"persisted@example.test"},"items":[{"quantity":1}]}"#;
+    let request = format!(
+        "POST /orders HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        String::from_utf8_lossy(body)
+    );
+    let response = send_raw(address, request.as_bytes()).await;
+    assert!(response.starts_with("HTTP/1.1 201 Created\r\n"));
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(exchange_path.is_file());
+
+    let server = Server::bind_durable_with_options(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        artifact(),
+        &state_path,
+        ServerOptions::default(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+    let exchanges = send_raw(
+        address,
+        b"GET /.simile/exchanges HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(exchanges.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(exchanges.contains("persisted@example.test"));
+    let cleared = send_raw(
+        address,
+        b"DELETE /.simile/exchanges HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(cleared.contains(r#""removed":1"#));
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let server = Server::bind_durable_with_options(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        artifact(),
+        &state_path,
+        ServerOptions::default(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+    let exchanges = send_raw(
+        address,
+        b"GET /.simile/exchanges HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(exchanges.contains(r#""exchanges":[]"#));
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    std::fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[tokio::test]
 async fn does_not_expose_inspection_on_a_non_loopback_listener() {
     let server = Server::bind(SocketAddr::from(([0, 0, 0, 0], 0)), artifact())
         .await

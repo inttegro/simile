@@ -35,6 +35,9 @@ fn render(report: &ops::RemoveReport, terminal: &Terminal) -> Result<()> {
             if report.state_removed {
                 terminal.line(format_args!("{MUTED}state{MUTED:#} removed"))?;
             }
+            if report.exchange_history_removed {
+                terminal.line(format_args!("{MUTED}exchange history{MUTED:#} removed"))?;
+            }
             Ok(())
         }
         OutputFormat::Json => terminal.json(report),
