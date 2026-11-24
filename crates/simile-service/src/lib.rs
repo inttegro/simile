@@ -537,6 +537,8 @@ pub enum Error {
     StateUnavailable,
     #[error("deferred work is invalid: {0}")]
     InvalidWork(String),
+    #[error("work lease is expired or no longer current")]
+    StaleWorkLease,
     #[error("state-backed response cannot be represented by the operation contract")]
     StateResponseUnavailable,
     #[error("state read returned an unexpected result for {0}")]

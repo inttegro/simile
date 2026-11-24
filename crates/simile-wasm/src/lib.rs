@@ -100,7 +100,7 @@ impl ArtifactHandle {
             "revision": summary.payload_sha256, "formatVersion": summary.format_version,
             "service": summary.service, "serviceVersion": summary.service_version,
             "operations": summary.operations, "catalogue": catalogue, "routes": routes,
-            "audit": ops::audit_artifact(&self.artifact).map_err(core_error)?, "metadata": self.metadata,
+            "audit": ops::audit_artifact(&self.artifact), "metadata": self.metadata,
         }))
     }
 
