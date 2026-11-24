@@ -554,6 +554,15 @@ impl<'a> BoundMediaType<'a> {
             return Ok(candidate);
         };
         relation.apply(self.schemas, schema, request, &mut candidate)?;
+        // A complete stored response is already the strongest possible baseline. Keep every
+        // schema-valid public field when the request relation also holds; running the general
+        // constraint repair in that case can legitimately minimize unrelated optional fields and
+        // turn an exact resource replay into a lossy projection.
+        if self.schemas.validate(schema, &candidate).is_empty()
+            && relation.prove(request, &candidate).is_ok()
+        {
+            return Ok(candidate);
+        }
         // Why: response-local equations and implications may depend on a projected field; repair
         // them before proving the cross-message relation without rewriting request-owned values.
         let protected = relation.protected_paths(request);

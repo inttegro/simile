@@ -41,9 +41,13 @@ pub(crate) fn plan(
         .map(str::to_owned),
     );
 
-    if action == "create" {
+    if matches!(action, "create" | "add") {
+        // Public `add` operations conventionally create the child resource returned by the
+        // operation (for example, adding a price to a product). Timestamp application remains
+        // schema-directed, so operations without creation fields are unaffected.
         materialize.insert("created".to_owned());
         materialize.insert("created_at".to_owned());
+        materialize.insert("published_at".to_owned());
         refresh.insert("updated".to_owned());
         refresh.insert("updated_at".to_owned());
     } else if is_mutation(operation.method(), action) {
@@ -224,6 +228,7 @@ paths:
         )
         .unwrap_or_else(|| panic!("create clock plan"));
         assert!(create.materialize.contains("created_at"));
+        assert!(create.materialize.contains("published_at"));
         assert!(create.refresh.contains("updated_at"));
 
         let update = operation("updatePrice", "post", "/prices/update");
@@ -257,5 +262,15 @@ paths:
         .unwrap_or_else(|| panic!("archive clock plan"));
         assert!(archive.materialize.contains("archived_at"));
         assert!(archive.materialize.contains("updated_at"));
+
+        let add = operation("addProductPrice", "post", "/products/add_price");
+        let add = plan(
+            add.operation_by_id("addProductPrice")
+                .unwrap_or_else(|| panic!("add operation")),
+            Some(1),
+        )
+        .unwrap_or_else(|| panic!("add clock plan"));
+        assert!(add.materialize.contains("created_at"));
+        assert!(add.refresh.contains("updated_at"));
     }
 }

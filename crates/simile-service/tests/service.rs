@@ -37,6 +37,21 @@ fn service_responses_use_the_stack_logical_time_for_operation_timestamps() {
             .and_then(|body| body.pointer("/price/created_at")),
         Some(&serde_json::json!("2023-11-14T22:13:20.123Z"))
     );
+
+    let added = service
+        .execute(OperationCall {
+            operation: "POST /products/add_price",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        added
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/created_at")),
+        Some(&serde_json::json!("2023-11-14T22:13:20.123Z"))
+    );
 }
 
 #[test]
@@ -631,6 +646,7 @@ paths:
               properties:
                 product_id: { type: string, pattern: '^prod_' }
                 name: { type: string }
+                description: { type: string }
       responses:
         "200":
           description: updated
@@ -641,6 +657,7 @@ paths:
                 bindings:
                   - { from: /product_id, to: /product/id }
                   - { from: /name, to: /product/name }
+                  - { from: /description, to: /product/description }
   /products/lookup:
     post:
       operationId: lookupProduct
@@ -659,6 +676,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProductResponse' }
+              x-simile-from-request:
+                bindings:
+                  - { from: /product_id, to: /product/id }
 components:
   schemas:
     ProductResponse:
@@ -674,19 +694,34 @@ components:
     UpdatedProduct:
       type: object
       additionalProperties: false
-      required: [id, type, name]
+      required: [id, type, name, created_at]
       properties:
         id: { type: string, pattern: '^prod_' }
         type: { type: string, enum: [digital, physical] }
         name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Product:
       type: object
-      required: [id, type, name, active]
+      required: [id, type, name, active, created_at]
+      x-simile-constraints:
+        - ordered:
+            paths: [/created_at, /published_at, /updated_at]
+        - implies:
+            when: { path: /active, equals: true }
+            then:
+              all:
+                - { path: /published_at, state: non-null }
       properties:
         id: { type: string, pattern: '^prod_' }
         type: { type: string, enum: [digital, physical] }
         name: { type: string }
         active: { type: boolean }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        published_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 "#,
         r#"
 backend "db" "primary" {}
@@ -723,8 +758,21 @@ effect "persist_product" {
         .unwrap_or_else(|| panic!("expected product id"));
     assert_eq!(product.get("type"), Some(&serde_json::json!("digital")));
     assert_eq!(product.get("active"), Some(&serde_json::json!(true)));
+    assert_eq!(product.get("created_at"), product.get("published_at"));
+    let created_at = product
+        .get("created_at")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected creation timestamp"));
+    let published_at = product
+        .get("published_at")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected publication timestamp"));
 
-    let update = serde_json::json!({"product_id": id, "name": "Second edition"});
+    let update = serde_json::json!({
+        "product_id": id,
+        "name": "Second edition",
+        "description": "The durable description"
+    });
     let updated = service
         .execute_value(OperationValueCall {
             operation: "POST /products/update",
@@ -744,6 +792,14 @@ effect "persist_product" {
         Some(&serde_json::json!("Second edition"))
     );
     assert_eq!(product.get("type"), Some(&serde_json::json!("digital")));
+    assert_eq!(
+        product.get("description"),
+        Some(&serde_json::json!("The durable description"))
+    );
+    let updated_at = product
+        .get("updated_at")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected update timestamp"));
     // Why: the mutation response must remain faithful to its deliberately narrow public schema;
     // preservation is proven through the subsequent full-resource lookup instead.
     assert_eq!(product.get("active"), None);
@@ -763,7 +819,11 @@ effect "persist_product" {
                 "id": id,
                 "name": "Second edition",
                 "type": "digital",
-                "active": true
+                "active": true,
+                "description": "The durable description",
+                "created_at": created_at,
+                "published_at": published_at,
+                "updated_at": updated_at
             }
         }))
     );
@@ -1245,6 +1305,27 @@ paths:
                     properties:
                       id: { type: string, const: pr_clock }
                       created: { type: integer, format: unix-time }
+                      created_at: { type: string, format: date-time }
+                      updated_at: { type: string, format: date-time }
+  /products/add_price:
+    post:
+      operationId: addProductPrice
+      responses:
+        '200':
+          description: added
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [price]
+                properties:
+                  price:
+                    type: object
+                    additionalProperties: false
+                    required: [id, created_at]
+                    properties:
+                      id: { type: string, const: pr_added_clock }
                       created_at: { type: string, format: date-time }
                       updated_at: { type: string, format: date-time }
 "#,

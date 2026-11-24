@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
@@ -139,9 +139,25 @@ impl Clock {
     pub fn from_snapshot(snapshot: ClockSnapshot) -> Self {
         match snapshot.mode {
             ClockMode::Manual => Self::manual(snapshot.now),
-            ClockMode::Realtime => Self::realtime(snapshot.now),
+            // A realtime service may have been stopped after this snapshot was written. Resume at
+            // the host clock while preserving monotonicity when a saved clock is already ahead.
+            ClockMode::Realtime => Self::realtime(
+                host_time()
+                    .map(|now| std::cmp::max(snapshot.now, now))
+                    .unwrap_or(snapshot.now),
+            ),
         }
     }
+}
+
+fn host_time() -> Option<LogicalTime> {
+    let milliseconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    i64::try_from(milliseconds)
+        .ok()
+        .map(LogicalTime::from_unix_millis)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -154,7 +170,7 @@ pub enum ClockError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, ClockError, LogicalTime};
+    use super::{Clock, ClockError, ClockMode, ClockSnapshot, LogicalTime, host_time};
 
     #[test]
     fn manual_time_advances_without_waiting() {
@@ -170,6 +186,28 @@ mod tests {
     fn realtime_time_rejects_manual_advancement() {
         let mut clock = Clock::realtime(LogicalTime::UNIX_EPOCH);
         assert_eq!(clock.advance(1), Err(ClockError::RealtimeAdvance));
+    }
+
+    #[test]
+    fn realtime_snapshots_catch_up_with_the_host_after_restart() {
+        let before = host_time().unwrap_or_else(|| panic!("host time"));
+        let restored = Clock::from_snapshot(ClockSnapshot {
+            mode: ClockMode::Realtime,
+            now: LogicalTime::UNIX_EPOCH,
+        });
+
+        assert!(restored.now().unwrap_or_else(|error| panic!("{error}")) >= before);
+    }
+
+    #[test]
+    fn manual_snapshots_resume_at_the_saved_instant() {
+        let saved = LogicalTime::from_unix_millis(42);
+        let restored = Clock::from_snapshot(ClockSnapshot {
+            mode: ClockMode::Manual,
+            now: saved,
+        });
+
+        assert_eq!(restored.now(), Ok(saved));
     }
 
     #[test]
