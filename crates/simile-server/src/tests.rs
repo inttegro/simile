@@ -5,12 +5,13 @@ use std::time::Duration;
 use super::*;
 use crate::access_log::AccessLine;
 use crate::inspection::{sanitize_body, sanitize_parameters};
-use crate::response::{operation_execution_response, validation_error_message};
-use crate::routing::{Match, RouteTable};
+use axum::http::{Method, StatusCode};
 use serde_json::json;
 use simile_compiler::{CompileRequest, Compiler, Source};
 use simile_heuristics::Policy;
-use simile_runtime::Runtime;
+use simile_http::{Match, RouteTable, validation_error_message};
+use simile_runtime::{ExecutionOptions, OperationCall, Runtime};
+use std::collections::BTreeMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
@@ -968,4 +969,81 @@ fn retains_safe_multipart_evidence_for_reports() {
     assert!(rendered.contains("filename=\"secret.txt\""));
     assert!(rendered.contains("X-Simile-Original-Length: 13"));
     assert!(!rendered.contains("private bytes"));
+}
+
+async fn operation_execution_response(
+    execution: simile_runtime::OperationExecution,
+    head: bool,
+) -> Response {
+    send_exchange(simile_http::HttpExchange {
+        response: simile_http::operation_response(execution.response(), head),
+        transport: execution.transport().clone(),
+        operation: Some(execution.operation().to_owned()),
+        profile: None,
+        seed: 0,
+        fault: execution.fault().cloned(),
+        incident: None,
+        capture: None,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn rejects_invalid_heads_without_waiting_for_the_declared_body() {
+    let cases = [
+        (artifact(), "GET /absent", "", 404, "not_found"),
+        (artifact(), "HEAD /absent", "", 404, ""),
+        (artifact(), "PUT /orders", "", 405, "method_not_allowed"),
+        (
+            artifact_with_authentication(),
+            "GET /private",
+            "",
+            401,
+            "authentication_required",
+        ),
+        (
+            artifact(),
+            "GET /orders/not-an-order",
+            "",
+            400,
+            "invalid_parameters",
+        ),
+        (
+            artifact(),
+            "GET /orders/ord_123?limit=0",
+            "",
+            400,
+            "invalid_parameters",
+        ),
+        (
+            artifact(),
+            "GET /orders/ord_123",
+            "X-Trace: x\r\n",
+            400,
+            "invalid_parameters",
+        ),
+    ];
+    for (artifact, target, headers, expected, code) in cases {
+        for framing in ["Content-Length: 16", "Transfer-Encoding: chunked"] {
+            // Leave the write half open and send no body bytes or terminating chunk.
+            let request = format!(
+                "{target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{framing}\r\n{headers}\r\n"
+            );
+            let response = tokio::time::timeout(
+                Duration::from_secs(2),
+                serve_raw_with_artifact(artifact.clone(), request.as_bytes()),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{target} waited for its {framing} body"));
+            assert!(response.starts_with(&format!("HTTP/1.1 {expected} ")));
+            if target.starts_with("HEAD ") {
+                assert!(response.ends_with("\r\n\r\n"));
+            } else {
+                assert!(response.contains(code), "{target}: {response}");
+            }
+            if expected == 405 {
+                assert!(response.contains("allow: POST\r\n"));
+            }
+        }
+    }
 }
