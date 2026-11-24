@@ -77,6 +77,13 @@ impl ConsoleSession {
             .unwrap_or_else(|| unreachable!("open console always has a selected service"))
     }
 
+    pub(crate) fn reports(&self) -> Result<ops::ReportsReport> {
+        Ok(ops::reports(
+            &self.ctx,
+            Some(&self.selected().service.name),
+        )?)
+    }
+
     pub(crate) fn runtime_address(&self) -> SocketAddr {
         self.runtime
             .as_ref()
