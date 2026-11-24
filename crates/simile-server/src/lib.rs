@@ -483,21 +483,22 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
     let started = Instant::now();
     let started_at_ms = unix_time_millis();
     let (parts, body) = request.into_parts();
+    let options = simile_http::HttpOptions {
+        body_limit: state.body_limit,
+        scenario: state.scenario.clone(),
+        fault_profile: state.fault_profile.clone(),
+        response_seed: state.response_seed,
+    };
+    let prepared =
+        match simile_http::prepare_request_head(&state.service, &state.routes, &parts, &options) {
+            Ok(prepared) => prepared,
+            Err(exchange) => return send_exchange(*exchange).await,
+        };
     let body = match to_bytes(body, state.body_limit).await {
         Ok(bytes) => simile_http::RequestBody::Bytes(bytes.to_vec()),
         Err(_) => simile_http::RequestBody::TooLarge,
     };
-    let mut exchange = simile_http::handle_request(
-        &state.service,
-        &state.routes,
-        Request::from_parts(parts, body),
-        &simile_http::HttpOptions {
-            body_limit: state.body_limit,
-            scenario: state.scenario.clone(),
-            fault_profile: state.fault_profile.clone(),
-            response_seed: state.response_seed,
-        },
-    );
+    let mut exchange = prepared.handle_body(body);
     if let Some(incident) = exchange.incident.take() {
         if let Some(sender) = &state.incident_sender {
             let _ = sender.try_send(incident.clone());

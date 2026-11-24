@@ -987,3 +987,63 @@ async fn operation_execution_response(
     })
     .await
 }
+
+#[tokio::test]
+async fn rejects_invalid_heads_without_waiting_for_the_declared_body() {
+    let cases = [
+        (artifact(), "GET /absent", "", 404, "not_found"),
+        (artifact(), "HEAD /absent", "", 404, ""),
+        (artifact(), "PUT /orders", "", 405, "method_not_allowed"),
+        (
+            artifact_with_authentication(),
+            "GET /private",
+            "",
+            401,
+            "authentication_required",
+        ),
+        (
+            artifact(),
+            "GET /orders/not-an-order",
+            "",
+            400,
+            "invalid_parameters",
+        ),
+        (
+            artifact(),
+            "GET /orders/ord_123?limit=0",
+            "",
+            400,
+            "invalid_parameters",
+        ),
+        (
+            artifact(),
+            "GET /orders/ord_123",
+            "X-Trace: x\r\n",
+            400,
+            "invalid_parameters",
+        ),
+    ];
+    for (artifact, target, headers, expected, code) in cases {
+        for framing in ["Content-Length: 16", "Transfer-Encoding: chunked"] {
+            // Leave the write half open and send no body bytes or terminating chunk.
+            let request = format!(
+                "{target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{framing}\r\n{headers}\r\n"
+            );
+            let response = tokio::time::timeout(
+                Duration::from_secs(2),
+                serve_raw_with_artifact(artifact.clone(), request.as_bytes()),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{target} waited for its {framing} body"));
+            assert!(response.starts_with(&format!("HTTP/1.1 {expected} ")));
+            if target.starts_with("HEAD ") {
+                assert!(response.ends_with("\r\n\r\n"));
+            } else {
+                assert!(response.contains(code), "{target}: {response}");
+            }
+            if expected == 405 {
+                assert!(response.contains("allow: POST\r\n"));
+            }
+        }
+    }
+}
