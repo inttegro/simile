@@ -34,8 +34,21 @@ function report() {
 
 test("validates the report and keeps its quarantine prefix predictable", () => {
   const validated = validateReport(report());
+  assert.equal(validated.formatVersion, 1);
   assert.equal(validated.id, "rpt_8eaadf11a66373a4");
   assert.equal(reportObjectPrefix(validated), "quarantine/inttegro/rpt_8eaadf11a66373a4");
+});
+
+test("accepts forward-compatible report versions without accepting invalid version values", () => {
+  const future = report();
+  future.formatVersion = 42;
+  assert.equal(validateReport(future).formatVersion, 42);
+
+  for (const formatVersion of [0, -1, 1.5, Number.NaN]) {
+    const invalid = report();
+    invalid.formatVersion = formatVersion;
+    assert.throws(() => validateReport(invalid), /positive integer/);
+  }
 });
 
 test("rejects contact data embedded in the technical report", () => {
@@ -62,12 +75,14 @@ test("requires explicit reporter consent and a usable email", () => {
 
 test("requires the bundle to agree with the report", () => {
   const validated = validateReport(report());
-  assert.doesNotThrow(() =>
-    validateBundle(
-      { formatVersion: 2, artifactSha256: "a".repeat(64), service: "inttegro" },
-      validated,
-    ),
-  );
+  for (const formatVersion of [1, 2, 3, 42]) {
+    assert.doesNotThrow(() =>
+      validateBundle(
+        { formatVersion, artifactSha256: "a".repeat(64), service: "inttegro" },
+        validated,
+      ),
+    );
+  }
   assert.throws(
     () =>
       validateBundle(
@@ -76,6 +91,16 @@ test("requires the bundle to agree with the report", () => {
       ),
     ProtocolError,
   );
+  for (const formatVersion of [0, -1, 1.5]) {
+    assert.throws(
+      () =>
+        validateBundle(
+          { formatVersion, artifactSha256: "a".repeat(64), service: "inttegro" },
+          validated,
+        ),
+      /positive integer/,
+    );
+  }
 });
 
 test("validates preflight identity", () => {

@@ -33,6 +33,9 @@ data.
 - Technical evidence remains in a private R2 quarantine. Reporter contact is encrypted separately
   in D1 with AES-256-GCM and bound to the report identifier.
 - The verifier Container has no Internet access and receives no production credentials.
+- The public receiver accepts every positive report and reproduction format version. Independent
+  verification remains mandatory: evidence that the installed verifier cannot yet understand stays
+  quarantined and pending, then is retried automatically after verifier updates.
 - The analyzer refuses every request without a Cloudflare Access identity. A loopback-only bypass
   exists for local development and is disabled in the example configuration.
 - Reporter-contact reveals and every review transition append an audit event.
@@ -138,6 +141,10 @@ Before publishing the endpoint, also verify:
 3. an unknown service and unknown artifact are rejected;
 4. a valid report returns `202 pending_verification`;
 5. the Queue invokes the verifier and the exact reproduction becomes `accepted`;
-6. failed or mismatched reproduction becomes `rejected`;
-7. the analyzer shows evidence, history, recurrence, and review actions; and
-8. the retention schedule deletes expired R2 objects and contact independently.
+6. a conclusive mismatched reproduction becomes `rejected`;
+7. an unfamiliar future report or bundle version is accepted for intake, remains
+   `pending_verification`, and records a `verification_deferred` event rather than rejecting the
+   reporter;
+8. the analyzer shows evidence, history, recurrence, and review actions; and
+9. the retention schedule retries deferred evidence and deletes expired R2 objects and contact
+   independently.

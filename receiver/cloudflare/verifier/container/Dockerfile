@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM node:24-bookworm-slim AS runtime
 RUN useradd --create-home --user-group --uid 10001 verifier
 COPY --from=builder /tmp/simile /usr/local/bin/simile
-COPY receiver/cloudflare/verifier/container/server.ts /app/server.ts
+COPY receiver/cloudflare/verifier/container/server.ts receiver/cloudflare/verifier/container/verdict.ts /app/
 USER verifier
 WORKDIR /app
 ENV PORT=8080

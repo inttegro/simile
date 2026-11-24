@@ -17,6 +17,7 @@ export interface Preflight {
 
 export interface ValidatedReport {
   value: JsonObject;
+  formatVersion: number;
   id: string;
   service: string;
   serviceVersion: string;
@@ -42,9 +43,9 @@ export function validatePreflight(value: unknown): Preflight {
 export function validateReport(value: unknown): ValidatedReport {
   const report = objectValue(value, "report");
   const verification = objectValue(report.verification, "report.verification");
-  if (report.formatVersion !== 1) {
-    throw new ProtocolError("report.formatVersion must be 1");
-  }
+  // Why: an unfamiliar report version is evidence for the independent verifier, not proof that
+  // the user's report is invalid. Keep the stable intake envelope forward-compatible.
+  const formatVersion = versionValue(report.formatVersion, "report.formatVersion");
   const id = stringValue(report.id, "report.id");
   if (!REPORT_ID.test(id)) {
     throw new ProtocolError("report.id is invalid");
@@ -62,6 +63,7 @@ export function validateReport(value: unknown): ValidatedReport {
   rejectContactFields(report, "report");
   return {
     value: report,
+    formatVersion,
     id,
     service: serviceValue(report.service, "report.service"),
     serviceVersion: stringValue(report.serviceVersion, "report.serviceVersion"),
@@ -92,9 +94,9 @@ export function validateReporter(value: unknown) {
 
 export function validateBundle(value: unknown, report: ValidatedReport): JsonObject {
   const bundle = objectValue(value, "bundle.json");
-  if (bundle.formatVersion !== 1 && bundle.formatVersion !== 2) {
-    throw new ProtocolError("bundle.json formatVersion is unsupported");
-  }
+  // Why: the verifier, rather than the public ingestion boundary, owns reproduction-format
+  // support. Accepting every valid version lets newer clients submit evidence without trusting it.
+  versionValue(bundle.formatVersion, "bundle.formatVersion");
   if (stringValue(bundle.artifactSha256, "bundle.artifactSha256") !== report.artifactDigest) {
     throw new ProtocolError("bundle and report artifact digests differ");
   }
@@ -170,6 +172,13 @@ function objectValue(value: unknown, name: string): JsonObject {
 function stringValue(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new ProtocolError(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+function versionValue(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new ProtocolError(`${name} must be a positive integer`);
   }
   return value;
 }

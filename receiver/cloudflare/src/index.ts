@@ -12,6 +12,7 @@ import {
   validateReporter,
   type ValidatedReport,
 } from "./protocol.ts";
+import { decideVerification } from "./verification.ts";
 
 interface ReceiverEnv {
   DB: D1Database;
@@ -103,6 +104,7 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: ReceiverEnv): Promise<void> {
     await applyRetention(env);
+    await requeueDeferredVerifications(env);
   },
 };
 
@@ -180,7 +182,7 @@ async function receive(request: Request, env: ReceiverEnv): Promise<Response> {
   await requireKnownArtifact(report, env);
   const reporter = validateReporter(await parseJsonPart(form, "reporter"));
   const attachments = await readAttachments(form, limit);
-  validateBundle(parseAttachmentJson(attachments, "bundle.json"), report);
+  const bundle = validateBundle(parseAttachmentJson(attachments, "bundle.json"), report);
   parseAttachmentJson(attachments, "request.json");
 
   const existing = await env.DB.prepare(
@@ -259,7 +261,11 @@ async function receive(request: Request, env: ReceiverEnv): Promise<Response> {
       ).bind(
         crypto.randomUUID(),
         report.id,
-        JSON.stringify({ serviceVersion: report.serviceVersion }),
+        JSON.stringify({
+          serviceVersion: report.serviceVersion,
+          reportFormatVersion: report.formatVersion,
+          bundleFormatVersion: bundle.formatVersion,
+        }),
         now,
       ),
     ]);
@@ -289,18 +295,33 @@ async function verify(message: VerificationMessage, env: ReceiverEnv): Promise<v
     body: JSON.stringify({ reportId, objectPrefix: report.object_prefix }),
   });
   if (!response.ok) throw new Error(`verifier returned HTTP ${response.status}`);
-  const result = asObject(await response.json(), "verifier response");
-  const accepted = result.reproduced === true && result.fingerprint === report.fingerprint;
-  const status = accepted ? "accepted" : "rejected";
-  const reason = accepted
-    ? null
-    : String(
-        result.reason ||
-          (result.fingerprint && result.fingerprint !== report.fingerprint
-            ? "verification fingerprint did not match"
-            : "reproduction did not match"),
-      ).slice(0, 2000);
+  const decision = decideVerification(await response.json(), report.fingerprint);
   const now = new Date().toISOString();
+  if (decision.status === "pending_verification") {
+    // Why: inability to understand a newer format is a verifier limitation, not evidence that the
+    // reporter is wrong. Keep the quarantined case eligible for a future verifier retry.
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE reports
+            SET status = 'pending_verification', rejection_reason = NULL,
+                verification_reproduced = NULL, verification_fingerprint = ?, updated_at = ?
+          WHERE id = ?`,
+      ).bind(decision.fingerprint, now, reportId),
+      env.DB.prepare(
+        `INSERT INTO report_events (id, report_id, kind, actor, detail, created_at)
+         VALUES (?, ?, 'verification_deferred', 'verifier', ?, ?)`,
+      ).bind(
+        crypto.randomUUID(),
+        reportId,
+        JSON.stringify({ reason: decision.reason, reasonCode: decision.reasonCode }),
+        now,
+      ),
+    ]);
+    return;
+  }
+  const accepted = decision.status === "accepted";
+  const status = decision.status;
+  const reason = decision.reason;
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE reports
@@ -311,7 +332,7 @@ async function verify(message: VerificationMessage, env: ReceiverEnv): Promise<v
       status,
       reason,
       accepted ? 1 : 0,
-      typeof result.fingerprint === "string" ? result.fingerprint : null,
+      decision.fingerprint,
       now,
       now,
       reportId,
@@ -323,7 +344,7 @@ async function verify(message: VerificationMessage, env: ReceiverEnv): Promise<v
       crypto.randomUUID(),
       reportId,
       accepted ? "verification_accepted" : "verification_rejected",
-      JSON.stringify({ reason }),
+      JSON.stringify({ reason, reasonCode: decision.reasonCode }),
       now,
     ),
   ]);
@@ -405,6 +426,30 @@ async function applyRetention(env: ReceiverEnv): Promise<void> {
         `INSERT INTO report_events (id, report_id, kind, actor, detail, created_at)
          VALUES (?, ?, 'contact_expired', 'retention', '{}', ?)`,
       ).bind(crypto.randomUUID(), contact.report_id, deletedAt),
+    ]);
+  }
+}
+
+async function requeueDeferredVerifications(env: ReceiverEnv): Promise<void> {
+  const retryBefore = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+  const pending = await env.DB.prepare(
+    `SELECT id FROM reports
+      WHERE status = 'pending_verification' AND evidence_deleted_at IS NULL AND updated_at < ?
+      ORDER BY updated_at ASC LIMIT 100`,
+  )
+    .bind(retryBefore)
+    .all<{ id: string }>();
+  for (const report of pending.results || []) {
+    // Why: a report deferred by an older verifier must be retried automatically after verifier
+    // upgrades; requiring the reporter to resubmit would punish them for being ahead of us.
+    await env.VERIFICATION_QUEUE.send({ reportId: report.id });
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE reports SET updated_at = ? WHERE id = ?").bind(now, report.id),
+      env.DB.prepare(
+        `INSERT INTO report_events (id, report_id, kind, actor, detail, created_at)
+         VALUES (?, ?, 'verification_requeued', 'receiver', '{}', ?)`,
+      ).bind(crypto.randomUUID(), report.id, now),
     ]);
   }
 }
@@ -532,11 +577,4 @@ function safeError(error: unknown): { name?: string; message: string } {
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
-}
-
-function asObject(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object`);
-  }
-  return value as Record<string, unknown>;
 }

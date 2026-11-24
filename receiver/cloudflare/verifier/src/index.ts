@@ -24,9 +24,11 @@ interface VerifierEnv {
 }
 
 interface ContainerResult {
+  conclusive?: boolean;
   reproduced?: boolean;
   fingerprint?: string | null;
   reason?: string | null;
+  reasonCode?: string | null;
   error?: { code?: string };
 }
 
@@ -63,9 +65,11 @@ export default {
         throw new Error(`container verifier returned HTTP ${response.status}: ${result?.error?.code || "unknown"}`);
       }
       return json({
+        conclusive: result.conclusive === true,
         reproduced: result.reproduced === true,
         fingerprint: typeof result.fingerprint === "string" ? result.fingerprint : null,
         reason: typeof result.reason === "string" ? result.reason.slice(0, 2000) : null,
+        reasonCode: typeof result.reasonCode === "string" ? result.reasonCode.slice(0, 120) : null,
       });
     } catch (error) {
       if (error instanceof VerificationError) {

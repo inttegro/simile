@@ -5,6 +5,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { classifyRunResult, type RunResult } from "./verdict.ts";
+
 const PORT = Number.parseInt(process.env.PORT || "8080", 10);
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const REQUIRED_PARTS = ["bundle.json", "report.json", "request.json", "service.similec"];
@@ -15,23 +17,8 @@ interface VerifyOptions {
   timeoutMs?: number;
 }
 
-interface RunResult {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-}
-
 interface ReportDocument {
   service?: string;
-}
-
-interface PreparedReport {
-  report?: {
-    verification?: {
-      reproduced?: boolean;
-      fingerprint?: string;
-    };
-  };
 }
 
 const server = createServer(async (request, response) => {
@@ -100,19 +87,7 @@ export async function verifyForm(form: FormData, options: VerifyOptions = {}) {
       },
       options.timeoutMs || 30_000,
     );
-    if (output.exitCode !== 0) {
-      return {
-        reproduced: false,
-        fingerprint: null,
-        reason: conciseDiagnostic(output.stderr || output.stdout),
-      };
-    }
-    const prepared = JSON.parse(output.stdout) as PreparedReport;
-    return {
-      reproduced: prepared.report?.verification?.reproduced === true,
-      fingerprint: prepared.report?.verification?.fingerprint || null,
-      reason: null,
-    };
+    return classifyRunResult(output);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -169,15 +144,6 @@ function run(
       });
     });
   });
-}
-
-function conciseDiagnostic(value: unknown): string {
-  const last = String(value || "reproduction did not match")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
-  return String(last || "reproduction did not match").slice(0, 2000);
 }
 
 function send(response: ServerResponse, status: number, value: unknown): void {
