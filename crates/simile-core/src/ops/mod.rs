@@ -1,6 +1,7 @@
 mod audit;
 mod compile;
 mod conformance;
+#[cfg(feature = "native")]
 mod console;
 mod describe;
 mod doctor;
@@ -21,6 +22,7 @@ mod version;
 pub use audit::{AuditFinding, AuditReport, AuditRequest, AuditSeverity, audit, audit_artifact};
 pub use compile::{CompileReport, CompileRequest, ContractFormat, WrittenArtifact, compile};
 pub use conformance::{ConformanceCase, ConformanceReport, ConformanceRequest, verify_conformance};
+#[cfg(feature = "native")]
 pub use console::{
     ConsoleArtifact, ConsoleCatalog, ConsoleMetrics, ConsoleOperation, ConsoleOutcome,
     ConsoleRequest, ConsoleService, ConsoleServiceEntry, ConsoleServiceIdentity, console,
