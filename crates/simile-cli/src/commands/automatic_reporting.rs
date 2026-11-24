@@ -33,6 +33,15 @@ impl AutomaticReporter {
                         )
                         .await;
                     }
+                    RuntimeReportCommand::AutomaticExchange(exchange) => {
+                        process_automatic_exchange(
+                            ctx.clone(),
+                            service_name.clone(),
+                            artifact_bytes.clone(),
+                            exchange,
+                        )
+                        .await;
+                    }
                     RuntimeReportCommand::Prepare {
                         exchange,
                         title,
@@ -51,6 +60,7 @@ impl AutomaticReporter {
                                     artifact_bytes,
                                     operation: exchange.operation,
                                     response_seed: exchange.response_seed,
+                                    logical_time_milliseconds: exchange.logical_time_milliseconds,
                                     content_type: exchange.content_type,
                                     body: exchange.body,
                                     parameters: exchange.parameters,
@@ -186,6 +196,81 @@ async fn process_automatic(
             operation,
             %error,
             "automatic reporting worker failed"
+        ),
+    }
+}
+
+async fn process_automatic_exchange(
+    ctx: Context,
+    service: String,
+    artifact_bytes: Vec<u8>,
+    exchange: simile_server::RuntimeExchangeReport,
+) {
+    let operation = exchange.operation.clone();
+    let title_operation = operation.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ops::process_automatic_exchange_report(
+            &ctx,
+            ops::AutomaticExchangeReportRequest {
+                diagnostic: ReportDiagnostic {
+                    code: "effect_failed".to_owned(),
+                    message:
+                        "the operation completed but its declared effects could not be committed"
+                            .to_owned(),
+                    issues: Vec::new(),
+                },
+                exchange: ops::RuntimeExchangeReportRequest {
+                    service,
+                    profile: exchange.profile,
+                    artifact_bytes,
+                    operation: exchange.operation,
+                    response_seed: exchange.response_seed,
+                    logical_time_milliseconds: exchange.logical_time_milliseconds,
+                    content_type: exchange.content_type,
+                    body: exchange.body,
+                    parameters: exchange.parameters,
+                    outcome: exchange.outcome,
+                    scenario: exchange.scenario,
+                    fault_profile: exchange.fault_profile,
+                    expected: ops::ExecutedResponse {
+                        status: exchange.expected.status,
+                        content_type: exchange.expected.content_type,
+                        body: exchange.expected.body,
+                    },
+                    title: format!("effect_failed while running {title_operation}"),
+                    description: None,
+                },
+            },
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(Some(report))) if report.sent => tracing::info!(
+            target: "simile::reporting",
+            report = report.report.id,
+            operation,
+            "submitted a reproduced effect-commit issue"
+        ),
+        Ok(Ok(Some(report))) => tracing::warn!(
+            target: "simile::reporting",
+            report = report.report.id,
+            operation,
+            status = ?report.report.status,
+            "prepared an effect-commit issue but did not submit it"
+        ),
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => tracing::warn!(
+            target: "simile::reporting",
+            operation,
+            %error,
+            "could not prepare an automatic effect-commit issue"
+        ),
+        Err(error) => tracing::warn!(
+            target: "simile::reporting",
+            operation,
+            %error,
+            "automatic effect-commit reporting worker failed"
         ),
     }
 }

@@ -20,6 +20,7 @@ use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
 pub use auth::{AuthenticatedProfile, authenticate, authenticate_with_profiles};
+pub use codec::sanitize_multipart_for_replay;
 pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation, PlannedWebhook};
 pub use execution::{
     ExecutionOptions, OperationCall, OperationExecution, OperationOutcome, OperationValueCall,
@@ -27,7 +28,10 @@ pub use execution::{
 };
 pub use fault::{FaultActivation, FaultSource, TransportPlan};
 pub use operation::Runtime;
-pub use parameter::{IncomingParameters, ParameterIssue, ValidatedParameters, validate_parameters};
+pub use parameter::{
+    IncomingParameters, ParameterIssue, ValidatedParameters, synthesize_missing_parameters,
+    validate_parameters,
+};
 pub use response::{
     ResponseSoundness, ResponseSynthesisRequest, SynthesizedResponse, synthesize_response,
     synthesize_response_with_seed,
@@ -285,6 +289,13 @@ pub enum Error {
         source: SynthesisError,
     },
 
+    #[error("could not synthesize request parameter `{name}`: {source}")]
+    ParameterSynthesis {
+        name: String,
+        #[source]
+        source: SynthesisError,
+    },
+
     #[error("could not synthesize a response body: {source}")]
     ResponseSynthesis {
         #[source]
@@ -386,6 +397,7 @@ impl Error {
             Self::UnsupportedResponseMediaType { .. } => "unsupported_response_media_type",
             Self::UnsupportedResponseEncoding { .. } => "unsupported_response_encoding",
             Self::Synthesis { .. } => "request_synthesis_failed",
+            Self::ParameterSynthesis { .. } => "parameter_synthesis_failed",
             Self::ResponseSynthesis { .. } => "response_synthesis_failed",
             Self::ResponseHeaderSynthesis { .. } => "response_header_synthesis_failed",
             Self::InvalidResponseHeader { .. } => "invalid_response_header",

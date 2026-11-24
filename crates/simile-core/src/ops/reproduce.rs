@@ -89,6 +89,7 @@ pub struct ExchangeBundleRequest<'a> {
     pub service_version: &'a str,
     pub operation: &'a str,
     pub response_seed: u64,
+    pub logical_time_milliseconds: Option<i64>,
     pub content_type: Option<&'a str>,
     pub body: &'a [u8],
     pub parameters: &'a IncomingParameters,
@@ -109,6 +110,8 @@ struct ExchangeManifest {
     service_version: String,
     operation: String,
     response_seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    logical_time_milliseconds: Option<i64>,
     outcome: Option<String>,
     scenario: Option<String>,
     fault_profile: Option<String>,
@@ -241,6 +244,8 @@ pub fn replay(request: &ReplayRequest) -> Result<ReplayReport> {
                 source,
             }
         })?;
+    let parameters =
+        validate_parameters(&artifact, &manifest.operation, &executed_request.parameters)?;
     let execution = Runtime::from_artifact(artifact).execute_value_with_options(
         OperationValueCall {
             operation: &manifest.operation,
@@ -248,6 +253,7 @@ pub fn replay(request: &ReplayRequest) -> Result<ReplayReport> {
             body: executed_request.body.as_ref(),
         },
         ExecutionOptions {
+            parameters: Some(&parameters),
             outcome: manifest.outcome.as_deref(),
             scenario: manifest.scenario.as_deref(),
             response_seed: Some(super::run::response_seed(manifest.seed)),
@@ -339,6 +345,7 @@ pub fn write_exchange(request: &ExchangeBundleRequest<'_>) -> Result<()> {
         service_version: request.service_version.to_owned(),
         operation: request.operation.to_owned(),
         response_seed: request.response_seed,
+        logical_time_milliseconds: request.logical_time_milliseconds,
         outcome: request.outcome.map(str::to_owned),
         scenario: request.scenario.map(str::to_owned),
         fault_profile: request.fault_profile.map(str::to_owned),
@@ -451,13 +458,27 @@ pub fn verify_case(path: &Path) -> Result<CaseVerification> {
                 scenario: manifest.scenario.as_deref(),
                 fault_profile: manifest.fault_profile.as_deref(),
                 response_seed: Some(manifest.response_seed),
+                logical_time_milliseconds: manifest.logical_time_milliseconds,
                 ..ExecutionOptions::default()
             },
-        )?;
-        let mut actual = ExecutedResponse {
-            status: execution.response().status(),
-            content_type: execution.response().media_type().map(str::to_owned),
-            body: execution.response().value().cloned(),
+        );
+        let mut actual = match execution {
+            Ok(execution) => ExecutedResponse {
+                status: execution.response().status(),
+                content_type: execution.response().media_type().map(str::to_owned),
+                body: execution.response().value().cloned(),
+            },
+            Err(simile_service::Error::Runtime(error)) => return Err(error.into()),
+            Err(_) => ExecutedResponse {
+                status: 500,
+                content_type: Some("application/json".to_owned()),
+                body: Some(serde_json::json!({
+                    "error": {
+                        "code": "effect_failed",
+                        "message": "the operation completed but its declared effects could not be committed"
+                    }
+                })),
+            },
         };
         if let Some(body) = actual.body.as_mut() {
             redact_exchange_response(body);
@@ -700,6 +721,48 @@ paths:
             .unwrap_or_else(|error| panic!("fixture must encode: {error}"))
     }
 
+    fn failing_effect_artifact() -> Vec<u8> {
+        let source = r#"
+openapi: 3.1.0
+info: { title: Effect reports, version: 1.0.0 }
+paths:
+  /schedule:
+    post:
+      operationId: scheduleWork
+      responses:
+        '200':
+          description: scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, const: not-a-time }
+"#;
+        let behavior = r#"
+backend "scheduler" "work" {}
+
+effect "schedule_work" {
+  operations = ["scheduleWork"]
+
+  action "scheduler.work" "schedule" {
+    due_at  = response.id
+    payload = response
+  }
+}
+"#;
+        let compiled = Compiler::new()
+            .compile(CompileRequest {
+                openapi: Source::new("effect-reports.yml", source),
+                modules: vec![Source::new("effects.hcl", behavior)],
+                heuristic_policy: Policy::Standard,
+            })
+            .unwrap_or_else(|error| panic!("fixture must compile: {error}"));
+        simile_artifact::encode(&compiled)
+            .unwrap_or_else(|error| panic!("fixture must encode: {error}"))
+    }
+
     fn temporary_case() -> PathBuf {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         std::env::temp_dir().join(format!(
@@ -803,6 +866,7 @@ paths:
             service_version: "1.0.0",
             operation: "GET /orders/{id}",
             response_seed: 41,
+            logical_time_milliseconds: None,
             content_type: None,
             body: b"",
             parameters: &parameters,
@@ -821,6 +885,47 @@ paths:
             verified.diagnostic.message,
             "the captured HTTP exchange is reproduced"
         );
+        drop(fs::remove_dir_all(path));
+    }
+
+    #[test]
+    fn verifies_a_captured_effect_commit_failure() {
+        let path = temporary_case();
+        drop(fs::remove_dir_all(&path));
+        let artifact_bytes = failing_effect_artifact();
+        let expected = ExecutedResponse {
+            status: 500,
+            content_type: Some("application/json".to_owned()),
+            body: Some(serde_json::json!({
+                "error": {
+                    "code": "effect_failed",
+                    "message": "the operation completed but its declared effects could not be committed"
+                }
+            })),
+        };
+
+        write_exchange(&ExchangeBundleRequest {
+            path: &path,
+            artifact_bytes: &artifact_bytes,
+            service: "Effect reports",
+            service_version: "1.0.0",
+            operation: "POST /schedule",
+            response_seed: 53,
+            logical_time_milliseconds: None,
+            content_type: None,
+            body: b"",
+            parameters: &IncomingParameters::default(),
+            outcome: None,
+            scenario: None,
+            fault_profile: None,
+            expected: &expected,
+        })
+        .unwrap_or_else(|error| panic!("exchange bundle must be written: {error}"));
+
+        let verified = verify_case(&path)
+            .unwrap_or_else(|error| panic!("effect failure must verify: {error}"));
+        assert!(verified.reproduced);
+        assert_eq!(verified.operation, "POST /schedule");
         drop(fs::remove_dir_all(path));
     }
 }

@@ -233,6 +233,46 @@ profile "merchant" {
     )
 }
 
+fn artifact_with_scheduler_effect(due_at: &str) -> Artifact {
+    compile_artifact_with_behavior(
+        r#"
+openapi: 3.1.0
+info: { title: Scheduled orders, version: 1.0.0 }
+paths:
+  /orders/schedule:
+    post:
+      operationId: scheduleOrder
+      responses:
+        '201':
+          description: scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, due_at]
+                properties:
+                  id: { type: string, const: task_example }
+                  due_at: { type: string, format: date-time, const: '2030-01-01T12:00:00Z' }
+"#,
+        &format!(
+            r#"
+backend "scheduler" "work" {{}}
+
+effect "schedule_order" {{
+  operations = ["scheduleOrder"]
+
+  action "scheduler.work" "schedule" {{
+    id      = response.id
+    due_at  = response.{due_at}
+    payload = response
+  }}
+}}
+"#
+        ),
+    )
+}
+
 fn compile_artifact(source: &str) -> Artifact {
     compile_artifact_with_behavior(source, "")
 }
@@ -452,6 +492,96 @@ async fn serves_a_request_through_the_operation_runtime() {
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.contains("content-type: application/json"));
     assert!(response.contains(r#""id":"#));
+}
+
+#[tokio::test]
+async fn commits_scheduler_effects_with_public_due_at_fields() {
+    let response = serve_raw_with_artifact(
+        artifact_with_scheduler_effect("due_at"),
+        b"POST /orders/schedule HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 201 Created\r\n"));
+}
+
+#[tokio::test]
+async fn effect_commit_failures_are_recorded_and_reportable() {
+    let (reporting_sender, mut reporting_receiver) = tokio::sync::mpsc::channel(4);
+    let server = Server::bind_with_options(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        artifact_with_scheduler_effect("id"),
+        ServerOptions {
+            reporting_sender: Some(reporting_sender),
+            ..ServerOptions::default()
+        },
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+
+    let response = send_raw(
+        address,
+        b"POST /orders/schedule HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(response.starts_with("HTTP/1.1 500 Internal Server Error\r\n"));
+    assert!(response.contains(r#""code":"effect_failed""#));
+
+    let exchanges = send_raw(
+        address,
+        b"GET /.simile/exchanges HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(exchanges.contains(r#""status":500"#));
+    assert!(exchanges.contains(r#""operation":"POST /orders/schedule""#));
+    let (_, body) = exchanges
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("exchange response should contain a body"));
+    let exchange_id = serde_json::from_str::<serde_json::Value>(body)
+        .unwrap_or_else(|error| panic!("{error}"))["exchanges"][0]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("exchange should have an id"))
+        .to_owned();
+
+    assert!(matches!(
+        reporting_receiver.recv().await,
+        Some(RuntimeReportCommand::AutomaticExchange(exchange))
+            if exchange.expected.status == 500
+    ));
+    let report_request = format!(
+        "POST /.simile/exchanges/{exchange_id}/report HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    )
+    .into_bytes();
+    let report_task = tokio::spawn(async move { send_raw(address, &report_request).await });
+    let command = reporting_receiver
+        .recv()
+        .await
+        .unwrap_or_else(|| panic!("report command should be emitted"));
+    match command {
+        RuntimeReportCommand::Prepare {
+            exchange, reply, ..
+        } => {
+            assert_eq!(exchange.exchange_id, exchange_id);
+            assert_eq!(exchange.expected.status, 500);
+            drop(reply.send(Err(RuntimeReportError {
+                code: "test_complete".to_owned(),
+                message: "capture reached reporter".to_owned(),
+            })));
+        }
+        other => panic!("unexpected report command: {other:?}"),
+    }
+    let report_response = report_task.await.unwrap_or_else(|error| panic!("{error}"));
+    assert!(report_response.contains("test_complete"));
+
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[tokio::test]
@@ -825,4 +955,17 @@ fn sanitizes_sensitive_incident_evidence_without_flattening_the_request() {
 fn declines_opaque_request_bodies_for_automatic_reports() {
     assert!(sanitize_body(Some("application/octet-stream"), b"secret bytes").is_none());
     assert!(sanitize_body(None, b"secret bytes").is_none());
+}
+
+#[test]
+fn retains_safe_multipart_evidence_for_reports() {
+    let body = b"--abc\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nreport-repro\r\n--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"secret.txt\"\r\nContent-Type: text/plain\r\n\r\nprivate bytes\r\n--abc--\r\n";
+    let sanitized = sanitize_body(Some("multipart/form-data; boundary=abc"), body)
+        .unwrap_or_else(|| panic!("multipart evidence should be reproducible"));
+    let rendered = String::from_utf8(sanitized).unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(rendered.contains("report-repro"));
+    assert!(rendered.contains("filename=\"secret.txt\""));
+    assert!(rendered.contains("X-Simile-Original-Length: 13"));
+    assert!(!rendered.contains("private bytes"));
 }

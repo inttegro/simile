@@ -562,7 +562,12 @@ pub(super) fn sanitize_body(content_type: Option<&str>, body: &[u8]) -> Option<V
     if body.is_empty() {
         return Some(Vec::new());
     }
-    let media_type = content_type?.split(';').next()?.trim();
+    let content_type = content_type?;
+    let media_type = content_type.split(';').next()?.trim();
+    if media_type == "multipart/form-data" {
+        return simile_runtime::sanitize_multipart_for_replay(content_type, body, sensitive_name)
+            .ok();
+    }
     if media_type != "application/json" && !media_type.ends_with("+json") {
         return None;
     }

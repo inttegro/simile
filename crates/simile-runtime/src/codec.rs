@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{Error, Result};
 
@@ -162,41 +163,25 @@ fn encode_form(value: &Value) -> std::result::Result<Vec<u8>, String> {
 }
 
 fn decode_multipart(content_type: &str, bytes: &[u8]) -> Result<Value> {
-    let boundary = parameter(content_type, "boundary")
-        .ok_or_else(|| malformed(content_type, "multipart boundary is missing".to_owned()))?;
-    let marker = format!("--{boundary}").into_bytes();
     let mut fields = BTreeMap::<String, Vec<Value>>::new();
-    for raw in split_bytes(bytes, &marker).into_iter().skip(1) {
-        let raw = trim_trailing_crlf(trim_crlf(raw));
-        if raw.is_empty() || raw == b"--" {
-            continue;
-        }
-        let raw = raw.strip_suffix(b"--").unwrap_or(raw);
-        let Some(header_end) = find_bytes(raw, b"\r\n\r\n") else {
-            return Err(malformed(
-                content_type,
-                "multipart part has no header separator".to_owned(),
-            ));
-        };
-        let headers = std::str::from_utf8(&raw[..header_end])
-            .map_err(|error| malformed(content_type, error.to_string()))?;
-        let body = trim_trailing_crlf(&raw[header_end + 4..]);
-        let disposition = header_value(headers, "content-disposition")
-            .ok_or_else(|| malformed(content_type, "multipart part has no name".to_owned()))?;
-        let name = parameter(disposition, "name")
-            .ok_or_else(|| malformed(content_type, "multipart part has no name".to_owned()))?;
-        let part_type = header_value(headers, "content-type");
-        let value = if part_type.is_some_and(|value| is_json(essence(value))) {
-            serde_json::from_slice(body)
+    for part in multipart_parts(content_type, bytes)? {
+        // A part with a filename is a file regardless of the file's own media
+        // type. Treating `application/json` files as structured form fields
+        // changes binary OpenAPI values into objects before validation.
+        let value = if part.filename.is_some() {
+            Value::String(STANDARD.encode(part.body))
+        } else if part
+            .content_type
+            .is_some_and(|value| is_json(essence(value)))
+        {
+            serde_json::from_slice(part.body)
                 .map_err(|error| malformed(content_type, error.to_string()))?
-        } else if parameter(disposition, "filename").is_some() {
-            Value::String(STANDARD.encode(body))
         } else {
-            let text = std::str::from_utf8(body)
+            let text = std::str::from_utf8(part.body)
                 .map_err(|error| malformed(content_type, error.to_string()))?;
             Value::String(text.to_owned())
         };
-        fields.entry(name).or_default().push(value);
+        fields.entry(part.name).or_default().push(value);
     }
     Ok(Value::Object(
         fields
@@ -211,6 +196,102 @@ fn decode_multipart(content_type: &str, bytes: &[u8]) -> Result<Value> {
             })
             .collect(),
     ))
+}
+
+/// Build replayable multipart evidence without retaining uploaded file bytes.
+///
+/// Ordinary fields are preserved unless the caller marks their names as sensitive. File
+/// metadata remains available for diagnosis, while exact-length deterministic fixture bytes
+/// replace the original content.
+pub fn sanitize_multipart_for_replay<F>(
+    content_type: &str,
+    bytes: &[u8],
+    is_sensitive: F,
+) -> Result<Vec<u8>>
+where
+    F: Fn(&str) -> bool,
+{
+    let boundary = multipart_boundary(content_type)?;
+    let mut output = Vec::new();
+    for part in multipart_parts(content_type, bytes)? {
+        output.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        output.extend_from_slice(part.headers.as_bytes());
+        if part.filename.is_some() {
+            output.extend_from_slice(
+                format!(
+                    "\r\nX-Simile-Original-Length: {}\r\nX-Simile-Original-Sha256: {:x}\r\nX-Simile-Content: deterministic-replacement",
+                    part.body.len(),
+                    Sha256::digest(part.body)
+                )
+                .as_bytes(),
+            );
+        }
+        output.extend_from_slice(b"\r\n\r\n");
+        if part.filename.is_some() {
+            output.extend_from_slice(&deterministic_file_bytes(part.body.len()));
+        } else if is_sensitive(&part.name) {
+            output.extend_from_slice(b"<redacted>");
+        } else {
+            output.extend_from_slice(part.body);
+        }
+        output.extend_from_slice(b"\r\n");
+    }
+    output.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Ok(output)
+}
+
+#[derive(Debug)]
+struct MultipartPart<'a> {
+    headers: &'a str,
+    name: String,
+    filename: Option<String>,
+    content_type: Option<&'a str>,
+    body: &'a [u8],
+}
+
+fn multipart_parts<'a>(content_type: &str, bytes: &'a [u8]) -> Result<Vec<MultipartPart<'a>>> {
+    let boundary = multipart_boundary(content_type)?;
+    let marker = format!("--{boundary}").into_bytes();
+    let mut parts = Vec::new();
+    for raw in split_bytes(bytes, &marker).into_iter().skip(1) {
+        let raw = trim_trailing_crlf(trim_crlf(raw));
+        if raw.is_empty() || raw == b"--" {
+            continue;
+        }
+        let raw = raw.strip_suffix(b"--").unwrap_or(raw);
+        let Some(header_end) = find_bytes(raw, b"\r\n\r\n") else {
+            return Err(malformed(
+                content_type,
+                "multipart part has no header separator".to_owned(),
+            ));
+        };
+        let headers = std::str::from_utf8(&raw[..header_end])
+            .map_err(|error| malformed(content_type, error.to_string()))?;
+        let disposition = header_value(headers, "content-disposition")
+            .ok_or_else(|| malformed(content_type, "multipart part has no name".to_owned()))?;
+        let name = parameter(disposition, "name")
+            .ok_or_else(|| malformed(content_type, "multipart part has no name".to_owned()))?;
+        parts.push(MultipartPart {
+            headers,
+            name,
+            filename: parameter(disposition, "filename"),
+            content_type: header_value(headers, "content-type"),
+            body: trim_trailing_crlf(&raw[header_end + 4..]),
+        });
+    }
+    Ok(parts)
+}
+
+fn multipart_boundary(content_type: &str) -> Result<String> {
+    parameter(content_type, "boundary")
+        .ok_or_else(|| malformed(content_type, "multipart boundary is missing".to_owned()))
+}
+
+fn deterministic_file_bytes(length: usize) -> Vec<u8> {
+    const FIXTURE: &[u8] = b"simile-reproduction-fixture";
+    (0..length)
+        .map(|index| FIXTURE[index % FIXTURE.len()])
+        .collect()
 }
 
 fn encode_multipart(value: &Value, boundary: &str) -> std::result::Result<Vec<u8>, String> {
@@ -303,9 +384,10 @@ fn malformed(content_type: &str, message: String) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
     use serde_json::json;
 
-    use super::{decode, encode};
+    use super::{STANDARD, decode, encode, sanitize_multipart_for_replay};
 
     #[test]
     fn url_encoded_forms_preserve_repeated_wire_values() {
@@ -331,6 +413,43 @@ mod tests {
         let decoded = decode("multipart/form-data; boundary=abc", body)
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(decoded, json!({"name": "Ama", "quantity": "2"}));
+    }
+
+    #[test]
+    fn multipart_json_files_remain_binary_values() {
+        let body = b"--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"package.json\"\r\nContent-Type: application/json\r\n\r\n{\"name\":\"simile\"}\r\n--abc--\r\n";
+        let decoded = decode("multipart/form-data; boundary=abc", body)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(decoded, json!({"file": "eyJuYW1lIjoic2ltaWxlIn0="}));
+    }
+
+    #[test]
+    fn multipart_report_evidence_preserves_fields_and_replaces_files() {
+        let body = b"--abc\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nreport-repro\r\n--abc\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\nsecret\r\n--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"package.json\"\r\nContent-Type: application/json\r\n\r\n{\"name\":\"simile\"}\r\n--abc--\r\n";
+        let sanitized =
+            sanitize_multipart_for_replay("multipart/form-data; boundary=abc", body, |name| {
+                name == "token"
+            })
+            .unwrap_or_else(|error| panic!("{error}"));
+        let rendered =
+            String::from_utf8(sanitized.clone()).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(rendered.contains("report-repro"));
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("{\"name\":\"simile\"}"));
+        assert!(rendered.contains("filename=\"package.json\""));
+        assert!(rendered.contains("Content-Type: application/json"));
+        assert!(rendered.contains("X-Simile-Original-Length: 17"));
+        assert_eq!(
+            decode("multipart/form-data; boundary=abc", &sanitized)
+                .unwrap_or_else(|error| panic!("{error}"))["file"]
+                .as_str()
+                .and_then(|value| STANDARD.decode(value).ok())
+                .map(|bytes| bytes.len()),
+            Some(17)
+        );
     }
 
     #[test]

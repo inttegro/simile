@@ -8,8 +8,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use simile_heuristics::Policy;
 use simile_runtime::{
-    ExecutionOptions, OperationValueCall, Runtime, SynthesisRequest,
-    synthesize_request_value_with_seed,
+    ExecutionOptions, IncomingParameters, OperationValueCall, Runtime, SynthesisRequest,
+    synthesize_missing_parameters, synthesize_request_value_with_seed, validate_parameters,
 };
 use simile_spec::OutcomeProvenance;
 
@@ -73,6 +73,8 @@ pub struct RunRequest {
 struct RequestDocument {
     #[serde(default)]
     headers: BTreeMap<String, String>,
+    #[serde(default)]
+    parameters: IncomingParameters,
     #[serde(default, deserialize_with = "deserialize_request_body")]
     body: RequestBody,
 }
@@ -90,6 +92,7 @@ struct PreparedRequest {
     headers: BTreeMap<String, String>,
     content_type: Option<String>,
     body: Option<Value>,
+    parameters: IncomingParameters,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,6 +111,8 @@ pub struct ExecutedRequest {
     // as the same empty map instead of rejecting Simile's own serialized request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "IncomingParameters::is_empty")]
+    pub parameters: IncomingParameters,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -207,6 +212,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
     let operation = selected.key().to_owned();
     let operation_id = selected.operation_id().map(str::to_owned);
     let prepared = prepare_request(&artifact, &operation, request, seed)?;
+    let parameters = validate_parameters(&artifact, &operation, &prepared.parameters)?;
     let outcome = Runtime::from_artifact(artifact).execute_value_with_options(
         OperationValueCall {
             operation: &operation,
@@ -214,6 +220,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
             body: prepared.body.as_ref(),
         },
         ExecutionOptions {
+            parameters: Some(&parameters),
             outcome: request.outcome.as_deref(),
             scenario: request.scenario.as_deref(),
             response_seed: Some(response_seed(seed)),
@@ -223,6 +230,7 @@ pub fn run(request: &RunRequest) -> Result<RunReport> {
     let executed_request = ExecutedRequest {
         source: prepared.source,
         headers: prepared.headers,
+        parameters: prepared.parameters,
         content_type: outcome
             .request_body()
             .map(|request| request.media_type().to_owned()),
@@ -284,6 +292,11 @@ fn prepare_request(
     request: &RunRequest,
     seed: u64,
 ) -> Result<PreparedRequest> {
+    let selected = artifact
+        .operation(operation)
+        .ok_or_else(|| Error::UnknownOperation {
+            operation: operation.to_owned(),
+        })?;
     if let Some(input) = &request.request {
         let (source_name, bytes) = read_request(input)?;
         let document: RequestDocument =
@@ -292,6 +305,21 @@ fn prepare_request(
                 source,
             })?;
         let content_type = header(&document.headers, "content-type")?.map(str::to_owned);
+        let mut parameters = document.parameters;
+        for (name, value) in &document.headers {
+            if !selected.parameters().any(|parameter| {
+                parameter.location() == simile_spec::ParameterLocation::Header
+                    && parameter.name().eq_ignore_ascii_case(name)
+            }) {
+                continue;
+            }
+            parameters
+                .headers
+                .entry(name.to_ascii_lowercase())
+                .or_insert_with(|| vec![value.clone()]);
+        }
+        let parameters =
+            synthesize_missing_parameters(artifact, operation, &parameters, request_seed(seed))?;
         let body = match document.body {
             RequestBody::Absent => None,
             RequestBody::Present(value) => Some(value),
@@ -301,20 +329,23 @@ fn prepare_request(
             headers: document.headers,
             content_type,
             body,
+            parameters,
         });
     }
 
-    let selected = artifact
-        .operation(operation)
-        .ok_or_else(|| Error::UnknownOperation {
-            operation: operation.to_owned(),
-        })?;
+    let parameters = synthesize_missing_parameters(
+        artifact,
+        operation,
+        &IncomingParameters::default(),
+        request_seed(seed),
+    )?;
     let Some(_) = selected.request_body() else {
         return Ok(PreparedRequest {
             source: RequestSource::None,
             headers: BTreeMap::new(),
             content_type: None,
             body: None,
+            parameters,
         });
     };
     let synthesized = synthesize_request_value_with_seed(
@@ -330,6 +361,7 @@ fn prepare_request(
         headers: BTreeMap::new(),
         content_type: Some(synthesized.media_type().to_owned()),
         body: Some(synthesized.value().clone()),
+        parameters,
     })
 }
 
@@ -536,6 +568,64 @@ mod tests {
         assert!(replayed.matched);
         assert_eq!(replayed.seed, 17);
         assert_eq!(replayed.actual, report.response);
+    }
+
+    #[test]
+    fn reproduction_bundles_include_and_replay_required_query_parameters() {
+        let bundle = std::env::temp_dir().join(format!(
+            "simile-parameter-reproduction-{}-{}",
+            std::process::id(),
+            29
+        ));
+        if bundle.exists() {
+            fs::remove_dir_all(&bundle).unwrap_or_else(|error| panic!("{error}"));
+        }
+        let report = run(&RunRequest {
+            spec: SpecSource::Path(fixture("run-parameters.yaml")),
+            contract_format: ContractFormat::Auto,
+            modules: Vec::new(),
+            operation: OperationSelector::Id("openLink".to_owned()),
+            outcome: None,
+            scenario: None,
+            request: None,
+            content_type: None,
+            heuristic_policy: Policy::Standard,
+            seed: Some(29),
+            bundle: Some(bundle.clone()),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        let request: serde_json::Value = serde_json::from_slice(
+            &fs::read(bundle.join("request.json")).unwrap_or_else(|error| panic!("{error}")),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            request["parameters"]["query"]["id"][0]
+                .as_str()
+                .is_some_and(|id| id.starts_with("flink_"))
+        );
+        assert!(
+            request["parameters"]["query"]["token"][0]
+                .as_str()
+                .is_some_and(|token| token.len() >= 8)
+        );
+
+        let replayed = super::super::reproduce::replay(&super::super::reproduce::ReplayRequest {
+            bundle: bundle.clone(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::remove_dir_all(bundle).unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(replayed.matched);
+        assert_eq!(
+            report.request.parameters.query,
+            request_parameters(&request)
+        );
+    }
+
+    fn request_parameters(request: &serde_json::Value) -> BTreeMap<String, Vec<String>> {
+        serde_json::from_value(request["parameters"]["query"].clone())
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
     #[test]

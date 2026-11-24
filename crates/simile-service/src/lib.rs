@@ -164,7 +164,9 @@ impl Service {
         options: ExecutionOptions<'_>,
         profile: Option<&str>,
     ) -> Result<OperationExecution> {
-        let request_received_at = lock(&self.stack)?.now()?.as_unix_millis();
+        let request_received_at = options
+            .logical_time_milliseconds
+            .map_or_else(|| self.logical_time_milliseconds(), Ok)?;
         let profile = profile
             .map(|name| self.profile(name))
             .transpose()?
@@ -245,7 +247,9 @@ impl Service {
         call: OperationValueCall<'_>,
         options: ExecutionOptions<'_>,
     ) -> Result<OperationExecution> {
-        let request_received_at = lock(&self.stack)?.now()?.as_unix_millis();
+        let request_received_at = options
+            .logical_time_milliseconds
+            .map_or_else(|| self.logical_time_milliseconds(), Ok)?;
         let response_request = state::response_request_body(self, call.operation, call.body, None)?;
         let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
         let mutation = if matches!(state, state::StateResolution::None) {
@@ -292,6 +296,11 @@ impl Service {
     #[must_use]
     pub const fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+
+    /// Read the service's authoritative logical time for one transport request.
+    pub fn logical_time_milliseconds(&self) -> Result<i64> {
+        Ok(lock(&self.stack)?.now()?.as_unix_millis())
     }
 
     /// Return the compiled contract that defines this service.

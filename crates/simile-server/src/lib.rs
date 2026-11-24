@@ -136,6 +136,8 @@ pub struct RuntimeExchangeReport {
     pub profile: Option<String>,
     pub operation: String,
     pub response_seed: u64,
+    #[serde(default)]
+    pub logical_time_milliseconds: Option<i64>,
     pub content_type: Option<String>,
     pub body: Vec<u8>,
     pub parameters: IncomingParameters,
@@ -188,6 +190,7 @@ pub struct RuntimeReportError {
 #[derive(Debug)]
 pub enum RuntimeReportCommand {
     Automatic(RuntimeIncident),
+    AutomaticExchange(RuntimeExchangeReport),
     Prepare {
         exchange: RuntimeExchangeReport,
         title: String,
@@ -519,6 +522,17 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         .inspector
         .as_ref()
         .map(|inspector| inspector.next_id(started_at_ms));
+    let logical_time_milliseconds = match state.service.logical_time_milliseconds() {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(target: "simile::service", %operation, %error, "service clock is unavailable");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service_unavailable",
+                "the service clock is unavailable",
+            );
+        }
+    };
     let outcome = state.service.execute_for_profile_with_options(
         OperationCall {
             operation: &operation,
@@ -531,6 +545,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
             scenario: state.scenario.as_deref(),
             fault_profile: state.fault_profile.as_deref(),
             response_seed: Some(response_seed),
+            logical_time_milliseconds: Some(logical_time_milliseconds),
             ..ExecutionOptions::default()
         },
         profile.as_deref(),
@@ -559,6 +574,7 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
                         profile: profile.clone(),
                         operation: operation.clone(),
                         response_seed,
+                        logical_time_milliseconds: Some(logical_time_milliseconds),
                         content_type: content_type.clone(),
                         body,
                         parameters: sanitize_parameters(incoming.clone()),
@@ -619,11 +635,80 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
         }
         Err(error) => {
             tracing::error!(target: "simile::effect", %operation, %error, "could not apply operation effects");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "effect_failed",
-                "the operation completed but its declared effects could not be committed",
-            )
+            let message = "the operation completed but its declared effects could not be committed";
+            let error_body = serde_json::json!({
+                "error": {
+                    "code": "effect_failed",
+                    "message": message,
+                }
+            });
+            let report_capture =
+                sanitize_body(content_type.as_deref(), &body).map(|body| RuntimeExchangeReport {
+                    exchange_id: exchange_identity
+                        .as_ref()
+                        .map_or_else(String::new, |(exchange_id, _)| exchange_id.clone()),
+                    profile: profile.clone(),
+                    operation: operation.clone(),
+                    response_seed,
+                    logical_time_milliseconds: Some(logical_time_milliseconds),
+                    content_type: content_type.clone(),
+                    body,
+                    parameters: sanitize_parameters(incoming.clone()),
+                    outcome: None,
+                    scenario: state.scenario.clone(),
+                    fault_profile: state.fault_profile.clone(),
+                    expected: RuntimeExpectedResponse {
+                        status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                        content_type: Some("application/json".to_owned()),
+                        body: Some(error_body.clone()),
+                    },
+                });
+            if let (Some(sender), Some(capture)) =
+                (state.reporting_sender.as_ref(), report_capture.as_ref())
+            {
+                if let Err(error) =
+                    sender.try_send(RuntimeReportCommand::AutomaticExchange(capture.clone()))
+                {
+                    tracing::debug!(
+                        target: "simile::reporting",
+                        %error,
+                        "automatic effect report skipped because the reporting queue is unavailable"
+                    );
+                }
+            }
+            if let (Some(inspector), Some((exchange_id, exchange_sequence))) =
+                (state.inspector.as_ref(), exchange_identity)
+            {
+                inspector.record(
+                    exchange_sequence,
+                    RecordedExchange {
+                        exchange: InspectionExchange {
+                            id: exchange_id,
+                            operation,
+                            method: method.to_string(),
+                            path: uri.path().to_owned(),
+                            started_at_ms,
+                            duration_micros: started
+                                .elapsed()
+                                .as_micros()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
+                            status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                            outcome: None,
+                            profile,
+                            request: inspection_request_body(content_type.as_deref(), &body),
+                            response: InspectionMessage {
+                                content_type: Some("application/json".to_owned()),
+                                body: Some(error_body),
+                                truncated: false,
+                            },
+                        },
+                        report_capture,
+                        report: None,
+                    },
+                );
+            }
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "effect_failed", message)
         }
     }
 }

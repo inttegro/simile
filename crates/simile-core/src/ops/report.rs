@@ -116,6 +116,7 @@ pub struct RuntimeExchangeReportRequest {
     pub artifact_bytes: Vec<u8>,
     pub operation: String,
     pub response_seed: u64,
+    pub logical_time_milliseconds: Option<i64>,
     pub content_type: Option<String>,
     pub body: Vec<u8>,
     pub parameters: IncomingParameters,
@@ -125,6 +126,12 @@ pub struct RuntimeExchangeReportRequest {
     pub expected: ExecutedResponse,
     pub title: String,
     pub description: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AutomaticExchangeReportRequest {
+    pub exchange: RuntimeExchangeReportRequest,
+    pub diagnostic: ReportDiagnostic,
 }
 
 #[derive(Debug, Serialize)]
@@ -308,6 +315,7 @@ pub fn prepare_runtime_exchange_report(
         service_version: &summary.service_version,
         operation: &request.operation,
         response_seed: request.response_seed,
+        logical_time_milliseconds: request.logical_time_milliseconds,
         content_type: request.content_type.as_deref(),
         body: &request.body,
         parameters: &request.parameters,
@@ -373,47 +381,116 @@ pub fn process_automatic_report(
             issues: request.diagnostic.issues.clone(),
         },
     })?;
-    let result = (|| {
-        let verified = verify_case(&capture)?;
-        if !verified.reproduced {
-            return Err(Error::ReportDidNotReproduce {
-                bundle: capture.clone(),
-            });
-        }
-        if store.has_fingerprint(&request.service, &verified.fingerprint)? {
-            return Ok(None);
-        }
-        let report = ReportDocument::verified(
-            ReportKind::InvariantViolation,
-            ReportTrigger::Automatic,
-            format!(
-                "{} while running {}",
-                request.diagnostic.code, request.operation
-            ),
-            None,
-            &request.service,
-            Some(profile.to_owned()),
-            &ctx.build().version,
-            verified.service_version,
-            verified.operation,
-            verified.artifact_digest,
-            request.diagnostic,
-            verified.fingerprint,
-            true,
-        )?;
-        store.install_report(&report, &capture)?;
-        send_report(
-            ctx,
-            &SendReportRequest {
-                report: report.id,
-                current_version: false,
-                contact: None,
-            },
-        )
-        .map(Some)
-    })();
+    let result = finish_automatic_report(
+        ctx,
+        &store,
+        &request.service,
+        profile,
+        &capture,
+        format!(
+            "{} while running {}",
+            request.diagnostic.code, request.operation
+        ),
+        request.diagnostic,
+    );
     drop(fs::remove_dir_all(&capture));
     result
+}
+
+/// Verify and submit an automatically observed failure that occurs while committing effects.
+pub fn process_automatic_exchange_report(
+    ctx: &Context,
+    request: AutomaticExchangeReportRequest,
+) -> Result<Option<SendReportReport>> {
+    let Some(profile) = request.exchange.profile.as_deref() else {
+        return Ok(None);
+    };
+    let store = ReportingStore::new(ctx.simile_home()?);
+    let Some(preference) = store.preference(&request.exchange.service, profile)? else {
+        return Ok(None);
+    };
+    if !preference.automatic {
+        return Ok(None);
+    }
+    let capture = ctx.simile_home()?.join("tmp").join(format!(
+        ".report-case-{}-{:016x}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    let artifact = simile_artifact::decode(&request.exchange.artifact_bytes)?;
+    let summary = artifact.summary();
+    write_exchange(&ExchangeBundleRequest {
+        path: &capture,
+        artifact_bytes: &request.exchange.artifact_bytes,
+        service: &request.exchange.service,
+        service_version: &summary.service_version,
+        operation: &request.exchange.operation,
+        response_seed: request.exchange.response_seed,
+        logical_time_milliseconds: request.exchange.logical_time_milliseconds,
+        content_type: request.exchange.content_type.as_deref(),
+        body: &request.exchange.body,
+        parameters: &request.exchange.parameters,
+        outcome: request.exchange.outcome.as_deref(),
+        scenario: request.exchange.scenario.as_deref(),
+        fault_profile: request.exchange.fault_profile.as_deref(),
+        expected: &request.exchange.expected,
+    })?;
+    let result = finish_automatic_report(
+        ctx,
+        &store,
+        &request.exchange.service,
+        profile,
+        &capture,
+        request.exchange.title,
+        request.diagnostic,
+    );
+    drop(fs::remove_dir_all(&capture));
+    result
+}
+
+fn finish_automatic_report(
+    ctx: &Context,
+    store: &ReportingStore,
+    service: &str,
+    profile: &str,
+    capture: &Path,
+    title: String,
+    diagnostic: ReportDiagnostic,
+) -> Result<Option<SendReportReport>> {
+    let verified = verify_case(capture)?;
+    if !verified.reproduced {
+        return Err(Error::ReportDidNotReproduce {
+            bundle: capture.to_owned(),
+        });
+    }
+    if store.has_fingerprint(service, &verified.fingerprint)? {
+        return Ok(None);
+    }
+    let report = ReportDocument::verified(
+        ReportKind::InvariantViolation,
+        ReportTrigger::Automatic,
+        title,
+        None,
+        service,
+        Some(profile.to_owned()),
+        &ctx.build().version,
+        verified.service_version,
+        verified.operation,
+        verified.artifact_digest,
+        diagnostic,
+        verified.fingerprint,
+        true,
+    )?;
+    store.install_report(&report, capture)?;
+    send_report(
+        ctx,
+        &SendReportRequest {
+            report: report.id,
+            current_version: false,
+            contact: None,
+        },
+    )
+    .map(Some)
 }
 
 pub fn report(ctx: &Context, id: &str) -> Result<PreparedReport> {

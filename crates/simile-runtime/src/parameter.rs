@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -43,6 +44,14 @@ impl IncomingParameters {
             .get(&name)
             .and_then(|values| values.first())
             .map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.path.is_empty()
+            && self.query.is_empty()
+            && self.headers.is_empty()
+            && self.cookies.is_empty()
     }
 }
 
@@ -135,6 +144,174 @@ pub fn validate_parameters(
         Ok(validated)
     } else {
         Err(Error::InvalidParameters { issues: problems })
+    }
+}
+
+/// Fill only missing required parameters with deterministic schema-valid values.
+///
+/// The result stays in the transport-neutral wire representation used by HTTP,
+/// reproduction bundles, and response bindings. Caller-provided values always
+/// win; optional parameters remain absent unless the caller supplies them.
+pub fn synthesize_missing_parameters(
+    artifact: &Artifact,
+    operation: &str,
+    incoming: &IncomingParameters,
+    seed: u64,
+) -> Result<IncomingParameters> {
+    let operation = artifact
+        .operation(operation)
+        .ok_or_else(|| Error::UnknownOperation {
+            operation: operation.to_owned(),
+        })?;
+    let mut completed = incoming.clone();
+    for (index, parameter) in operation.parameters().enumerate() {
+        if !parameter.is_required() || !parameter_values(&parameter, &completed).is_empty() {
+            continue;
+        }
+        let value = parameter.schema().map_or_else(
+            || Ok(Value::String("simile".to_owned())),
+            |schema| {
+                schema
+                    .synthesize_fuzz(parameter_seed(seed, index))
+                    .map_err(|source| Error::ParameterSynthesis {
+                        name: parameter.name().to_owned(),
+                        source,
+                    })
+            },
+        )?;
+        insert_parameter(&mut completed, &parameter, &value);
+    }
+    validate_parameters(artifact, operation.key(), &completed)?;
+    Ok(completed)
+}
+
+fn parameter_seed(seed: u64, index: usize) -> u64 {
+    seed ^ (index as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+}
+
+fn insert_parameter(
+    incoming: &mut IncomingParameters,
+    parameter: &ArtifactParameter<'_>,
+    value: &Value,
+) {
+    let values = incoming_values_mut(incoming, parameter.location());
+    let identity = parameter_identity(parameter.location(), parameter.name());
+    match (parameter.style(), parameter.explode(), value) {
+        ("deepObject", _, Value::Object(fields)) => {
+            for (name, value) in fields {
+                values.insert(
+                    format!("{}[{name}]", parameter.name()),
+                    vec![wire_scalar(value)],
+                );
+            }
+        }
+        ("form", true, Value::Object(fields)) => {
+            for (name, value) in fields {
+                values.insert(name.clone(), vec![wire_scalar(value)]);
+            }
+        }
+        ("form", true, Value::Array(items)) => {
+            values.insert(identity, items.iter().map(wire_scalar).collect());
+        }
+        ("matrix", true, Value::Array(items)) => {
+            values.insert(identity, vec![matrix_array(parameter.name(), items)]);
+        }
+        ("matrix", true, Value::Object(fields)) => {
+            values.insert(identity, vec![matrix_object(fields)]);
+        }
+        ("matrix", false, value) => {
+            values.insert(
+                identity,
+                vec![format!(
+                    ";{}={}",
+                    parameter.name(),
+                    delimited_value(value, ',')
+                )],
+            );
+        }
+        ("label", true, value) => {
+            values.insert(identity, vec![format!(".{}", exploded_value(value, '.'))]);
+        }
+        ("label", false, value) => {
+            values.insert(identity, vec![format!(".{}", delimited_value(value, ','))]);
+        }
+        ("spaceDelimited", _, value) => {
+            values.insert(identity, vec![delimited_value(value, ' ')]);
+        }
+        ("pipeDelimited", _, value) => {
+            values.insert(identity, vec![delimited_value(value, '|')]);
+        }
+        ("simple", true, value) => {
+            values.insert(identity, vec![exploded_value(value, ',')]);
+        }
+        (_, _, value) => {
+            values.insert(identity, vec![delimited_value(value, ',')]);
+        }
+    }
+}
+
+fn matrix_array(name: &str, items: &[Value]) -> String {
+    items.iter().fold(String::new(), |mut rendered, item| {
+        let _ = write!(rendered, ";{name}={}", wire_scalar(item));
+        rendered
+    })
+}
+
+fn matrix_object(fields: &Map<String, Value>) -> String {
+    fields
+        .iter()
+        .fold(String::new(), |mut rendered, (name, value)| {
+            let _ = write!(rendered, ";{name}={}", wire_scalar(value));
+            rendered
+        })
+}
+
+fn incoming_values_mut(
+    incoming: &mut IncomingParameters,
+    location: ParameterLocation,
+) -> &mut BTreeMap<String, Vec<String>> {
+    match location {
+        ParameterLocation::Path => &mut incoming.path,
+        ParameterLocation::Query => &mut incoming.query,
+        ParameterLocation::Header => &mut incoming.headers,
+        ParameterLocation::Cookie => &mut incoming.cookies,
+    }
+}
+
+fn delimited_value(value: &Value, delimiter: char) -> String {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .map(wire_scalar)
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string()),
+        Value::Object(fields) => fields
+            .iter()
+            .flat_map(|(name, value)| [name.clone(), wire_scalar(value)])
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string()),
+        value => wire_scalar(value),
+    }
+}
+
+fn exploded_value(value: &Value, delimiter: char) -> String {
+    match value {
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(name, value)| format!("{name}={}", wire_scalar(value)))
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string()),
+        value => delimited_value(value, delimiter),
+    }
+}
+
+fn wire_scalar(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
     }
 }
 
