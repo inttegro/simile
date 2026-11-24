@@ -79,6 +79,7 @@
 					{
 						"group": "Inspect and reproduce",
 						"pages": [
+							"simile-web",
 							"state-inspection",
 							"state-and-replay",
 							"reproduction-bundles",

@@ -92,9 +92,11 @@ Registered services store the checkpoint at:
 $SIMILE_HOME/state/services/SERVICE.redb
 ```
 
-The database identity includes the service and compiled artifact digest. Simile refuses to restore
-state into an incompatible artifact. The checkpoint contains Stack resources, replay records,
-causal journal, counters, clock state, outbox, and dead letters.
+The database belongs to one service identity and records the compiled artifact digest as
+provenance. A compatible artifact refresh keeps queued work and updates that provenance
+automatically. State format, Stack protocol, and encoded-data integrity checks still protect the
+restore. The checkpoint contains Stack resources, replay records, causal journal, counters, clock
+state, outbox, and dead letters.
 
 Continue with [Dependencies and effects](/dependencies-and-effects),
 [Webhook delivery](/webhook-delivery), or [Stack persistence](/stack-persistence).

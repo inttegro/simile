@@ -90,8 +90,10 @@ storage-neutral record projection; they do not depend on redb or know how record
 
 Standalone component processes do not have a compiled-service identity or artifact digest, so
 those metadata fields are absent. The store accepts both when the service orchestrator owns the
-component and rejects a database whose stored provenance does not match. The resource digest is
-always present and protects the independently keyed resource set from partial or mismatched loads.
+component. A service artifact refresh updates the stored artifact provenance after the snapshot
+passes compatibility and integrity checks. Service identity remains an ownership boundary. The
+resource digest is always present and protects the independently keyed resource set from partial or
+mismatched loads.
 
 ## Ownership
 

@@ -11,7 +11,7 @@ interpret safely.
 | --- | ---: | --- |
 | `.similec` artifact | 16 | fixed envelope, length, SHA-256 digest, flags, typed indexes |
 | Stack command protocol | 1 | exhaustive command/result tags and resource-kind checks |
-| redb state layout | 2 | format and protocol metadata, service identity, artifact digest, resource digest |
+| redb state layout | 2 | format and protocol metadata, service identity, refreshable artifact provenance, resource digest |
 | response reproduction bundle | 1 | bundle version, Simile version, artifact format, artifact digest |
 | incident reproduction bundle | 2 | expected diagnostic, exact request controls, artifact digest |
 | report document | 1 | report status, verification fingerprint, reproduction path |
@@ -19,8 +19,9 @@ interpret safely.
 
 The artifact decoder rejects unknown versions, non-zero flags, truncation, trailing bytes, digest
 mismatch, unknown tags, and invalid indexes before constructing a runtime. Durable service state
-is also bound to both the service identity and artifact digest; a different service or incompatible
-compiled definition cannot silently adopt it.
+belongs to one service identity. After a compatible artifact refresh, Simile preserves the decoded
+state and updates its artifact provenance automatically. Format, protocol, resource-digest, and
+encoded-data checks continue to reject unsafe restores.
 
 Version-one Stack snapshots migrate to the normalized redb layout in place. Other incompatible
 formats fail with their found and supported versions. Simile never “best effort” decodes unknown

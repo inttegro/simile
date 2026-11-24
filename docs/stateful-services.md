@@ -154,6 +154,9 @@ For mutations, a stored snapshot is a baseline rather than an exact response fix
 compatible stored values, constructs any newly required response fields from the schema, and then
 applies the operation's declared request-to-response relation. This lets lifecycle operations add
 public timestamps without erasing the resource fields already stored by an earlier request.
+Server-owned creation, update, processing, and lifecycle timestamps use the Stack's shared
+[logical time](/stack-time), so a stored resource records the same operation instant observed by
+the causal journal and effects.
 
 ## Inspect authority
 

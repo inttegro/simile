@@ -14,7 +14,30 @@ flowchart TD
   Clock --> Scheduler[Due tasks]
   Clock --> Mail[Delivery timestamps]
   Clock --> Journal[Event timestamps]
+  Clock --> Response[Operation timestamps]
 ```
+
+## Operation timestamps
+
+The service captures the logical instant when it receives an operation. Response synthesis uses
+that instant for server-owned event fields created by the operation:
+
+- create operations establish `created_at` or `created`;
+- mutating operations establish `updated_at` or `updated`;
+- lifecycle operations establish the matching transition field, such as `archived_at`, `paid_at`,
+  or `failed_at`; and
+- processing fields such as `received_at`, `processed_at`, and `responded_at` describe the same
+  operation instant.
+
+The response schema chooses the representation. `format: date-time` produces RFC 3339,
+`format: date` produces a calendar date, `format: unix-time` produces epoch seconds, and
+`format: unix-time-ms` produces epoch milliseconds. Simile only applies this rule to fields with a
+compatible explicit format.
+
+An explicit request-to-response binding retains authority. If the caller supplies a timestamp and
+the contract binds it into the response, Simile preserves the caller's value. Future instants such
+as expiry or scheduled execution continue to come from request bindings, outcomes, constraints,
+or schema synthesis.
 
 ## Manual mode
 

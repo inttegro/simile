@@ -30,9 +30,12 @@ transactionally, saves the complete Stack snapshot to embedded redb, and rolls b
 if the command or checkpoint fails. A restarted service restores backend state, logical time,
 causal journal, counters, and Stack command replays from `$SIMILE_HOME/state/services/NAME.redb`.
 
-The file is bound to the registered service identity and artifact digest. Simile refuses to load it
-for a different or incompatible compiled service. `simile remove NAME --confirm NAME` deletes both
-the registry entry and this durable state, but refuses while another process owns the state lock.
+The file belongs to the registered service identity. After a compatible contract or behavior
+update, Simile restores the existing Stack state, initializes newly declared backends, and records
+the new artifact digest automatically. State with a different service identity, incompatible
+format or protocol, or invalid encoded data still fails safely. `simile remove NAME --confirm NAME`
+deletes both the registry entry and this durable state, but refuses while another process owns the
+state lock.
 
 ## Convention-inferred state
 
