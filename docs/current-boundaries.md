@@ -1,10 +1,10 @@
 ---
 title: Capabilities and limits
 sidebarTitle: Capabilities
-description: See what Simile v0.4.0 can emulate, where provider authorship is required, and which boundaries remain explicit.
+description: See what Simile v0.5.0 can emulate, where provider authorship is required, and which boundaries remain explicit.
 ---
 
-Simile v0.4.0 runs stateful HTTP service emulators from public contracts. It compiles the service
+Simile v0.5.0 runs stateful HTTP service emulators from public contracts. It compiles the service
 before startup, validates each request, constructs a reachable result, commits declared
 consequences, and exposes the service through an ordinary local HTTP endpoint.
 
@@ -24,6 +24,7 @@ commands, while [Architecture](/architecture) explains how the components enforc
 | Authentication | API key, Basic, Bearer, OAuth 2.0, and OpenID Connect test principals, setup workflows, grants, profiles, and credential lifecycle states. |
 | Webhooks | OpenAPI callbacks and webhooks, HCL contracts, committed emissions, causal dependencies, delays, ordering policy, HMAC-SHA256 signing, retries, and durable delivery. |
 | Failure testing | Deterministic scenarios and bounded stochastic transport-fault profiles. |
+| Inspection | Terminal and browser consoles over registered artifacts, sanitized durable exchange history, live Stack state, deferred work, and fidelity evidence. |
 | Reproduction | Seeded runs, self-contained bundles, replay, conformance suites, causal inspection, and verified issue reports. |
 | Learning | Buffered local HTTP proxying with sanitized evidence and conservative draft contract inference. |
 

@@ -4,6 +4,26 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-24
+
+- Add `simile console` with terminal and browser interfaces for operations, outcomes, scenarios,
+  faults, profiles, exchanges, Stack state, deferred work, and fidelity evidence.
+- Add a loopback-only runtime inspection surface with sanitized exchange capture, local state
+  controls, and verified issue-report preparation.
+- Persist sanitized exchange history and prepared report state across service restarts, retain it
+  until explicit clearing, and remove it with the registered service.
+- Restore compatible durable Stack state across artifact updates, initialize newly declared
+  backends, and update the persisted artifact identity after a successful checkpoint.
+- Drive request-related response timestamps from the durable Stack logical clock while preserving
+  explicit request bindings and contract-controlled scheduling fields.
+- Compose reusable HCL declarations through `service.modules`; retain `behaviors` as a deprecated
+  compatibility alias.
+- Expand the reference report receiver with fingerprinted triage, affected-version tracking, and
+  isolated verification evidence.
+- Refine terminal startup, request-log, and service-description presentation.
+- Reorganize the documentation around the user journey from starting and running a service through
+  testing, inspection, authoring, learning, and issue reporting.
+
 ## 0.4.0 - 2026-11-22
 
 - Add `simile test` for supervised application tests and `simile proxy --learn` for capturing

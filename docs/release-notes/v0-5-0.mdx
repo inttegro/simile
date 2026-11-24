@@ -1,0 +1,91 @@
+---
+title: Simile 0.5.0
+sidebarTitle: 0.5.0
+description: A unified console, durable inspection history, logical service time, HCL modules, and verified report triage.
+---
+
+Released November 24, 2026.
+
+Simile 0.5.0 makes a running emulator easier to observe and easier to resume. The new console
+combines the compiled service model with live exchanges, state, deferred work, and fidelity
+evidence. Service-owned time and inspection history now continue across ordinary restarts.
+
+<Info>
+  The compiled artifact format remains at version 24. Artifacts compiled by Simile 0.4.0 remain
+  readable, although `simile update SERVICE` is recommended when you want the current compiler to
+  rebuild an installed service.
+</Info>
+
+## Inspect the complete service in one console
+
+Run `simile console` for the terminal interface or add `--web` for the browser:
+
+```bash
+simile console inttegro
+simile console inttegro --web
+```
+
+Both interfaces use the same registered artifact and loopback inspection surface. They expose:
+
+- operations, outcomes, scenarios, faults, profiles, and fidelity evidence;
+- captured HTTP exchanges and prepared issue reports;
+- Stack resources, the causal journal, and deferred work; and
+- a service switcher for moving between registered definitions.
+
+The console attaches to a matching running service or starts the selected service when its listener
+is free. Closing it stops only a service that the console started.
+
+## Continue from durable local evidence
+
+Registered services now retain sanitized exchange history in
+`$SIMILE_HOME/state/services/NAME.exchanges.redb`. The console restores that history after a
+restart. **Clear history** remains an explicit destructive action, and `simile remove` deletes both
+the service state and exchange-history databases.
+
+Compatible service updates no longer require deleting durable Stack state merely because the
+artifact digest changed. Simile restores the existing service identity, initializes newly declared
+backends, and records the current artifact digest after a successful checkpoint.
+
+## Use one logical service clock
+
+Response timestamps associated with a request now come from the service's logical clock. Created,
+updated, processing, and lifecycle fields share the request instant when their schemas allow it.
+The same clock drives Stack timestamps, schedules, delays, queue visibility, and persisted state,
+so a restart continues the service timeline instead of inventing unrelated dates.
+
+Explicit request-to-response bindings and contract-controlled expiry or scheduling fields retain
+their authority.
+
+## Compose behavior as HCL modules
+
+`service.modules` is now the composition boundary for reusable HCL declarations:
+
+```hcl
+service "orders" {
+  listen { port = 4242 }
+  openapi { path = "./orders.yaml" }
+  modules = ["./behavior/orders.hcl", "./behavior/payments.hcl"]
+}
+```
+
+Inline declarations and imported modules share one compiled namespace. Imports are resolved and
+validated before the artifact is written. The former `behaviors` attribute remains a deprecated
+compatibility alias and cannot be combined with `modules`.
+
+## Triage verified reports
+
+The reference report receiver now groups reproducible reports by fingerprint, tracks affected
+versions and services, and exposes evidence for review without making raw payloads the primary
+triage surface. Reporter contact remains separate from technical evidence.
+
+## Read the reorganized documentation
+
+The documentation now follows the working sequence: start, run, test, inspect, author, learn,
+report, and then consult reference or architecture material. Existing page URLs remain stable.
+
+## Install or inspect the release
+
+- [Download Simile 0.5.0](/downloads)
+- [Open the Console guide](/simile-web)
+- [Read about state and replay](/state-and-replay)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.5.0)

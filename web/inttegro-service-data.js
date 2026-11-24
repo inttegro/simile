@@ -57,7 +57,7 @@ window.INTTEGRO_SERVICE_DATA = Object.freeze({
     ]
   },
   "artifact": {
-    "compilerVersion": "0.4.0",
+    "compilerVersion": "0.5.0",
     "formatVersion": 24,
     "bytes": 1391197,
     "sha256": "77b184942941caa0bf238b8cc3dd69164a1f2900fe07f201c6837db646f9884e",
