@@ -1,8 +1,8 @@
 # Browser execution foundations
 
 Build and verify the portable Rust engine, shared application workflows, and a typed
-Worker API in three dependent pull requests. Browser UI and persistence integration
-remain outside this stack.
+Worker API, then the browser playground and explicit browser persistence.
+The first three implementation PRs are merged; the playground builds on `origin/wasm`.
 
 ## Phase 1 — Portable core
 
@@ -52,12 +52,94 @@ remain outside this stack.
 - [x] Pass formatting, Clippy, workspace tests, rustdoc, cargo-deny, and the
   portable dependency check under Rust 1.85. TypeScript compiles in strict mode.
 - [x] Publish [the WASM API PR](https://github.com/savekirk/simile/pull/4) against
-  `browser/shared-workflows`; verify all three bases. The prerequisite PRs have
-  since been merged; the remaining PR now targets `wasm` and stays open for review.
+  `browser/shared-workflows`; verify all three bases. All three PRs have since
+  been merged into `wasm`.
 - [x] Inspect the final fork CI results. All six jobs pass on each implementation
   revision: [portable core](https://github.com/savekirk/simile/actions/runs/45288474136),
   [shared workflows](https://github.com/savekirk/simile/actions/runs/45288472817), and
   [WASM API](https://github.com/savekirk/simile/actions/runs/45288997179).
+
+## Phase 4 — Browser playground
+
+- [x] Start from merged `origin/wasm` (`afe36cb`) and verify the fork destination.
+- [x] Rehearse an upstream update in an isolated checkout, repeated against the
+  latest fetched upstream `12bf17b`. The first portability
+  commit conflicts in `Cargo.toml`, `Cargo.lock`, `crates/simile-service/src/lib.rs`,
+  and `crates/simile-stack/Cargo.toml`
+  with upstream's newer console/persistence changes. Abort the rehearsal and
+  preserve the requested fork base; no upstream changes are published.
+- [x] Build the playground with shadcn 4.23.0, React, TypeScript, and CodeMirror.
+- [x] Separate compiler and runtime Workers, coalesce recompiles, reject stale
+  responses, and require explicit runtime revision replacement.
+- [x] Support file/folder/ZIP imports, artifact mode, runnable workspace exports,
+  decimal seeds, exact payload text/bytes, profiles, and simulated work outcomes.
+- [x] Save projects and explicit checkpoints through completed IndexedDB
+  transactions. Reject stale save acknowledgements and preserve state on failure.
+- [x] Verify native profile credentials and non-mutating work inspection; check
+  retries and dead-letter redelivery through shared service logic.
+- [x] Verify the complete Orders proof loop, artifact/bundle imports, revision
+  switching, storage failure/retry, and mobile layout in six Chromium tests.
+- [x] Verify the actual browser ZIP downloads natively: register, provision,
+  authenticated create/read over TCP, and reproduction replay all pass.
+- [x] Pass all five repository checks, portable dependency checks, five browser
+  Rust tests, 146 Worker assertions, and frontend typecheck/lint/build/unit checks.
+- [x] Publish [the playground PR](https://github.com/savekirk/simile/pull/5) on
+  origin with base `wasm`; leave the PR open and `origin/wasm` untouched.
+- [x] Inspect [fork CI](https://github.com/savekirk/simile/actions/runs/45388521715):
+  all six jobs pass, including Chromium and native Linux, macOS, and Windows.
+- [x] Keep Workbench tabs inside narrow screens. The browser regression now checks
+  all six views and every Workbench panel at 390 px width.
+
+- [x] Keep definition and execution on one screen, with resizable panes, file
+  tabs, a collapsible tools panel, and compact Run/HTTP controls. Seven Chromium
+  tests pass, including simultaneous editor/result visibility, keyboard resizing,
+  theme switching, mobile navigation, and the complete native handoff.
+- [x] Compare rendered desktop, mobile, light/dark, and HTTP layouts against the
+  supplied playground references. See `playground/design-qa.md`. All five Rust
+  checks and frontend typecheck, lint, build, and 13 unit tests pass again.
+- [x] Make the editor cursor visible in both themes and strengthen light-theme
+  text and field borders. Chromium asserts text contrast of at least 4.5:1 and
+  cursor/field-border contrast of at least 3:1 on the reviewed surfaces.
+- [x] Open Problems automatically for action, compilation, formatting, and storage
+  errors, including repeated errors after collapsing the panel.
+- [x] Keep separate operation drafts and retain fixture selection. Switching from
+  POST to GET synthesizes a body-free request; a manually supplied invalid body
+  still reports the contract error. Existing drafts survive operation switches.
+- [x] Add file-type formatting and a Guide with contract examples, actions, and
+  verified documentation section links. Browser tests add and run new OpenAPI and
+  TypeScript operations. Sixteen unit tests and ten Chromium tests pass, along
+  with typecheck, lint, build, all five Rust checks, and native export handoff.
+- [x] Prevent loading a body-bearing fixture into a body-free operation. Expose
+  the compiled body's presence in route metadata, explain mismatches inline, and
+  offer lossless removal of top-level body fields. Both themes reproduce and
+  recover from the reported GET /orders mismatch. Eighteen unit tests, ten browser
+  tests, 149 Worker assertions, portable dependencies, native handoff, and all five
+  repository checks pass.
+- [x] Address the compiler recovery review: closed Workers are replaced for the
+  next compile or artifact load, while source edits and the active runtime survive.
+  Unit tests cover failed imports and queued edits; browser tests inject both a
+  Worker crash and a timeout, then verify successful compilation and preserved time.
+- [x] Add the bundled Swagger Petstore sample with all 20 operations, a request
+  fixture, instructions, original snapshot, conversion provenance, and license.
+  Native compilation and browser baseline/HTTP/reload pass without remote API calls.
+- [x] Diagnose the cancelled macOS check: GitHub reported hosted arm64 capacity
+  exhaustion before any steps ran. Rerunning that job passed; all six jobs on
+  `07d1849` are green. Keep the existing runner matrix and ARM coverage.
+- [x] Verify 21 frontend unit tests and 13 Chromium tests, typecheck/lint/build,
+  native downloaded-workspace handoff, and all five repository checks.
+- [x] Document WASM and playground architecture beside their source. The guides
+  explain ownership, messages, compilation, sessions, and persistence, with seven
+  rendered Mermaid diagrams and an ASCII screen map. Local links and all five
+  repository checks pass.
+- [x] Deploy the playground to `https://similator.dela.dev` with the `cf` CLI.
+  The static-assets Worker owns the custom domain; HTTPS and the WASM MIME type
+  are verified. Production uses the existing Rust release profile (8,408,136-byte
+  WASM) to fit Cloudflare's 25 MiB limit. Development defaults remain unchanged.
+- [x] Verify the deployed release with all 13 Chromium tests, including both-theme
+  contrast, Petstore, profiles, checkpoints, and recovery. Its exported workspace
+  and bundle pass native handoff. Local release tests, 21 unit tests, typecheck,
+  lint, build, and all five repository checks pass. Cloudflare version:
+  `3368f291-ba84-4816-9807-06f76353fa6e`.
 
 ## Decisions and tradeoffs
 
@@ -97,6 +179,46 @@ remain outside this stack.
   Inputs are cloned; only response-owned buffers are transferred.
 - Keep workspace unsafe-code lints intact: the pinned binding macro needs no
   exception. Pin TypeScript and the binding toolchain for reproducible harnesses.
+- Keep compile cancellation isolated from the runtime by using two Workers.
+  Runtime restart is explicit and discards unsaved runtime state. This costs a
+  second WASM instance; measure memory and optimize in the later tooling work.
+- Retain payload JSON as text instead of parsing and re-serializing it in React.
+  Structured catalogue and bounded counters are safe UI metadata.
+- Keep debug WASM for local development and the default build. Use the existing
+  Rust release profile for Cloudflare deployment because debug WASM exceeds the
+  static-asset size limit. Further optimization and broader browser CI remain
+  separate work. Serve only static assets on Cloudflare; the Simile runtime and
+  persistence stay in the browser. Configuration and `pnpm run deploy` make
+  deployment repeatable without adding a server or changing native defaults.
+- Templates keep principal setup in the Simfile and contract-defined webhooks in
+  OpenAPI. Explicit database effects accompany async effects so create/read works.
+- Saved source files and notes survive an incompatible cached artifact. Storage
+  retries reopen failed database connections; only committed saves show as saved.
+- Keep the editor and runner visible while inspection tools open below the
+  editor. On narrow screens the panes stack; each scrolls independently. This
+  prioritizes editing and execution over displaying every advanced control.
+- Keep exact payload text in results; retained baseline results identify an older
+  revision after recompilation. Tabs preserve forms, while workspace replacement
+  resets the baseline form without replacing the active HTTP service.
+- Added the current shadcn Resizable component using `react-resizable-panels`
+  rather than custom drag/keyboard handling.
+- Lazy-load the existing Prettier parsers for YAML, JSON, TypeScript, and Markdown.
+  JSON formatting does not round-trip numbers through JavaScript values. HCL uses
+  conservative indentation rather than canonical rewriting, preserving comments,
+  inline blocks, and heredoc contents without adding another parser dependency.
+- New operations are authored in the contract. The Add operation action opens
+  examples and the contract, keeping the source as the single definition instead
+  of maintaining a separate form-generated representation.
+- Fixture filtering checks whether a body is declared by the compiled contract,
+  not the HTTP method or filename. Full schema validation remains in Rust. Body
+  removal is explicit and edits syntax ranges so other payload values stay exact.
+- Bundle a pinned Swagger 2.0 snapshot converted to OpenAPI 3.0.3 with
+  swagger2openapi 7.0.8. This uses the existing importer without adding a runtime
+  dependency or broadening ingestion scope. Petstore is contract-only: no HCL
+  persistence effects or live upstream requests are added.
+- Replace a closed compiler engine without automatically repeating the failed
+  request. Users retain its diagnostic, and the next compile/edit/import can
+  proceed without risking a crash loop or replacing the active runtime.
 - No user decisions are currently blocking work.
 
 ## What was achieved
@@ -108,7 +230,16 @@ remain outside this stack.
   regression tests pass.
 - Phase 3: typed WASM/Worker APIs expose compilation, artifact inspection, baseline
   and conformance runs, profiles, HTTP sessions, work, reset, and checkpoints.
-  Browser UI, IndexedDB, outbound delivery, and release tooling remain deferred.
+  Outbound delivery and release tooling remain deferred.
+
+- Phase 4: the playground implements authoring, inspection, audit, baseline runs,
+  stateful HTTP, profiles, work, reproduction suites, and explicit persistence.
+  Definition and execution now share a resizable workspace inspired by the
+  supplied playground screenshots. Per-operation requests, visible diagnostics,
+  file-type formatting, contextual help, and both-theme readability are verified.
+  Petstore is available as a bundled sample, and compiler failures are recoverable.
+  Linked architecture guides explain the WASM host and playground workflows.
+  The release playground is hosted on Cloudflare at `similator.dela.dev`.
 
 ## Exit gate
 
@@ -125,3 +256,19 @@ remain outside this stack.
   Request synthesis feeds baseline execution; causal work completion and delayed
   retry run through the exported API. Expired and replaced work handles reject
   without changing state; renewed handles still complete or retry exactly once.
+
+- Phase 4: passed locally. Thirteen production-browser tests verify authoring, audit,
+  profile setup, authenticated create/read, time/work, checkpoint reload, baseline
+  capture, replay/conformance, imports, revision isolation, storage recovery,
+  new operation authoring, per-operation drafts, formatting, visible errors, and
+  light/dark contrast, Petstore, and compiler failure recovery. Twenty-one frontend
+  unit tests cover persistence races,
+  incompatible cached artifacts, paths, lossless values, formatting, and request
+  body detection/removal. The updated Worker harness passes 149 assertions.
+  Native tests verify credential attachment
+  and read-only inspection; exported workspaces and bundles run with the CLI.
+  The PR targets `wasm`. The implementation revision `487d33d` passed all six fork
+  CI jobs, including compiler recovery and the Petstore sample. Architecture
+  documentation has validated diagrams and source links; repository checks pass.
+  The Cloudflare deployment passes the complete browser suite over HTTPS and the
+  native checks using files exported from the public site.

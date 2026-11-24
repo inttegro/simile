@@ -35,7 +35,9 @@ use simile_stack::{
 use simile_stack::{RedbStateStore, StateIdentity};
 use thiserror::Error;
 
-pub use deferred::{DeferredWorkInspection, DependencyReadiness, InspectedDeferredWork};
+pub use deferred::{
+    DeferredWorkInspection, DependencyReadiness, InspectedDeferredWork, WorkInspection,
+};
 pub use inspection::{InspectedResource, ServiceStateInspection};
 pub use profile::{
     ProfileFieldSummary, ProfileValue, ServiceProfile, ServiceProfileSummary, SetupProfileResult,
