@@ -17,80 +17,78 @@
 	"navigation": {
 		"groups": [
 			{
-				"group": "Start here",
+				"group": "Get started",
 				"pages": [
 					"index",
 					"why-simile",
-					"downloads",
 					"quickstart",
+					"downloads"
+				]
+			},
+			{
+				"group": "Use Simile",
+				"pages": [
 					{
-						"group": "Adoption and trust",
+						"group": "Run a service",
 						"pages": [
-							"design-trade-offs",
-							"hosted-test-environment-risks",
-							"test-infrastructure-costs"
+							"service-lifecycle",
+							{
+								"group": "Access and profiles",
+								"pages": [
+									"principals",
+									"service-setup",
+									"service-profiles",
+									"authentication-emulation"
+								]
+							},
+							{
+								"group": "Call operations",
+								"pages": [
+									"run-operation",
+									"http-contract",
+									"request-encoding",
+									"request-validation",
+									"response-synthesis"
+								]
+							}
 						]
 					},
 					{
-						"group": "Release notes",
+						"group": "Test an application",
 						"pages": [
-							"release-notes",
-							"release-notes/v0-5-0",
-							"release-notes/v0-4-0",
-							"release-notes/v0-3-0",
-							"release-notes/v0-2-0",
-							"release-notes/v0-1-1",
-							"release-notes/v0-1-0"
+							"local-testing",
+							"ci-testing",
+							"github-actions",
+							"docker",
+							"conformance-suites"
 						]
+					},
+					{
+						"group": "Inspect a service",
+						"pages": [
+							"simile-web",
+							"state-and-replay",
+							"state-inspection",
+							"reproduction-bundles"
+						]
+					},
+					{
+						"group": "Learn a service",
+						"pages": [
+							"proxy-and-learn",
+							"proxy-api-calls",
+							"proxy-learning-output",
+							"proxy-evidence-and-limits"
+						]
+					},
+					{
+						"group": "Issues and reporting",
+						"pages": ["issue-reporting", "reporting-endpoint"]
 					}
 				]
 			},
 			{
-				"group": "Run a service",
-				"pages": [
-					"service-lifecycle",
-					{
-						"group": "Access and profiles",
-						"pages": [
-							"principals",
-							"service-setup",
-							"service-profiles",
-							"authentication-emulation"
-						]
-					},
-					{
-						"group": "Call operations",
-						"pages": [
-							"run-operation",
-							"http-contract",
-							"request-encoding",
-							"request-validation",
-							"response-synthesis"
-						]
-					}
-				]
-			},
-			{
-				"group": "Test an application",
-				"pages": [
-					"local-testing",
-					"ci-testing",
-					"github-actions",
-					"docker",
-					"conformance-suites"
-				]
-			},
-			{
-				"group": "Inspect a service",
-				"pages": [
-					"simile-web",
-					"state-and-replay",
-					"state-inspection",
-					"reproduction-bundles"
-				]
-			},
-			{
-				"group": "Author a service",
+				"group": "Build a service",
 				"pages": [
 					"define-a-service",
 					{
@@ -127,19 +125,6 @@
 				]
 			},
 			{
-				"group": "Learn a service",
-				"pages": [
-					"proxy-and-learn",
-					"proxy-api-calls",
-					"proxy-learning-output",
-					"proxy-evidence-and-limits"
-				]
-			},
-			{
-				"group": "Issues and reporting",
-				"pages": ["issue-reporting", "reporting-endpoint"]
-			},
-			{
 				"group": "Reference",
 				"pages": [
 					"cli-reference",
@@ -160,7 +145,27 @@
 							"constraint-lifecycle-template"
 						]
 					},
-					"fault-glossary"
+					"fault-glossary",
+					{
+						"group": "Release notes",
+						"pages": [
+							"release-notes",
+							"release-notes/v0-5-0",
+							"release-notes/v0-4-0",
+							"release-notes/v0-3-0",
+							"release-notes/v0-2-0",
+							"release-notes/v0-1-1",
+							"release-notes/v0-1-0"
+						]
+					},
+					{
+						"group": "Adoption and trust",
+						"pages": [
+							"design-trade-offs",
+							"hosted-test-environment-risks",
+							"test-infrastructure-costs"
+						]
+					}
 				]
 			},
 			{
