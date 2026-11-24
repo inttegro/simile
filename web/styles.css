@@ -1179,6 +1179,17 @@ html[data-theme="light"] .nav-link.is-active .icon,
 html[data-theme="light"] .subtabs button.is-active,
 html[data-theme="light"] .subtabs > a.is-active { color: var(--accent); }
 
+html[data-theme="light"] .nav-count {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+html[data-theme="light"] .nav-link.is-active .nav-count {
+  background: var(--accent-muted);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  color: var(--accent);
+}
+
 html[data-theme="light"] .button,
 html[data-theme="light"] .badge,
 html[data-theme="light"] .live-pill,
