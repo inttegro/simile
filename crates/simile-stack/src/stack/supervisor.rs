@@ -163,6 +163,13 @@ impl Stack {
         })
     }
 
+    /// Read the current instant on the Stack's authoritative logical timeline.
+    pub fn now(&self) -> Result<LogicalTime> {
+        self.clock
+            .now()
+            .map_err(|error| ResourceError::new(ErrorCode::Unavailable, error.to_string()))
+    }
+
     pub fn reset(&mut self) {
         self.clock = Clock::from_snapshot(self.initial_clock);
         self.db = DbEngine::default();

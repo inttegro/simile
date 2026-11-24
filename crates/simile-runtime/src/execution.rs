@@ -47,6 +47,11 @@ pub struct ExecutionOptions<'a> {
     pub replay: Option<ReplayIdentity<'a>>,
     /// Reproduce response synthesis exactly when present.
     pub response_seed: Option<u64>,
+    /// Authoritative service time used for server-owned response timestamps.
+    ///
+    /// Adapters that do not own a logical clock leave this unset. The service supervisor supplies
+    /// its Stack clock so lifecycle timestamps and committed state share one timeline.
+    pub logical_time_milliseconds: Option<i64>,
 }
 
 /// The validated request and immediate response for an operation.

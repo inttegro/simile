@@ -5,8 +5,39 @@ use simile_runtime::{ExecutionOptions, OperationCall, OperationValueCall, Replay
 use simile_runtime::{IncomingParameters, validate_parameters};
 use simile_service::{DependencyReadiness, Service};
 use simile_stack::{
-    CommandMetadata, DbCommand, DbResult, ResourceAddress, Stack, StackCommand, StackResult,
+    CommandMetadata, DbCommand, DbResult, LogicalTime, MemoryStateStore, ResourceAddress, Stack,
+    StackCommand, StackResult, StateStore,
 };
+use std::sync::Arc;
+
+#[test]
+fn service_responses_use_the_stack_logical_time_for_operation_timestamps() {
+    let artifact = timestamped_artifact();
+    let store = Arc::new(MemoryStateStore::default());
+    let stack = Stack::builder(LogicalTime::from_unix_millis(1_700_000_000_123))
+        .build()
+        .unwrap_or_else(|error| panic!("{error}"));
+    store
+        .save(&stack.snapshot().unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let service = Service::with_store(artifact, store).unwrap_or_else(|error| panic!("{error}"));
+
+    let execution = service
+        .execute(OperationCall {
+            operation: "POST /prices/create",
+            content_type: None,
+            body: &[],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        execution
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/created_at")),
+        Some(&serde_json::json!("2023-11-14T22:13:20.123Z"))
+    );
+}
 
 #[test]
 fn durable_outbox_survives_restart_and_acknowledgement() {
@@ -56,6 +87,47 @@ fn durable_outbox_survives_restart_and_acknowledgement() {
     );
     drop(service);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_state_repairs_artifact_provenance_after_a_compatible_refresh() {
+    let path = std::env::temp_dir().join(format!(
+        "simile-service-refresh-{}-{}.redb",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let original = deferred_work_artifact_with_version("1.0.0");
+    let refreshed = deferred_work_artifact_with_version("1.0.1");
+    assert_ne!(
+        original.summary().payload_sha256,
+        refreshed.summary().payload_sha256
+    );
+
+    {
+        let service = Service::durable(original, &path).unwrap_or_else(|error| panic!("{error}"));
+        service
+            .execute(OperationCall {
+                operation: "POST /orders",
+                content_type: None,
+                body: &[],
+            })
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    {
+        let service = Service::durable(refreshed, &path).unwrap_or_else(|error| panic!("{error}"));
+        let leases = service
+            .lease_work(10, None)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].work().name(), "publish_order");
+    }
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.lock", path.display()));
 }
 
 #[test]
@@ -1144,6 +1216,47 @@ fn service_with_contract(openapi: &str, behavior: &str) -> simile_service::Servi
     simile_service::Service::memory(artifact).unwrap_or_else(|error| panic!("{error}"))
 }
 
+fn timestamped_artifact() -> simile_artifact::Artifact {
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new(
+                "timestamps.yml",
+                r#"
+openapi: 3.1.0
+info: { title: Timestamped prices, version: 1.0.0 }
+paths:
+  /prices/create:
+    post:
+      operationId: createPrice
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [price]
+                properties:
+                  price:
+                    type: object
+                    additionalProperties: false
+                    required: [id, created, created_at]
+                    properties:
+                      id: { type: string, const: pr_clock }
+                      created: { type: integer, format: unix-time }
+                      created_at: { type: string, format: date-time }
+                      updated_at: { type: string, format: date-time }
+"#,
+            ),
+            modules: Vec::new(),
+            heuristic_policy: Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    decode(&encode(&compiled).unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
 fn artifact() -> simile_artifact::Artifact {
     let compiled = Compiler::new()
         .compile(CompileRequest {
@@ -1206,11 +1319,11 @@ behavior "createOrder" {
 }
 
 fn deferred_work_artifact() -> simile_artifact::Artifact {
-    let compiled = Compiler::new()
-        .compile(CompileRequest {
-            openapi: Source::new(
-                "orders.yml",
-                r#"
+    deferred_work_artifact_with_version("1.0.0")
+}
+
+fn deferred_work_artifact_with_version(version: &str) -> simile_artifact::Artifact {
+    let openapi = r#"
 openapi: 3.1.0
 info: { title: Durable orders, version: 1.0.0 }
 paths:
@@ -1227,8 +1340,11 @@ paths:
                 required: [id]
                 properties:
                   id: { type: string, pattern: '^ord_' }
-"#,
-            ),
+"#
+    .replace("version: 1.0.0", &format!("version: {version}"));
+    let compiled = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("orders.yml", &openapi),
             modules: vec![Source::new(
                 "orders.hcl",
                 r#"

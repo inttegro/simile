@@ -16,6 +16,10 @@ pub use redb::RedbStateStore;
 pub type StateStoreResult<T> = std::result::Result<T, StateStoreError>;
 
 /// Provenance attached when a component is owned by a compiled service.
+///
+/// The service identity is a hard ownership boundary. The artifact digest records which compiled
+/// service last wrote the snapshot, but it is not a compatibility boundary: Stack's format and
+/// protocol versions govern whether persisted engine state can be decoded safely.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StateIdentity {
     pub service_identity: String,

@@ -120,7 +120,7 @@ impl RedbStateStore {
         })
     }
 
-    fn load_normalized(&self) -> StateStoreResult<Option<StackSnapshot>> {
+    fn load_normalized(&self) -> StateStoreResult<Option<(StackSnapshot, PersistedMetadata)>> {
         let transaction = self.database.begin_read().map_err(database_error)?;
         let metadata_table = transaction.open_table(METADATA).map_err(database_error)?;
         let Some(metadata) = metadata_table
@@ -189,8 +189,26 @@ impl RedbStateStore {
             counters,
             clocks,
         })
-        .map(Some)
+        .map(|snapshot| Some((snapshot, metadata)))
         .map_err(StateStoreError::Decode)
+    }
+
+    fn refresh_identity(&self, metadata: &PersistedMetadata) -> StateStoreResult<()> {
+        let Some(identity) = self.identity.as_ref() else {
+            return Ok(());
+        };
+        if metadata.service_identity.as_deref() == Some(identity.service_identity.as_str())
+            && metadata.artifact_digest.as_deref() == Some(identity.artifact_digest.as_str())
+        {
+            return Ok(());
+        }
+
+        let mut refreshed = metadata.clone();
+        refreshed.service_identity = Some(identity.service_identity.clone());
+        refreshed.artifact_digest = Some(identity.artifact_digest.clone());
+        let transaction = self.database.begin_write().map_err(database_error)?;
+        put_single_record(&transaction, METADATA, &refreshed)?;
+        transaction.commit().map_err(database_error)
     }
 
     fn load_legacy(&self) -> StateStoreResult<Option<StackSnapshot>> {
@@ -267,7 +285,8 @@ impl RedbStateStore {
 
 impl StateStore for RedbStateStore {
     fn load(&self) -> StateStoreResult<Option<StackSnapshot>> {
-        if let Some(snapshot) = self.load_normalized()? {
+        if let Some((snapshot, metadata)) = self.load_normalized()? {
+            self.refresh_identity(&metadata)?;
             return Ok(Some(snapshot));
         }
         let Some(snapshot) = self.load_legacy()? else {
@@ -361,12 +380,10 @@ fn validate_metadata(
                 expected: expected.service_identity.clone(),
             });
         }
-        if metadata.artifact_digest.as_deref() != Some(expected.artifact_digest.as_str()) {
-            return Err(StateStoreError::Identity {
-                field: "artifact digest",
-                expected: expected.artifact_digest.clone(),
-            });
-        }
+        // Artifact digests are provenance, not a persistence compatibility boundary. A contract or
+        // behavior edit can change the compiled artifact without changing Stack's versioned engine
+        // state. After the snapshot decodes successfully, the store refreshes its provenance and
+        // the owning service initializes any newly declared resources.
     }
     Ok(())
 }
@@ -526,8 +543,8 @@ mod tests {
     use simile_spec::ResourceKind;
 
     use super::{
-        CLOCK, COUNTERS, CURRENT_KEY, JOURNAL, LEGACY_STATE, LegacyStoredState, METADATA, REPLAYS,
-        RESOURCES, RedbStateStore, encode,
+        CLOCK, COUNTERS, CURRENT_KEY, JOURNAL, LEGACY_STATE, LegacyStoredState, METADATA,
+        PersistedMetadata, REPLAYS, RESOURCES, RedbStateStore, decode, encode,
     };
     use crate::{
         CommandMetadata, DbCommand, DbResult, LogicalTime, ResourceAddress, Stack, StackCommand,
@@ -753,8 +770,8 @@ mod tests {
     }
 
     #[test]
-    fn service_identity_and_artifact_digest_are_verified() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn service_identity_is_verified_and_artifact_digest_is_refreshable()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = temporary_path("identity");
         let resource = ResourceAddress::new(ResourceKind::Db, "products")?;
         let stack = Stack::builder(LogicalTime::UNIX_EPOCH)
@@ -768,14 +785,37 @@ mod tests {
             store.save(&stack.snapshot()?)?;
         }
 
-        let store = RedbStateStore::open_with_identity(
-            &path,
-            StateIdentity::new("stripe", "sha256:artifact-one"),
-        )?;
-        assert!(matches!(
-            store.load(),
-            Err(StateStoreError::Identity { .. })
-        ));
+        {
+            let store = RedbStateStore::open_with_identity(
+                &path,
+                StateIdentity::new("stripe", "sha256:artifact-one"),
+            )?;
+            assert!(matches!(
+                store.load(),
+                Err(StateStoreError::Identity { .. })
+            ));
+        }
+
+        {
+            let store = RedbStateStore::open_with_identity(
+                &path,
+                StateIdentity::new("inttegro", "sha256:artifact-two"),
+            )?;
+            let Some(_snapshot) = store.load()? else {
+                return Err(std::io::Error::other("persisted state is missing").into());
+            };
+
+            let transaction = store.database.begin_read()?;
+            let table = transaction.open_table(METADATA)?;
+            let Some(metadata) = table.get(CURRENT_KEY)? else {
+                return Err(std::io::Error::other("persisted metadata is missing").into());
+            };
+            let metadata = decode::<PersistedMetadata>(metadata.value())?;
+            assert_eq!(
+                metadata.artifact_digest.as_deref(),
+                Some("sha256:artifact-two")
+            );
+        }
 
         cleanup(&path);
         Ok(())

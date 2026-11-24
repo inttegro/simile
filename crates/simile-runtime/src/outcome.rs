@@ -4,6 +4,7 @@ use crate::response::{
     synthesize_response_with_candidate_context, synthesize_response_with_context,
     synthesize_response_with_seed_and_context,
 };
+use crate::response_time;
 use crate::{
     Error, ExecutionOptions, OperationOutcome, ResponseSynthesisRequest, Result, ValidatedBody,
 };
@@ -32,6 +33,9 @@ pub(crate) fn produce(
         body: selected.as_ref().and_then(ArtifactOutcome::body),
     };
     let selected_has_body = selected.as_ref().and_then(ArtifactOutcome::body).is_some();
+    let response_time = artifact
+        .operation(operation_key)
+        .and_then(|operation| response_time::plan(operation, options.logical_time_milliseconds));
     let response = if selected_has_body {
         match options.response_seed {
             Some(seed) => synthesize_response_with_seed_and_context(
@@ -39,10 +43,14 @@ pub(crate) fn produce(
                 synthesis,
                 seed,
                 options.response_request_body,
+                response_time.as_ref(),
             ),
-            None => {
-                synthesize_response_with_context(artifact, synthesis, options.response_request_body)
-            }
+            None => synthesize_response_with_context(
+                artifact,
+                synthesis,
+                options.response_request_body,
+                response_time.as_ref(),
+            ),
         }
     } else if let Some(candidate) = options.response_body {
         synthesize_response_with_candidate_context(
@@ -51,6 +59,7 @@ pub(crate) fn produce(
             options.response_request_body,
             candidate,
             options.response_seed,
+            response_time.as_ref(),
         )
     } else {
         match options.response_seed {
@@ -59,10 +68,14 @@ pub(crate) fn produce(
                 synthesis,
                 seed,
                 options.response_request_body,
+                response_time.as_ref(),
             ),
-            None => {
-                synthesize_response_with_context(artifact, synthesis, options.response_request_body)
-            }
+            None => synthesize_response_with_context(
+                artifact,
+                synthesis,
+                options.response_request_body,
+                response_time.as_ref(),
+            ),
         }
     }?;
     Ok(OperationOutcome::new(

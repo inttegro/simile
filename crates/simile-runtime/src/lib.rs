@@ -11,6 +11,7 @@ mod parameter;
 mod protocol;
 mod replay;
 mod response;
+mod response_time;
 mod webhook;
 
 use serde_json::Value;

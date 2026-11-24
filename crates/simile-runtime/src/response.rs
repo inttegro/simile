@@ -3,6 +3,7 @@ use simile_artifact::{Artifact, ArtifactOperation, ArtifactResponse};
 use simile_schema::{BoundResponseBody, RequestValues};
 use simile_spec::{ParameterLocation, ResponseStatus};
 
+use crate::response_time::ResponseTimePlan;
 use crate::{Error, Result, ValidatedBody, ValidatedParameters, codec};
 
 /// The strongest proof Simile established for a synthesized response.
@@ -81,7 +82,7 @@ pub fn synthesize_response(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, rand::random(), None, None)
+    synthesize_response_inner(artifact, request, rand::random(), None, None, None)
 }
 
 /// Synthesize a reproducible response from a caller-provided seed.
@@ -90,13 +91,14 @@ pub fn synthesize_response_with_seed(
     request: ResponseSynthesisRequest<'_>,
     seed: u64,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, seed, None, None)
+    synthesize_response_inner(artifact, request, seed, None, None, None)
 }
 
 pub(crate) fn synthesize_response_with_context(
     artifact: &Artifact,
     request: ResponseSynthesisRequest<'_>,
     response_request_body: Option<&Value>,
+    response_time: Option<&ResponseTimePlan>,
 ) -> Result<SynthesizedResponse> {
     synthesize_response_inner(
         artifact,
@@ -104,6 +106,7 @@ pub(crate) fn synthesize_response_with_context(
         rand::random(),
         response_request_body,
         None,
+        response_time,
     )
 }
 
@@ -113,6 +116,7 @@ pub(crate) fn synthesize_response_with_candidate_context(
     response_request_body: Option<&Value>,
     response_candidate: &Value,
     seed: Option<u64>,
+    response_time: Option<&ResponseTimePlan>,
 ) -> Result<SynthesizedResponse> {
     synthesize_response_inner(
         artifact,
@@ -120,6 +124,7 @@ pub(crate) fn synthesize_response_with_candidate_context(
         seed.unwrap_or_else(rand::random),
         response_request_body,
         Some(response_candidate),
+        response_time,
     )
 }
 
@@ -128,8 +133,16 @@ pub(crate) fn synthesize_response_with_seed_and_context(
     request: ResponseSynthesisRequest<'_>,
     seed: u64,
     response_request_body: Option<&Value>,
+    response_time: Option<&ResponseTimePlan>,
 ) -> Result<SynthesizedResponse> {
-    synthesize_response_inner(artifact, request, seed, response_request_body, None)
+    synthesize_response_inner(
+        artifact,
+        request,
+        seed,
+        response_request_body,
+        None,
+        response_time,
+    )
 }
 
 fn synthesize_response_inner(
@@ -138,6 +151,7 @@ fn synthesize_response_inner(
     seed: u64,
     response_request_body: Option<&Value>,
     response_candidate: Option<&Value>,
+    response_time: Option<&ResponseTimePlan>,
 ) -> Result<SynthesizedResponse> {
     let operation =
         artifact
@@ -178,12 +192,15 @@ fn synthesize_response_inner(
     };
     synthesize_body(
         request,
-        status,
-        headers,
-        body,
-        seed,
-        response_request_body,
-        response_candidate,
+        BodySynthesisContext {
+            status,
+            headers,
+            body,
+            seed,
+            response_request_body,
+            response_candidate,
+            response_time,
+        },
     )
 }
 
@@ -255,15 +272,29 @@ fn verify_request_context(request: ResponseSynthesisRequest<'_>) -> Result<()> {
     Ok(())
 }
 
-fn synthesize_body(
-    request: ResponseSynthesisRequest<'_>,
+struct BodySynthesisContext<'a> {
     status: u16,
     headers: Vec<(String, String)>,
-    body: BoundResponseBody<'_>,
+    body: BoundResponseBody<'a>,
     seed: u64,
-    response_request_body: Option<&Value>,
-    response_candidate: Option<&Value>,
+    response_request_body: Option<&'a Value>,
+    response_candidate: Option<&'a Value>,
+    response_time: Option<&'a ResponseTimePlan>,
+}
+
+fn synthesize_body(
+    request: ResponseSynthesisRequest<'_>,
+    context: BodySynthesisContext<'_>,
 ) -> Result<SynthesizedResponse> {
+    let BodySynthesisContext {
+        status,
+        headers,
+        body,
+        seed,
+        response_request_body,
+        response_candidate,
+        response_time,
+    } = context;
     let content_type = request
         .content_type
         .map(str::trim)
@@ -291,7 +322,8 @@ fn synthesize_body(
     } else {
         ResponseSoundness::SchemaOnly
     };
-    let value = if let Some(body) = request.body {
+    let exact_body = request.body.is_some();
+    let mut value = if let Some(body) = request.body {
         // Why: provider-authored outcomes remain exact except for relationships the provider
         // explicitly declared; this preserves fidelity while still reflecting caller-owned data.
         request_values.as_ref().map_or_else(
@@ -318,6 +350,19 @@ fn synthesize_body(
         )
     }
     .map_err(|source| Error::ResponseSynthesis { source })?;
+    if !exact_body && (200..300).contains(&status) {
+        if let Some(response_time) = response_time {
+            value = selected
+                .establish_timestamps(
+                    &value,
+                    request_values.as_ref(),
+                    response_time.logical_time_milliseconds,
+                    &response_time.materialize,
+                    &response_time.refresh,
+                )
+                .map_err(|source| Error::ResponseSynthesis { source })?;
+        }
+    }
     let issues = selected.validate(&value);
     if !issues.is_empty() {
         return Err(Error::InvalidResponseBody { issues });

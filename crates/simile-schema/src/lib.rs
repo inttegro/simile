@@ -5,6 +5,7 @@ mod error;
 mod relation;
 mod soundness;
 mod synthesize;
+mod timestamp;
 mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -480,6 +481,56 @@ impl<'a> BoundMediaType<'a> {
         // turn an otherwise sound operation into an emulator-only 500 response.
         let completed = self.schemas.project(schema, &baseline, body);
         self.project_from(completed, request, false)
+    }
+
+    /// Establish server-owned response timestamps from one authoritative logical instant.
+    ///
+    /// `materialize` names timestamp properties that the operation itself makes meaningful, even
+    /// when the response schema marks them optional. `refresh` updates matching properties only
+    /// when synthesis or stored state already emitted them. Explicit request-to-response targets
+    /// remain caller-owned and are never replaced.
+    pub fn establish_timestamps(
+        &self,
+        body: &Value,
+        request: Option<&RequestValues<'_>>,
+        logical_time_milliseconds: i64,
+        materialize: &BTreeSet<String>,
+        refresh: &BTreeSet<String>,
+    ) -> std::result::Result<Value, SynthesisError> {
+        let Some(schema) = self.selected.schema() else {
+            return Ok(body.clone());
+        };
+        let mut protected = request
+            .and_then(|request| {
+                self.selected
+                    .relation()
+                    .map(|relation| relation.protected_paths(request))
+            })
+            .unwrap_or_default();
+        let mut candidate = body.clone();
+        let changed = timestamp::apply(
+            self.schemas,
+            schema,
+            &mut candidate,
+            logical_time_milliseconds,
+            materialize,
+            refresh,
+            &protected,
+        )?;
+        if changed.is_empty() {
+            return Ok(candidate);
+        }
+        protected.extend(changed);
+        self.schemas
+            .establish_preserving(schema, &mut candidate, &protected);
+        let issues = self.schemas.validate(schema, &candidate);
+        if !issues.is_empty() {
+            return Err(SynthesisError::Exhausted { issues });
+        }
+        if let (Some(relation), Some(request)) = (self.selected.relation(), request) {
+            relation.prove(request, &candidate)?;
+        }
+        Ok(candidate)
     }
 
     fn project_from(

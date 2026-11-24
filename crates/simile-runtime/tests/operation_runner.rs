@@ -45,6 +45,122 @@ fn runs_an_operation_through_validation_and_response_synthesis() {
 }
 
 #[test]
+fn anchors_server_owned_timestamps_to_the_logical_operation_time() {
+    let artifact = timestamp_artifact();
+    let logical_time_milliseconds = 1_700_000_000_123;
+    let expected = json!("2023-11-14T22:13:20.123Z");
+
+    let create = Runtime::new(&artifact)
+        .execute_with_options(
+            OperationCall {
+                operation: "POST /prices/create",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                logical_time_milliseconds: Some(logical_time_milliseconds),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        create
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/created_at")),
+        Some(&expected)
+    );
+    assert_eq!(
+        create
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/created")),
+        Some(&json!(1_700_000_000))
+    );
+    assert!(
+        create
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/updated_at"))
+            .is_none()
+    );
+
+    let update = Runtime::new(&artifact)
+        .execute_with_options(
+            OperationCall {
+                operation: "POST /prices/update",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                logical_time_milliseconds: Some(logical_time_milliseconds),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        update
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/updated_at")),
+        Some(&expected)
+    );
+
+    let archive = Runtime::new(&artifact)
+        .execute_with_options(
+            OperationCall {
+                operation: "POST /prices/archive",
+                content_type: None,
+                body: &[],
+            },
+            ExecutionOptions {
+                logical_time_milliseconds: Some(logical_time_milliseconds),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        archive
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/archived_at")),
+        Some(&expected)
+    );
+    assert_eq!(
+        archive
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/price/updated_at")),
+        Some(&expected)
+    );
+}
+
+#[test]
+fn explicit_request_timestamp_bindings_override_the_service_clock() {
+    let artifact = timestamp_artifact();
+    let result = Runtime::new(&artifact)
+        .execute_with_options(
+            OperationCall {
+                operation: "POST /events/create",
+                content_type: Some("application/json"),
+                body: br#"{"created_at":"2020-01-02T03:04:05Z"}"#,
+            },
+            ExecutionOptions {
+                logical_time_milliseconds: Some(1_700_000_000_123),
+                ..ExecutionOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        result
+            .response()
+            .value()
+            .and_then(|body| body.pointer("/created_at")),
+        Some(&json!("2020-01-02T03:04:05Z"))
+    );
+}
+
+#[test]
 fn rejects_an_invalid_request_before_producing_an_outcome() {
     let artifact = artifact();
     let result = Runtime::new(&artifact).execute(OperationCall {
@@ -144,6 +260,7 @@ fn keeps_scenario_response_controls_out_of_the_operation_call() {
                 response_body: None,
                 response_request_body: None,
                 parameters: None,
+                logical_time_milliseconds: None,
             },
         )
         .unwrap_or_else(|error| panic!("{error}"));
@@ -639,6 +756,92 @@ profile "revoked_app" {
         .compile(CompileRequest {
             openapi: Source::new("auth.yaml", openapi),
             modules: vec![Source::new("auth.hcl", behavior)],
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn timestamp_artifact() -> Artifact {
+    let openapi = r#"
+openapi: 3.1.0
+info: { title: Timestamped resources, version: 1.0.0 }
+paths:
+  /prices/create:
+    post:
+      operationId: createPrice
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceResponse' }
+  /prices/update:
+    post:
+      operationId: updatePrice
+      responses:
+        '200':
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceResponse' }
+  /prices/archive:
+    post:
+      operationId: archivePrice
+      responses:
+        '200':
+          description: archived
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceResponse' }
+  /events/create:
+    post:
+      operationId: createEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [created_at]
+              properties:
+                created_at: { type: string, format: date-time }
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [created_at]
+                properties:
+                  created_at: { type: string, format: date-time }
+              x-simile-from-request:
+                bindings:
+                  - { from: /created_at, to: /created_at }
+components:
+  schemas:
+    PriceResponse:
+      type: object
+      additionalProperties: false
+      required: [price]
+      properties:
+        price:
+          type: object
+          additionalProperties: false
+          required: [id, created, created_at]
+          properties:
+            id: { type: string, const: pr_clock }
+            created: { type: integer, format: unix-time }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+            archived_at: { type: string, format: date-time }
+"#;
+    let service = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("timestamps.yaml", openapi),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));
