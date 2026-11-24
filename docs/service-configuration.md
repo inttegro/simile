@@ -248,7 +248,9 @@ or tests.
 │   ├── report.json
 │   └── case.simile-repro/
 ├── state/
-│   ├── services/NAME.redb
+│   ├── services/
+│   │   ├── NAME.redb
+│   │   └── NAME.exchanges.redb
 │   └── stack/KIND/RESOURCE_FINGERPRINT.redb
 ├── locks/
 └── tmp/
@@ -262,7 +264,9 @@ Updates compile a complete revision before advancing `current`. A compilation fa
 active revision, and older revisions remain available for recovery. Use `simile update` for normal
 refreshes; `register --force` explicitly replaces an existing registration. Runtime and Stack state
 live outside immutable revisions under `state/`, allowing restarts and updates to resume persisted
-work. Simile verifies persisted service state against the compiled artifact before restoration.
+work. Each service keeps Stack state in `NAME.redb` and sanitized console exchange history in
+`NAME.exchanges.redb`. Simile verifies persisted service state against the compiled artifact before
+restoration.
 `locks/` supports registry coordination, and `tmp/` holds staging data during atomic installation.
 
 Reporting preferences contain user-owned consent and contact information, so they use private file

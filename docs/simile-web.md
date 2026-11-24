@@ -85,7 +85,7 @@ The views have two evidence sources:
 | Exchanges, State, Deferred work, and runtime charts | The running service's loopback inspector |
 
 This distinction matters when diagnosing an emulation. The artifact explains what the service can
-do; runtime views show what this process has done.
+do; runtime views show what the service has done and retained locally.
 
 ### Operations
 
@@ -108,8 +108,9 @@ Representative payloads explain the compiled contract. Calls made by your applic
 
 ### Exchanges and state
 
-**Exchanges** records calls handled by the local emulator. **State** reads the running Stack and its
-payload-free causal journal without opening the state database while the service owns it.
+**Exchanges** records calls handled by the local emulator and restores them when the service starts
+again. **State** reads the running Stack and its payload-free causal journal without opening the
+state database while the service owns it.
 
 <img
   className="block dark:hidden"
@@ -139,8 +140,9 @@ Runtime inspection is exposed only by services listening on a loopback address. 
 must also originate from a loopback origin.
 
 The inspector redacts sensitive JSON fields, headers, cookies, path parameters, and query
-parameters. Opaque bodies are omitted. Bodies above 256 KiB are marked as truncated, and the
-in-memory exchange buffer keeps at most 200 entries.
+parameters. Opaque bodies are omitted, and bodies above 256 KiB are marked as truncated. Sanitized
+exchanges remain in `$SIMILE_HOME/state/services/NAME.exchanges.redb` across restarts until you use
+**Clear history**. The store has no automatic retention limit.
 
 Response bodies and explicit State values can still contain application data. Keep the service and
 console on a machine you trust.

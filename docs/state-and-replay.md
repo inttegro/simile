@@ -4,11 +4,12 @@ description: Understand stable operation identity, durable backend state, and ex
 ---
 
 Independent calls should vary; identified calls should not invent a second result. Simile separates
-three concerns that are often collapsed into “state”:
+four concerns that are often collapsed into “state”:
 
 1. operation replay keeps an identified public call stable;
-2. Stack state persists declared backend consequences; and
-3. reproduction bundles preserve the evidence required to repeat one execution.
+2. Stack state persists declared backend consequences;
+3. exchange history preserves sanitized local inspection evidence; and
+4. reproduction bundles preserve the evidence required to repeat one execution.
 
 ## Operation replay
 
@@ -34,8 +35,19 @@ The file belongs to the registered service identity. After a compatible contract
 update, Simile restores the existing Stack state, initializes newly declared backends, and records
 the new artifact digest automatically. State with a different service identity, incompatible
 format or protocol, or invalid encoded data still fails safely. `simile remove NAME --confirm NAME`
-deletes both the registry entry and this durable state, but refuses while another process owns the
-state lock.
+deletes the registry entry, this durable state, and exchange history, but refuses while another
+process owns the state lock.
+
+## Durable exchange history
+
+A loopback service stores sanitized request and response evidence in
+`$SIMILE_HOME/state/services/NAME.exchanges.redb`. The browser and terminal consoles restore this
+history after a restart, so repeated testing can continue from the same record of observed calls.
+
+Exchange history has no automatic retention limit. Use **Clear history** in the console, or
+`DELETE /.simile/exchanges`, when you intend to remove it. Removing a registered service also
+deletes its exchange-history database. Request and response bodies keep the inspector's redaction
+and 256 KiB capture limit before they reach durable storage.
 
 ## Convention-inferred state
 

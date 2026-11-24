@@ -140,11 +140,11 @@ revision.
 simile remove inttegro --confirm inttegro
 ```
 
-Removal permanently deletes the named service's complete registry directory and
-`state/services/NAME.redb`. The `--confirm` value is required and must exactly match the service
-name. A missing or different value fails before the registry is changed. If a running process owns
-the state lock, removal fails rather than unlinking live state. Other services and the registry
-layout remain intact.
+Removal permanently deletes the named service's complete registry directory,
+`state/services/NAME.redb`, and `state/services/NAME.exchanges.redb`. The `--confirm` value is
+required and must exactly match the service name. A missing or different value fails before the
+registry is changed. If a running process owns the state lock, removal fails rather than unlinking
+live state. Other services and the registry layout remain intact.
 
 Stop a running service before removal. After removal, `simile start inttegro` fails until the
 service is registered again.
@@ -176,7 +176,8 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 │       │       └── service.similec
 ├── state/
 │   ├── services/
-│   │   └── inttegro.redb
+│   │   ├── inttegro.redb
+│   │   └── inttegro.exchanges.redb
 │   └── stack/
 │       └── KIND/
 │           └── RESOURCE_FINGERPRINT.redb
@@ -184,7 +185,8 @@ The default registry root is `~/.simile`; set `SIMILE_HOME` for CI isolation or 
 └── tmp/
 ```
 
-The service supervisor checkpoints the complete service-owned Stack under `state/services/`.
+The service supervisor checkpoints the complete service-owned Stack and sanitized exchange history
+under `state/services/`.
 Separately launched Stack component processes use `state/stack/`. Both use embedded redb and
 sidecar ownership locks; the registry revisions themselves remain immutable. `locks/` is reserved
 for broader registry coordination; installation currently relies on same-filesystem staging and

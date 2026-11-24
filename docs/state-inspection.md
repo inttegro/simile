@@ -44,7 +44,8 @@ opens the durable checkpoint when no service owns it. A running service instead 
 in-memory Stack through a read-only loopback inspector, so there is still only one state owner and
 the browser cannot observe a torn checkpoint.
 
-The live inspector provides reserved inspection and local-control endpoints:
+The live inspector provides reserved inspection and local-control endpoints. Exchange history is
+backed by `$SIMILE_HOME/state/services/NAME.exchanges.redb`, so it survives service restarts:
 
 ```text
 GET /.simile/inspection
@@ -59,10 +60,11 @@ POST /.simile/reports/:id/submit
 
 The endpoints are registered only when the service listener is bound to a loopback address. Browser
 requests must also come from a loopback origin. State values are present because the Web state view
-is an explicit local inspection surface; journal entries remain payload-free. Exchange capture is
-bounded to 200 entries, redacts sensitive JSON request fields, omits opaque request payloads, and
-does not retain bodies larger than 256 KiB. Destructive controls require explicit confirmation,
-and state reset requires a `{"confirm":true}` request body in addition to the browser prompt.
+is an explicit local inspection surface; journal entries remain payload-free. Exchange capture
+redacts sensitive JSON request fields, omits opaque request payloads, and does not retain bodies
+larger than 256 KiB. History remains available until an operator clears it; there is no automatic
+entry limit. Destructive controls require explicit confirmation, and state reset requires a
+`{"confirm":true}` request body in addition to the browser prompt.
 
 Preparing an exchange report reproduces the captured exchange against the current service artifact
 and verifies the resulting evidence locally. Submission remains a separate explicit action, so
