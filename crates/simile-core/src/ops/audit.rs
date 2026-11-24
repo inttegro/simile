@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::Serialize;
+use simile_artifact::Artifact;
 use simile_spec::{EffectOrigin, ParameterLocation, ProfileStatus, SecurityScheme};
 
 use crate::{Error, Result};
@@ -60,6 +61,16 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         source,
     })?;
     let artifact = simile_artifact::decode(&encoded)?;
+    Ok(audit_artifact(&artifact))
+}
+
+/// Audit an already verified artifact without writing it to a temporary file.
+///
+/// Interactive applications keep the registered artifact in memory. Sharing
+/// this function prevents their fidelity view from drifting away from the
+/// command-line audit.
+#[must_use]
+pub fn audit_artifact(artifact: &Artifact) -> AuditReport {
     let summary = artifact.summary();
     let mut findings = Vec::new();
     let effects = artifact.effects().collect::<Vec<_>>();
@@ -252,7 +263,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         .iter()
         .filter(|finding| finding.severity == AuditSeverity::Warning)
         .count();
-    Ok(AuditReport {
+    AuditReport {
         service: summary.service,
         service_version: summary.service_version,
         artifact_sha256: summary.payload_sha256,
@@ -267,7 +278,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditReport> {
         errors,
         warnings,
         findings,
-    })
+    }
 }
 
 fn finding(

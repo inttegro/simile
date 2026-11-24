@@ -39,6 +39,24 @@ pub enum Error {
     #[error("could not initialize the service runtime")]
     AsyncRuntime(#[source] io::Error),
 
+    #[error("the interactive console requires a terminal; pass --web to use the browser console")]
+    ConsoleTerminalRequired,
+
+    #[error("could not read an interactive console event")]
+    ConsoleEvent(#[source] io::Error),
+
+    #[error("could not render the interactive console")]
+    ConsoleRender(#[source] io::Error),
+
+    #[error("no registered services; run `simile register NAME --config URL_OR_FILE` first")]
+    NoRegisteredServices,
+
+    #[error("{address} is already in use by something other than registered service `{service}`")]
+    ConsoleServiceConflict {
+        service: String,
+        address: std::net::SocketAddr,
+    },
+
     #[error(transparent)]
     Server(#[from] simile_server::Error),
 
@@ -60,6 +78,11 @@ impl Error {
             | Self::Prompt(_)
             | Self::Core(_)
             | Self::AsyncRuntime(_)
+            | Self::ConsoleTerminalRequired
+            | Self::ConsoleEvent(_)
+            | Self::ConsoleRender(_)
+            | Self::NoRegisteredServices
+            | Self::ConsoleServiceConflict { .. }
             | Self::Server(_)
             | Self::Learning(_) => false,
         }

@@ -114,6 +114,8 @@ pub enum Command {
     Audit(AuditArgs),
     /// Compile an OpenAPI, Smithy, or semantic TypeScript contract with optional HCL modules.
     Compile(CompileArgs),
+    /// Open the interactive workspace for registered local services.
+    Console(ConsoleArgs),
     /// Replay one or more executable examples as a conformance suite.
     Conformance(ConformanceArgs),
     /// Check the local environment and report actionable problems.
@@ -156,6 +158,16 @@ pub enum Command {
     Use(UseArgs),
     /// Print detailed build information.
     Version,
+}
+
+#[derive(Debug, Args)]
+pub struct ConsoleArgs {
+    /// Registered service to select when the console opens.
+    pub service: Option<String>,
+
+    /// Open the console in the system browser instead of the terminal.
+    #[arg(long)]
+    pub web: bool,
 }
 
 #[derive(Debug, Args)]

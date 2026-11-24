@@ -293,7 +293,7 @@ pub fn describe_service(
     ))
 }
 
-fn report(
+pub(super) fn report(
     service: &str,
     verbose: bool,
     artifact: &Artifact,

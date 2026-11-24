@@ -11,13 +11,13 @@ use tokio::task::JoinHandle;
 /// The server only observes failures. This worker owns consent lookup, deterministic
 /// reproduction, upgrade preflight, durable report storage, and submission. Keeping those
 /// responsibilities here prevents transport code from learning reporting policy.
-pub(super) struct AutomaticReporter {
+pub(crate) struct AutomaticReporter {
     sender: Option<mpsc::Sender<RuntimeReportCommand>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl AutomaticReporter {
-    pub(super) fn start(ctx: Context, service: &ops::PreparedService) -> Self {
+    pub(crate) fn start(ctx: Context, service: &ops::PreparedService) -> Self {
         let (sender, mut receiver) = mpsc::channel::<RuntimeReportCommand>(16);
         let service_name = service.report.service.clone();
         let artifact_bytes = service.artifact_bytes().to_vec();
@@ -115,11 +115,11 @@ impl AutomaticReporter {
         }
     }
 
-    pub(super) fn sender(&self) -> Option<mpsc::Sender<RuntimeReportCommand>> {
+    pub(crate) fn sender(&self) -> Option<mpsc::Sender<RuntimeReportCommand>> {
         self.sender.clone()
     }
 
-    pub(super) async fn finish(mut self) {
+    pub(crate) async fn finish(mut self) {
         drop(self.sender.take());
         if let Some(worker) = self.worker.take() {
             if let Err(error) = worker.await {

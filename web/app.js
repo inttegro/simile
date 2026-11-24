@@ -1,10 +1,13 @@
-const serviceData = window.INTTEGRO_SERVICE_DATA;
+const serviceData = window.SIMILE_SERVICE_DATA ?? window.INTTEGRO_SERVICE_DATA;
+const registeredServices = window.SIMILE_CONSOLE_SERVICES ?? [];
 
 if (!serviceData) {
-  throw new Error('Inttegro service data is missing. Run node scripts/build-inttegro-service.mjs.');
+  throw new Error('Simile console service data is missing.');
 }
 
-const localServiceUrl = `http://${serviceData.service.listen}`;
+const localServiceUrl = window.SIMILE_CONSOLE_RUNTIME ?? `http://${serviceData.service.listen}`;
+const serviceName = serviceData.service.name;
+const serviceSlug = serviceName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'service';
 const activeProfileName = serviceData.profiles.find((profile) => profile.status === 'active')?.name
   ?? serviceData.profiles[0]?.name
   ?? 'No active profile';
@@ -66,11 +69,21 @@ const requestFormats = {
   postman: { label: 'Copy Postman', toast: 'Postman collection' },
 };
 
-const createOrderOperation = serviceData.operations.find((operation) => operation.id === 'createOrder');
-const createOrderDetail = operationCatalog.createOrder;
-const orderRequest = createOrderDetail?.request ?? '{}';
-const orderResponse = createOrderDetail?.response ?? '{}';
-const orderResponseSize = `${orderResponse.length} bytes`;
+const representativeOperation = serviceData.operations.find((operation) => operation.id === 'createOrder')
+  ?? serviceData.operations[0]
+  ?? { id: 'operation', key: 'NO OPERATIONS', method: 'GET', path: '/' };
+const representativeOperationDetail = operationCatalog[representativeOperation.id] ?? {
+  request: '{}',
+  response: '{}',
+  requestSchema: 'No request body',
+  responseSchema: 'No response body',
+};
+const representativeRequest = representativeOperationDetail.request ?? '{}';
+const representativeResponse = representativeOperationDetail.response ?? '{}';
+const representativeResponseSize = `${representativeResponse.length} bytes`;
+const representativeOutcome = representativeOperation.outcomes?.find((outcome) => outcome.status === representativeOperation.success)
+  ?? representativeOperation.outcomes?.[0];
+const representativeOutcomeName = representativeOutcome?.name ?? 'success';
 
 const exchangeRows = [
   [exchangeId, 'POST', '/orders/create', 'createOrder', '200', '38ms', 'Delivered', '19:18:04'],
@@ -83,7 +96,7 @@ const exchangeRows = [
 
 const resourceGroups = {
   orders: [
-    { id: 'or_simile_requires_payment', status: 'requires_payment', summary: 'GHS 200.00', kind: 'ORDER', updated: 'Nov 22, 2026, 7:18:04 PM', createdBy: 'createOrder', body: orderResponse },
+    { id: 'or_simile_requires_payment', status: 'requires_payment', summary: 'GHS 200.00', kind: 'ORDER', updated: 'Nov 22, 2026, 7:18:04 PM', createdBy: 'createOrder', body: representativeResponse },
     { id: 'or_7tm2d18pz', status: 'paid', summary: 'GHS 580.00', kind: 'ORDER', updated: 'Nov 22, 2026, 6:52:14 PM', createdBy: 'createOrder', body: '{\n  "order": {\n    "id": "or_7tm2d18pz",\n    "number": "SIMILE-ORDER-002",\n    "status": "paid",\n    "total": { "currency": "ghs", "value": 58000 },\n    "paid_at": "2026-11-22T18:52:14Z"\n  }\n}' },
     { id: 'or_4wq1n68kf', status: 'cancelled', summary: 'USD 49.00', kind: 'ORDER', updated: 'Nov 22, 2026, 6:40:02 PM', createdBy: 'createOrder', body: '{\n  "order": {\n    "id": "or_4wq1n68kf",\n    "number": "SIMILE-ORDER-003",\n    "status": "cancelled",\n    "total": { "currency": "usd", "value": 4900 }\n  }\n}' },
   ],
@@ -214,9 +227,9 @@ function sanitizeReportValue(value) {
 function previewExchange() {
   return {
     id: route().detail || exchangeId,
-    operation: createOrderOperation.key,
-    method: createOrderOperation.method,
-    path: createOrderOperation.path,
+    operation: representativeOperation.key,
+    method: representativeOperation.method,
+    path: representativeOperation.path,
     startedAtMs: Date.parse('2026-11-22T19:18:04.114Z'),
     durationMicros: 38_000,
     status: 200,
@@ -224,12 +237,12 @@ function previewExchange() {
     profile: activeProfileName,
     request: {
       contentType: 'application/json',
-      body: JSON.parse(orderRequest),
+      body: JSON.parse(representativeRequest),
       truncated: false,
     },
     response: {
       contentType: 'application/json',
-      body: JSON.parse(orderResponse),
+      body: JSON.parse(representativeResponse),
       truncated: false,
     },
   };
@@ -353,7 +366,7 @@ async function generateExchangeReport() {
   const report = exchangeReport(exchange);
   if (!runtime.exchanges.some((candidate) => candidate.id === exchange.id)) {
     state.generatedExchangeReport = report;
-    window.location.hash = `exchanges/${exchange.id}/report`;
+    navigate(`/exchanges/${exchange.id}/report`);
     showToast('Preview reports cannot be verified by the runtime', 'warning');
     return;
   }
@@ -372,7 +385,7 @@ async function generateExchangeReport() {
       ? 'Track the submitted report by its report ID.'
       : 'Review the evidence, then submit it explicitly.';
     state.generatedExchangeReport = report;
-    window.location.hash = `exchanges/${exchange.id}/report`;
+    navigate(`/exchanges/${exchange.id}/report`);
     showToast(`Verified report ${runtimeReport.id}`, 'success');
   } catch (error) {
     showToast(error.message, 'warning');
@@ -453,7 +466,7 @@ async function resetRuntimeState() {
 }
 
 function downloadContract() {
-  downloadJson('inttegro-simile-contract.json', {
+  downloadJson(`${serviceSlug}-simile-contract.json`, {
     service: serviceData.service,
     artifact: serviceData.artifact,
     operations: serviceData.operations,
@@ -529,7 +542,7 @@ function icon(name, className = '') {
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
+  return String(value ?? '').replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 }
 
 function syntaxJson(value) {
@@ -611,10 +624,29 @@ function syntaxHcl(value) {
 }
 
 function route() {
-  const raw = window.location.hash.replace(/^#\/?/, '') || 'service';
-  const [section, detail, view] = raw.split('/');
+  const raw = window.location.pathname.replace(/^\/+|\/+$/g, '') || 'service';
+  const [section, detail, view] = raw.split('/').map((segment) => {
+    try { return decodeURIComponent(segment); } catch { return segment; }
+  });
   const known = navItems.some(([key]) => key === section) || section === 'settings' || section === 'docs';
   return { section: known ? section : 'service', detail, view };
+}
+
+function navigate(path) {
+  const destination = path.startsWith('/') ? path : `/${path}`;
+  if (window.location.pathname === destination && !window.location.search) return;
+  window.history.pushState(null, '', destination);
+  handleNavigation();
+}
+
+function handleNavigation() {
+  state.serviceTab = 'overview';
+  state.operationTab = 'contract';
+  state.selectedOutcome = null;
+  state.exchangeTab = 'timeline';
+  renderShell();
+  document.getElementById('workspace')?.focus({preventScroll:true});
+  window.scrollTo(0, 0);
 }
 
 function badge(text, tone = 'neutral') {
@@ -659,7 +691,7 @@ function renderShell() {
           <button class="environment" type="button" data-menu="environment"><span class="clock-face"></span>${state.environment}<span class="down-caret"></span></button>
           <button class="top-icon theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} mode" title="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} mode">${icon(state.theme === 'dark' ? 'sun' : 'moon')}</button>
           <button class="top-icon" type="button" data-action="terminal" aria-label="Open terminal">${icon('terminal')}</button>
-          <a class="top-icon" href="#docs" aria-label="Documentation">?</a>
+          <a class="top-icon" href="/docs" aria-label="Documentation">?</a>
           <button class="avatar" type="button" data-menu="profile">YA</button>
         </div>
       </div>
@@ -667,11 +699,11 @@ function renderShell() {
     <div class="product-nav">
       <div class="product-nav__inner">
         <nav class="primary-nav" aria-label="Primary navigation">
-          ${navItems.map(([key, label]) => `<a href="#${key}" class="nav-link ${current.section === key ? 'is-active' : ''}" ${current.section === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'deferred' ? '<span class="nav-count">0</span>' : ''}</a>`).join('')}
+          ${navItems.map(([key, label]) => `<a href="/${key}" class="nav-link ${current.section === key ? 'is-active' : ''}" ${current.section === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'deferred' ? '<span class="nav-count">0</span>' : ''}</a>`).join('')}
         </nav>
         <nav class="secondary-nav" aria-label="Support navigation">
-          <a href="#settings" class="nav-link ${current.section === 'settings' ? 'is-active' : ''}">${icon('settings')}<span>Settings</span></a>
-          <a href="#docs" class="nav-link ${current.section === 'docs' ? 'is-active' : ''}">${icon('docs')}<span>Docs</span></a>
+          <a href="/settings" class="nav-link ${current.section === 'settings' ? 'is-active' : ''}">${icon('settings')}<span>Settings</span></a>
+          <a href="/docs" class="nav-link ${current.section === 'docs' ? 'is-active' : ''}">${icon('docs')}<span>Docs</span></a>
         </nav>
       </div>
     </div>
@@ -880,7 +912,7 @@ function serviceOverviewPanel() {
   const fiveHundreds = analytics.exchanges.filter((exchange) => Number(exchange.status) >= 500).length;
   const empty = analytics.totalRequests === 0;
   return `
-    <div class="runtime-analytics-heading"><div><span class="eyebrow">Runtime telemetry</span><h2>Captured service activity</h2><p>${analytics.connected ? analytics.windowLabel : `Waiting for ${localServiceUrl}`}</p></div><a class="text-link" href="#exchanges">Inspect exchanges</a></div>
+    <div class="runtime-analytics-heading"><div><span class="eyebrow">Runtime telemetry</span><h2>Captured service activity</h2><p>${analytics.connected ? analytics.windowLabel : `Waiting for ${localServiceUrl}`}</p></div><a class="text-link" href="/exchanges">Inspect exchanges</a></div>
     <section class="analytics-grid" aria-label="Live service metrics">
       <article class="analytics-panel">
         <header class="analytics-panel__header"><div><span class="analytics-title">Total requests</span><div class="analytics-kpi"><strong>${analytics.totalRequests}</strong></div></div><span class="analytics-context">captured this session</span></header>
@@ -909,7 +941,7 @@ function serviceOverviewPanel() {
 
 function serviceOperationsPanel() {
   const rows = operationRows.slice(0, 12);
-  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Operations</h2><p>Callable operations compiled for this service.</p></div><a class="text-link" href="#operations">Open operations workspace</a></div><table class="data-table operations-table">${tableHead(['Method', 'Path', 'Operation ID', 'Success', 'Outcomes', 'Behavior'])}<tbody>${rows.map(([method, path, id, success, outcomes, behavior]) => `<tr class="clickable-row" data-operation="${id}" tabindex="0"><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><code>${id}</code></td><td><span class="status-code status-code--good">${success}</span></td><td>${outcomes}</td><td>${behavior}</td></tr>`).join('')}</tbody></table><footer class="table-footer"><span>Showing ${rows.length} of ${serviceData.metrics.operations} compiled operations</span><a class="text-link" href="#operations">View all operations</a></footer></section>`;
+  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Operations</h2><p>Callable operations compiled for this service.</p></div><a class="text-link" href="/operations">Open operations workspace</a></div><table class="data-table operations-table">${tableHead(['Method', 'Path', 'Operation ID', 'Success', 'Outcomes', 'Behavior'])}<tbody>${rows.map(([method, path, id, success, outcomes, behavior]) => `<tr class="clickable-row" data-operation="${id}" tabindex="0"><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><code>${id}</code></td><td><span class="status-code status-code--good">${success}</span></td><td>${outcomes}</td><td>${behavior}</td></tr>`).join('')}</tbody></table><footer class="table-footer"><span>Showing ${rows.length} of ${serviceData.metrics.operations} compiled operations</span><a class="text-link" href="/operations">View all operations</a></footer></section>`;
 }
 
 function serviceStatePanel() {
@@ -917,31 +949,31 @@ function serviceStatePanel() {
     return `<section class="runtime-boundary-panel runtime-boundary-panel--connected">
       <div class="runtime-boundary-panel__icon">${icon('state')}</div>
       <div><span class="eyebrow">Live runtime inspection</span><h2>${runtime.status.resources} resources and ${runtime.status.events} journal events</h2><p>The running service owns the checkpoint and exposes this read-only view directly from its in-memory Stack.</p></div>
-      <a class="button" href="#state">Inspect live state</a>
+      <a class="button" href="/state">Inspect live state</a>
     </section>`;
   }
   return `<section class="runtime-boundary-panel">
     <div class="runtime-boundary-panel__icon">${icon('state')}</div>
-    <div><span class="eyebrow">Runtime unavailable</span><h2>Start the Inttegro service to inspect state</h2><p>The interface will connect to the read-only loopback inspector at <code>${localServiceUrl}/.simile/inspection</code>.</p></div>
-    <a class="button" href="#state">View disconnected state UI</a>
+    <div><span class="eyebrow">Runtime unavailable</span><h2>Start ${serviceName} to inspect state</h2><p>The interface will connect to the read-only loopback inspector at <code>${localServiceUrl}/.simile/inspection</code>.</p></div>
+    <a class="button" href="/state">View disconnected state UI</a>
   </section>`;
 }
 
 function serviceFidelityPanel() {
   const metrics = serviceData.metrics;
-  return `<div class="service-fidelity-panel"><div class="quality-grid"><div><strong>${metrics.operations} / ${metrics.operations}</strong><span>Operations executable</span></div><div><strong>${metrics.providerAuthoredOutcomes}</strong><span>Provider-authored outcomes</span></div><div><strong>${metrics.schemaSynthesizedOutcomes}</strong><span>Schema-synthesized outcomes</span></div><div><strong>${metrics.errors}</strong><span>Audit errors</span></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Remaining gaps</h2><p>Current findings reported by the compiled artifact audit.</p></div><a class="text-link" href="#fidelity">Open fidelity workspace</a></div><table class="data-table">${tableHead(['Severity', 'Code', 'Subject', 'Finding'])}<tbody>${fidelityFindingRows(8)}</tbody></table></section></div>`;
+  return `<div class="service-fidelity-panel"><div class="quality-grid"><div><strong>${metrics.operations} / ${metrics.operations}</strong><span>Operations executable</span></div><div><strong>${metrics.providerAuthoredOutcomes}</strong><span>Provider-authored outcomes</span></div><div><strong>${metrics.schemaSynthesizedOutcomes}</strong><span>Schema-synthesized outcomes</span></div><div><strong>${metrics.errors}</strong><span>Audit errors</span></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Remaining gaps</h2><p>Current findings reported by the compiled artifact audit.</p></div><a class="text-link" href="/fidelity">Open fidelity workspace</a></div><table class="data-table">${tableHead(['Severity', 'Code', 'Subject', 'Finding'])}<tbody>${fidelityFindingRows(8)}</tbody></table></section></div>`;
 }
 
 function fidelityFindingRows(limit = serviceData.findings.length) {
   return serviceData.findings.slice(0, limit).map((finding) => {
     const operationId = operationIdByKey.get(finding.subject);
-    const subject = operationId ? `<a class="operation-link" href="#operations/${operationId}"><code>${finding.subject}</code></a>` : `<code>${finding.subject}</code>`;
+    const subject = operationId ? `<a class="operation-link" href="/operations/${operationId}"><code>${finding.subject}</code></a>` : `<code>${finding.subject}</code>`;
     return `<tr><td>${badge(finding.severity.toUpperCase(), finding.severity === 'error' ? 'danger' : 'warning')}</td><td><code>${finding.code}</code></td><td>${subject}</td><td>${finding.message}</td></tr>`;
   }).join('');
 }
 
 function operationsPage() {
-  return `<div class="page">${header('Operations', `${serviceData.metrics.operations} callable operations compiled from the active Inttegro contract`, `<button class="button" data-action="download-contract">${icon('download')}Export contract</button>`)}${toolbar({ search: 'Search paths, operation IDs, or domains', count: `${serviceData.metrics.operations} operations`, actions: `<button class="button button--compact" data-action="filter-operations">${icon('filter')}Filter</button>` })}<section class="table-panel"><table class="data-table operations-table">${tableHead(['Method', 'Path', 'Operation ID', 'Success', 'Outcomes', 'Behavior'])}<tbody>${operationRows.map(([method,path,id,success,outcomes,behavior]) => `<tr class="clickable-row" data-operation="${id}" tabindex="0"><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><code>${id}</code></td><td><span class="status-code status-code--good">${success}</span></td><td>${outcomes}</td><td>${behavior}</td></tr>`).join('')}</tbody></table><footer class="table-footer"><span data-list-result-count>Showing all ${serviceData.metrics.operations} compiled operations</span></footer></section></div>`;
+  return `<div class="page">${header('Operations', `${serviceData.metrics.operations} callable operations compiled from the active contract`, `<button class="button" data-action="download-contract">${icon('download')}Export contract</button>`)}${toolbar({ search: 'Search paths, operation IDs, or domains', count: `${serviceData.metrics.operations} operations`, actions: `<button class="button button--compact" data-action="filter-operations">${icon('filter')}Filter</button>` })}<section class="table-panel"><table class="data-table operations-table">${tableHead(['Method', 'Path', 'Operation ID', 'Success', 'Outcomes', 'Behavior'])}<tbody>${operationRows.map(([method,path,id,success,outcomes,behavior]) => `<tr class="clickable-row" data-operation="${id}" tabindex="0"><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><code>${id}</code></td><td><span class="status-code status-code--good">${success}</span></td><td>${outcomes}</td><td>${behavior}</td></tr>`).join('')}</tbody></table><footer class="table-footer"><span data-list-result-count>Showing all ${serviceData.metrics.operations} compiled operations</span></footer></section></div>`;
 }
 
 function preparedOperationRequest(operationId) {
@@ -1046,10 +1078,10 @@ async function copyPreparedRequest(format) {
 function operationDetail(operationId) {
   const row = operationRows.find(([, , id]) => id === operationId);
   const detail = operationCatalog[operationId];
-  if (!row || !detail) return `<div class="page">${header('Operation not found', 'The requested operation is not present in this compiled contract.')}<a class="button" href="#operations">Back to operations</a></div>`;
+  if (!row || !detail) return `<div class="page">${header('Operation not found', 'The requested operation is not present in this compiled contract.')}<a class="button" href="/operations">Back to operations</a></div>`;
   const [method, path, , success, outcomes, behavior] = row;
   const tabs = [['contract', 'Contract'], ['exchanges', 'Recent exchanges'], ['scenarios', 'Scenarios']];
-  return `<div class="page operation-page"><a class="back-link" href="#operations">‹ Back to Operations</a><div class="operation-heading"><div><div class="title-line">${methodBadge(method)}<h1>${operationId}</h1></div><p>${detail.summary}</p></div><div class="request-copy-control"><button class="button button--primary request-copy-action" type="button" data-action="copy-request">${icon('copy')}<span>${requestFormats[state.requestCopyFormat].label}</span></button><button class="button button--primary request-copy-menu-button" type="button" data-menu="copy-request" aria-label="Choose request copy format" aria-haspopup="menu" aria-expanded="false"><span class="down-caret" aria-hidden="true"></span></button></div></div><dl class="operation-summary"><div><dt>Path</dt><dd><code>${path}</code></dd></div><div><dt>Success</dt><dd><span class="status-code status-code--good">${success}</span></dd></div><div><dt>Behavior</dt><dd>${behavior}</dd></div><div><dt>Outcomes</dt><dd>${outcomes}</dd></div><div><dt>Request schema</dt><dd>${detail.requestSchema}</dd></div><div><dt>Response schema</dt><dd>${detail.responseSchema}</dd></div></dl>${localTabs(tabs, state.operationTab, 'operation-tab', 'Operation views', 'operation-tab-panel')}<div id="operation-tab-panel" class="local-tab-panel" role="tabpanel" aria-labelledby="operation-tab-${state.operationTab}-tab">${operationTabPanel(operationId, detail)}</div></div>`;
+  return `<div class="page operation-page"><a class="back-link" href="/operations">‹ Back to Operations</a><div class="operation-heading"><div><div class="title-line">${methodBadge(method)}<h1>${operationId}</h1></div><p>${detail.summary}</p></div><div class="request-copy-control"><button class="button button--primary request-copy-action" type="button" data-action="copy-request">${icon('copy')}<span>${requestFormats[state.requestCopyFormat].label}</span></button><button class="button button--primary request-copy-menu-button" type="button" data-menu="copy-request" aria-label="Choose request copy format" aria-haspopup="menu" aria-expanded="false"><span class="down-caret" aria-hidden="true"></span></button></div></div><dl class="operation-summary"><div><dt>Path</dt><dd><code>${path}</code></dd></div><div><dt>Success</dt><dd><span class="status-code status-code--good">${success}</span></dd></div><div><dt>Behavior</dt><dd>${behavior}</dd></div><div><dt>Outcomes</dt><dd>${outcomes}</dd></div><div><dt>Request schema</dt><dd>${detail.requestSchema}</dd></div><div><dt>Response schema</dt><dd>${detail.responseSchema}</dd></div></dl>${localTabs(tabs, state.operationTab, 'operation-tab', 'Operation views', 'operation-tab-panel')}<div id="operation-tab-panel" class="local-tab-panel" role="tabpanel" aria-labelledby="operation-tab-${state.operationTab}-tab">${operationTabPanel(operationId, detail)}</div></div>`;
 }
 
 function operationTabPanel(operationId, detail) {
@@ -1081,7 +1113,7 @@ function outcomeDetail(outcome) {
     : outcome.provenance === 'provider_authored'
       ? 'This outcome is provider-authored and selected through an explicit behavior or scenario.'
       : 'This response is derived from a reviewed OpenAPI example.';
-  const body = outcome.example === null
+  const body = outcome.example == null
     ? `<div class="outcome-empty-body">No response body is declared for this outcome.</div>`
     : codePanel('Representative response body', outcome.example, { copy: `${outcome.name} response`, className: 'outcome-response-code' });
   return `<section class="outcome-detail">
@@ -1103,14 +1135,14 @@ function outcomeDetail(outcome) {
 function operationExchangesPanel(operationId) {
   const rows = displayedExchangeRows().filter(([, , , operation]) => operation === operationId);
   if (!rows.length) return `<section class="empty-state">${icon('exchanges')}<h2>No recorded exchanges</h2><p>This operation has not handled a request in the current local session.</p></section>`;
-  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Recent exchanges</h2><p>Requests handled by <code>${operationId}</code>.</p></div><a class="text-link" href="#exchanges">Open exchange workspace</a></div>${exchangeTable(rows, true, true)}</section>`;
+  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Recent exchanges</h2><p>Requests handled by <code>${operationId}</code>.</p></div><a class="text-link" href="/exchanges">Open exchange workspace</a></div>${exchangeTable(rows, true, true)}</section>`;
 }
 
 function operationScenariosPanel(operationId) {
   const outcomeNames = new Set(serviceData.operations.find((operation) => operation.id === operationId)?.outcomes.map((outcome) => outcome.name) ?? []);
   const scenarios = Object.entries(scenarioCatalog).filter(([name]) => outcomeNames.has(name));
   if (!scenarios.length) return `<section class="empty-state">${icon('scenarios')}<h2>No scenarios</h2><p>This operation has no deterministic scenario overrides.</p></section>`;
-  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Scenarios</h2><p>Deterministic outcomes declared for <code>${operationId}</code>.</p></div><a class="text-link" href="#scenarios">Open scenario workspace</a></div><table class="data-table">${tableHead(['Scenario', 'Selections', 'Faults', 'Behavior'])}<tbody>${scenarios.map(([id, scenario]) => `<tr><td><code>${id}</code></td><td>${scenario.selections}</td><td>${scenario.faults}</td><td>${scenario.description}</td></tr>`).join('')}</tbody></table></section>`;
+  return `<section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Scenarios</h2><p>Deterministic outcomes declared for <code>${operationId}</code>.</p></div><a class="text-link" href="/scenarios">Open scenario workspace</a></div><table class="data-table">${tableHead(['Scenario', 'Selections', 'Faults', 'Behavior'])}<tbody>${scenarios.map(([id, scenario]) => `<tr><td><code>${id}</code></td><td>${scenario.selections}</td><td>${scenario.faults}</td><td>${scenario.description}</td></tr>`).join('')}</tbody></table></section>`;
 }
 
 function exchangesPage() {
@@ -1124,7 +1156,7 @@ function exchangesPage() {
     <header class="page-header exchange-index__header">
       <div>
         <div class="exchange-title"><h1>Exchanges</h1><span class="live-pill">${sourceLabel}</span></div>
-        <p>${runtime.connected ? 'Requests captured by the running Inttegro service on this machine.' : 'Representative request traces remain visible while the local runtime is disconnected.'}</p>
+        <p>${runtime.connected ? `Requests captured by ${serviceName} on this machine.` : 'Representative request traces remain visible while the local runtime is disconnected.'}</p>
       </div>
       <button class="button button--quiet-danger" type="button" data-action="clear-exchanges" aria-label="Clear exchange history" ${runtime.connected ? '' : 'disabled'}>${icon('trash')}<span>Clear history</span></button>
     </header>
@@ -1178,7 +1210,7 @@ function statePage() {
   const records = source[state.selectedResourceGroup] || [];
   const selected = records.find((record) => record.id === state.selectedResource) || records[0];
   if (!selected) return `<div class="page">${header('State', 'No Stack resources are declared for this service.')}</div>`;
-  return `<div class="page page--flush">${header('State', live ? 'Read-only state owned by the running Inttegro service.' : 'Representative state shown while the local runtime is disconnected.', `<span class="preview-badge">${live ? 'Live runtime' : 'Preview data'}</span><button class="button" data-action="state-command">${icon('terminal')}Inspection command</button>`)}<div class="split-workbench"><aside class="resource-browser"><label class="search-field">${icon('search')}<input type="search" placeholder="Search resources" aria-label="Search resources"></label><div class="resource-groups">${groups.map(([name,items]) => `<button class="resource-group ${state.selectedResourceGroup === name ? 'is-active' : ''}" data-resource-group="${name}"><span>${icon('state')}<strong>${name}</strong></span><span>${items.length}</span></button>`).join('')}</div></aside><section class="resource-list"><header><div><strong>${state.selectedResourceGroup}</strong><span>${records.length} resource${records.length === 1 ? '' : 's'}</span></div></header>${records.map(({id,status,summary}) => `<button class="resource-row ${selected.id === id ? 'is-active' : ''}" data-resource="${id}"><span><strong>${id}</strong><small>${status}</small></span><span>${summary}</span></button>`).join('')}</section><section class="resource-detail"><header><div>${badge(live ? 'LIVE' : 'PREVIEW',live ? 'success' : 'neutral')}<h2>${selected.id}</h2></div><div><button class="button button--compact" data-action="copy-resource">${icon('copy')}Copy</button></div></header><dl class="detail-facts"><div><dt>Kind</dt><dd>${state.selectedResourceGroup}</dd></div><div><dt>Journal events</dt><dd>${selected.eventCount ?? '—'}</dd></div><div><dt>Last operation</dt><dd><code>${selected.createdBy || '—'}</code></dd></div><div><dt>Source</dt><dd>${live ? 'Running Stack' : selected.updated}</dd></div></dl>${codePanel(live ? 'Current resource state' : 'Representative stored value', selected.body, {copy:'stored resource'})}</section></div></div>`;
+  return `<div class="page page--flush">${header('State', live ? `Read-only state owned by ${serviceName}.` : 'Representative state shown while the local runtime is disconnected.', `<span class="preview-badge">${live ? 'Live runtime' : 'Preview data'}</span><button class="button" data-action="state-command">${icon('terminal')}Inspection command</button>`)}<div class="split-workbench"><aside class="resource-browser"><label class="search-field">${icon('search')}<input type="search" placeholder="Search resources" aria-label="Search resources"></label><div class="resource-groups">${groups.map(([name,items]) => `<button class="resource-group ${state.selectedResourceGroup === name ? 'is-active' : ''}" data-resource-group="${name}"><span>${icon('state')}<strong>${name}</strong></span><span>${items.length}</span></button>`).join('')}</div></aside><section class="resource-list"><header><div><strong>${state.selectedResourceGroup}</strong><span>${records.length} resource${records.length === 1 ? '' : 's'}</span></div></header>${records.map(({id,status,summary}) => `<button class="resource-row ${selected.id === id ? 'is-active' : ''}" data-resource="${id}"><span><strong>${id}</strong><small>${status}</small></span><span>${summary}</span></button>`).join('')}</section><section class="resource-detail"><header><div>${badge(live ? 'LIVE' : 'PREVIEW',live ? 'success' : 'neutral')}<h2>${selected.id}</h2></div><div><button class="button button--compact" data-action="copy-resource">${icon('copy')}Copy</button></div></header><dl class="detail-facts"><div><dt>Kind</dt><dd>${state.selectedResourceGroup}</dd></div><div><dt>Journal events</dt><dd>${selected.eventCount ?? '—'}</dd></div><div><dt>Last operation</dt><dd><code>${selected.createdBy || '—'}</code></dd></div><div><dt>Source</dt><dd>${live ? 'Running Stack' : selected.updated}</dd></div></dl>${codePanel(live ? 'Current resource state' : 'Representative stored value', selected.body, {copy:'stored resource'})}</section></div></div>`;
 }
 
 function runtimeResourceGroups() {
@@ -1209,35 +1241,41 @@ function deferredPage() {
     const work = item.work || {};
     const status = item.queue === 'dead_letter' ? 'FAILED' : item.leased ? 'LEASED' : 'PENDING';
     const tone = item.queue === 'dead_letter' ? 'warning' : item.leased ? 'success' : 'neutral';
-    return `<tr><td><code>${item.id}</code></td><td><code>${work.name || '—'}</code></td><td><a class="operation-link" href="#operations/${operationIdByKey.get(work.operation) || work.operation || ''}"><code>${work.operation || '—'}</code></a></td><td>${work.kind || '—'}</td><td>${item.receiveCount}</td><td>${badge(status, tone)}</td></tr>`;
+    return `<tr><td><code>${item.id}</code></td><td><code>${work.name || '—'}</code></td><td><a class="operation-link" href="/operations/${operationIdByKey.get(work.operation) || work.operation || ''}"><code>${work.operation || '—'}</code></a></td><td>${work.kind || '—'}</td><td>${item.receiveCount}</td><td>${badge(status, tone)}</td></tr>`;
   }).join('');
   const declaredRows = serviceData.asyncOperations.map((operation) => `<tr><td><code>—</code></td><td><code>${operation.name}</code></td><td><code>${operation.name}</code></td><td>${operation.description}</td><td>0</td><td>${badge('DECLARED')}</td></tr>`).join('');
-  return `<div class="page">${header('Deferred work', 'Asynchronous actions declared by the Inttegro service', `<button class="button" data-action="refresh-runtime">Refresh</button>`)}<div class="status-strip status-strip--compact"><div>${badge(items.length ? 'ACTIVE' : 'IDLE', items.length ? 'success' : 'neutral')}<strong>${queueState}</strong></div><dl><div><dt>Declared</dt><dd>${serviceData.asyncOperations.length}</dd></div><div><dt>Pending</dt><dd>${deferred?.pending ?? 0}</dd></div><div><dt>Leased</dt><dd>${deferred?.leased ?? 0}</dd></div><div><dt>Failed</dt><dd>${deferred?.deadLetters ?? 0}</dd></div></dl></div>${toolbar({search:'Search asynchronous work',count:deferred ? `${items.length} runtime items` : `${serviceData.asyncOperations.length} declared operations`,actions:`<button class="button button--compact" data-action="filter-deferred">${icon('filter')}Filter</button>`})}<section class="table-panel"><table class="data-table">${tableHead(['Message', 'Name', 'Operation', 'Kind', 'Attempts', 'Runtime state'])}<tbody>${deferred ? runtimeRows : declaredRows}</tbody></table></section></div>`;
+  return `<div class="page">${header('Deferred work', `Asynchronous actions declared by ${serviceName}`, `<button class="button" data-action="refresh-runtime">Refresh</button>`)}<div class="status-strip status-strip--compact"><div>${badge(items.length ? 'ACTIVE' : 'IDLE', items.length ? 'success' : 'neutral')}<strong>${queueState}</strong></div><dl><div><dt>Declared</dt><dd>${serviceData.asyncOperations.length}</dd></div><div><dt>Pending</dt><dd>${deferred?.pending ?? 0}</dd></div><div><dt>Leased</dt><dd>${deferred?.leased ?? 0}</dd></div><div><dt>Failed</dt><dd>${deferred?.deadLetters ?? 0}</dd></div></dl></div>${toolbar({search:'Search asynchronous work',count:deferred ? `${items.length} runtime items` : `${serviceData.asyncOperations.length} declared operations`,actions:`<button class="button button--compact" data-action="filter-deferred">${icon('filter')}Filter</button>`})}<section class="table-panel"><table class="data-table">${tableHead(['Message', 'Name', 'Operation', 'Kind', 'Attempts', 'Runtime state'])}<tbody>${deferred ? runtimeRows : declaredRows}</tbody></table></section></div>`;
 }
 
 function scenariosPage() {
   const selected = scenarioCatalog[state.selectedScenario];
+  if (!selected) {
+    return `<div class="page">${header('Scenarios', 'No deterministic scenarios are declared for this service.')}<section class="empty-state">${icon('scenarios')}<h2>No scenarios</h2><p>Add a scenario to the Simfile when a test needs a named, repeatable outcome.</p></section></div>`;
+  }
   const enabled = !state.disabledScenarios.has(state.selectedScenario);
   const matchingOperations = serviceData.operations.filter((operation) => operation.outcomes.some((outcome) => outcome.name === state.selectedScenario));
-  return `<div class="page page--flush">${header('Scenarios', `${serviceData.scenarios.length} public, deterministic test scenarios compiled from the Inttegro Simfile`, `<button class="button button--primary" data-action="create-scenario">New scenario</button>`)}<div class="scenario-layout"><aside class="scenario-list"><label class="search-field">${icon('search')}<input type="search" placeholder="Search scenarios" aria-label="Search scenarios"></label>${Object.entries(scenarioCatalog).map(([id,scenario]) => `<button class="scenario-row ${state.selectedScenario === id ? 'is-active' : ''}" data-scenario="${id}"><span><strong>${scenario.name}</strong><small>${scenario.selections} selection${scenario.selections === 1 ? '' : 's'} · ${scenario.faults} fault${scenario.faults === 1 ? '' : 's'}</small></span>${icon('chevron')}</button>`).join('')}</aside><section class="scenario-detail"><header><div>${badge(enabled ? 'ACTIVE' : 'DISABLED',enabled ? 'success' : 'neutral')}<h2>${selected.name}</h2><p>${selected.description}</p></div><button class="button" data-action="toggle-scenario">${enabled ? 'Disable' : 'Enable'}</button></header><dl class="detail-facts detail-facts--grid"><div><dt>Scenario ID</dt><dd><code>${state.selectedScenario}</code></dd></div><div><dt>Outcome selections</dt><dd>${selected.selections}</dd></div><div><dt>Fault injections</dt><dd>${selected.faults}</dd></div><div><dt>Matching operations</dt><dd>${matchingOperations.length}</dd></div></dl><div class="scenario-rule"><span class="rule-index">WHEN</span><code>X-Simile-Scenario: ${state.selectedScenario}</code></div><div class="scenario-rule"><span class="rule-index">THEN</span><code>activate compiled scenario selections and faults</code></div><section class="table-panel scenario-operations"><div class="panel-heading panel-heading--table"><div><h3>Resolved operations</h3><p>Operations with a named outcome matching this scenario.</p></div></div>${matchingOperations.length ? `<table class="data-table">${tableHead(['Operation', 'Method', 'Path'])}<tbody>${matchingOperations.map((operation) => `<tr><td><a class="operation-link" href="#operations/${operation.id}"><code>${operation.id}</code></a></td><td>${methodBadge(operation.method)}</td><td><code>${operation.path}</code></td></tr>`).join('')}</tbody></table>` : `<div class="stack-empty">This scenario applies a transport fault or a selection whose operation mapping is not exposed by the current describe API.</div>`}</section></section></div></div>`;
+  return `<div class="page page--flush">${header('Scenarios', `${serviceData.scenarios.length} public, deterministic test scenarios compiled for ${serviceName}`, `<button class="button button--primary" data-action="create-scenario">New scenario</button>`)}<div class="scenario-layout"><aside class="scenario-list"><label class="search-field">${icon('search')}<input type="search" placeholder="Search scenarios" aria-label="Search scenarios"></label>${Object.entries(scenarioCatalog).map(([id,scenario]) => `<button class="scenario-row ${state.selectedScenario === id ? 'is-active' : ''}" data-scenario="${id}"><span><strong>${scenario.name}</strong><small>${scenario.selections} selection${scenario.selections === 1 ? '' : 's'} · ${scenario.faults} fault${scenario.faults === 1 ? '' : 's'}</small></span>${icon('chevron')}</button>`).join('')}</aside><section class="scenario-detail"><header><div>${badge(enabled ? 'ACTIVE' : 'DISABLED',enabled ? 'success' : 'neutral')}<h2>${selected.name}</h2><p>${selected.description}</p></div><button class="button" data-action="toggle-scenario">${enabled ? 'Disable' : 'Enable'}</button></header><dl class="detail-facts detail-facts--grid"><div><dt>Scenario ID</dt><dd><code>${state.selectedScenario}</code></dd></div><div><dt>Outcome selections</dt><dd>${selected.selections}</dd></div><div><dt>Fault injections</dt><dd>${selected.faults}</dd></div><div><dt>Matching operations</dt><dd>${matchingOperations.length}</dd></div></dl><div class="scenario-rule"><span class="rule-index">WHEN</span><code>X-Simile-Scenario: ${state.selectedScenario}</code></div><div class="scenario-rule"><span class="rule-index">THEN</span><code>activate compiled scenario selections and faults</code></div><section class="table-panel scenario-operations"><div class="panel-heading panel-heading--table"><div><h3>Resolved operations</h3><p>Operations with a named outcome matching this scenario.</p></div></div>${matchingOperations.length ? `<table class="data-table">${tableHead(['Operation', 'Method', 'Path'])}<tbody>${matchingOperations.map((operation) => `<tr><td><a class="operation-link" href="/operations/${operation.id}"><code>${operation.id}</code></a></td><td>${methodBadge(operation.method)}</td><td><code>${operation.path}</code></td></tr>`).join('')}</tbody></table>` : `<div class="stack-empty">This scenario applies a transport fault or a selection whose operation mapping is not exposed by the current describe API.</div>`}</section></section></div></div>`;
 }
 
 function faultsPage() {
   const profile = serviceData.faultProfiles.find((candidate) => candidate.name === state.selectedFaultProfile);
+  if (!profile) {
+    return `<div class="page">${header('Faults', 'No fault profile is active for this service.')}<section class="empty-state">${icon('faults')}<h2>No fault profiles</h2><p>Fault profiles make bounded transport failures available to tests.</p></section></div>`;
+  }
   const enabled = new Set(profile?.faults ?? []);
-  return `<div class="page">${header('Faults', `${serviceData.faults.length} transport faults and ${serviceData.faultProfiles.length} bounded profiles compiled from the Inttegro Simfile`, `<button class="button button--primary" data-action="new-fault">New fault profile</button>`)}<div class="profile-tabs">${serviceData.faultProfiles.map((candidate) => `<button class="${state.selectedFaultProfile === candidate.name ? 'is-active' : ''}" data-fault-profile="${candidate.name}">${state.selectedFaultProfile === candidate.name ? '<span class="live-dot"></span>' : ''}${candidate.name}</button>`).join('')}</div><section class="fault-grid">${serviceData.faults.map((fault) => `<div class="panel"><div class="panel-heading"><div><h2>${fault.name}</h2><p>${fault.description}</p></div>${badge(enabled.has(fault.name) ? 'ACTIVE' : 'AVAILABLE', enabled.has(fault.name) ? 'success' : 'neutral')}</div><dl class="fault-facts"><div><dt>Phase</dt><dd><code>${fault.phase}</code></dd></div><div><dt>Action</dt><dd><code>${fault.action}</code></dd></div></dl></div>`).join('')}</section><div class="notice-panel">${icon('check')}<div><strong>${profile.name} · ${(profile.probabilityPpm / 10000).toFixed(2)}% probability</strong><p>${profile.description} ${profile.operations.length ? `${profile.operations.length} operations are in scope.` : 'All matching operations are in scope.'}</p></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Profile operation scope</h2><p>Exact structural operation keys affected by this profile.</p></div></div>${profile.operations.length ? `<table class="data-table">${tableHead(['Operation'])}<tbody>${profile.operations.map((operation) => `<tr><td><code>${operation}</code></td></tr>`).join('')}</tbody></table>` : `<div class="stack-empty">This profile applies across the public service.</div>`}</section></div>`;
+  return `<div class="page">${header('Faults', `${serviceData.faults.length} transport faults and ${serviceData.faultProfiles.length} bounded profiles compiled for ${serviceName}`, `<button class="button button--primary" data-action="new-fault">New fault profile</button>`)}<div class="profile-tabs">${serviceData.faultProfiles.map((candidate) => `<button class="${state.selectedFaultProfile === candidate.name ? 'is-active' : ''}" data-fault-profile="${candidate.name}">${state.selectedFaultProfile === candidate.name ? '<span class="live-dot"></span>' : ''}${candidate.name}</button>`).join('')}</div><section class="fault-grid">${serviceData.faults.map((fault) => `<div class="panel"><div class="panel-heading"><div><h2>${fault.name}</h2><p>${fault.description}</p></div>${badge(enabled.has(fault.name) ? 'ACTIVE' : 'AVAILABLE', enabled.has(fault.name) ? 'success' : 'neutral')}</div><dl class="fault-facts"><div><dt>Phase</dt><dd><code>${fault.phase}</code></dd></div><div><dt>Action</dt><dd><code>${fault.action}</code></dd></div></dl></div>`).join('')}</section><div class="notice-panel">${icon('check')}<div><strong>${profile.name} · ${(profile.probabilityPpm / 10000).toFixed(2)}% probability</strong><p>${profile.description} ${profile.operations.length ? `${profile.operations.length} operations are in scope.` : 'All matching operations are in scope.'}</p></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Profile operation scope</h2><p>Exact structural operation keys affected by this profile.</p></div></div>${profile.operations.length ? `<table class="data-table">${tableHead(['Operation'])}<tbody>${profile.operations.map((operation) => `<tr><td><code>${operation}</code></td></tr>`).join('')}</tbody></table>` : `<div class="stack-empty">This profile applies across the public service.</div>`}</section></div>`;
 }
 
 function fidelityPage() {
   const metrics = serviceData.metrics;
   const exact = metrics.outcomes - metrics.schemaSynthesizedOutcomes;
-  return `<div class="page">${header('Fidelity', 'What the compiled Inttegro service can reproduce exactly and where it still approximates', `<button class="button" data-action="download-report">${icon('download')}Download report</button>`)}<div class="fidelity-hero"><div class="score-ring"><svg viewBox="0 0 120 120"><circle class="score-track" cx="60" cy="60" r="49"/><circle class="score-value" cx="60" cy="60" r="49"/></svg><div><strong>${metrics.errors}</strong><span>audit errors</span></div></div><div class="score-summary"><h2>${metrics.operations} operations compile; ${metrics.warnings} gaps remain visible</h2><p>The service is executable and public-export-safe. Schema synthesis remains the dominant approximation, so the audit does not turn a valid build into a false fidelity score.</p><div><span>${badge(`${exact} REVIEWED`,'success')}</span><span>${badge(`${metrics.schemaSynthesizedOutcomes} SYNTHESIZED`)}</span><span>${badge(`${metrics.warnings} WARNINGS`,'warning')}</span></div></div></div><div class="quality-grid"><div><strong>${metrics.operations} / ${metrics.operations}</strong><span>Operations executable</span></div><div><strong>${metrics.providerAuthoredOutcomes}</strong><span>Provider-authored outcomes</span></div><div><strong>${metrics.underspecifiedOperations}</strong><span>Schema-only operations</span></div><div><strong>${serviceData.artifact.publicExportSafe ? 'Yes' : 'No'}</strong><span>Public export safe</span></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Audit findings</h2><p>Showing the first 30 of ${metrics.warnings} current findings.</p></div></div><table class="data-table">${tableHead(['Severity','Code','Subject','Finding'])}<tbody>${fidelityFindingRows(30)}</tbody></table><footer class="table-footer"><span>${metrics.errors} errors · ${metrics.warnings} warnings</span></footer></section></div>`;
+  return `<div class="page">${header('Fidelity', `What ${serviceName} can reproduce exactly and where it still approximates`, `<button class="button" data-action="download-report">${icon('download')}Download report</button>`)}<div class="fidelity-hero"><div class="score-ring"><svg viewBox="0 0 120 120"><circle class="score-track" cx="60" cy="60" r="49"/><circle class="score-value" cx="60" cy="60" r="49"/></svg><div><strong>${metrics.errors}</strong><span>audit errors</span></div></div><div class="score-summary"><h2>${metrics.operations} operations compile; ${metrics.warnings} gaps remain visible</h2><p>The service is executable and public-export-safe. Schema synthesis remains the dominant approximation, so the audit does not turn a valid build into a false fidelity score.</p><div><span>${badge(`${exact} REVIEWED`,'success')}</span><span>${badge(`${metrics.schemaSynthesizedOutcomes} SYNTHESIZED`)}</span><span>${badge(`${metrics.warnings} WARNINGS`,'warning')}</span></div></div></div><div class="quality-grid"><div><strong>${metrics.operations} / ${metrics.operations}</strong><span>Operations executable</span></div><div><strong>${metrics.providerAuthoredOutcomes}</strong><span>Provider-authored outcomes</span></div><div><strong>${metrics.underspecifiedOperations}</strong><span>Schema-only operations</span></div><div><strong>${serviceData.artifact.publicExportSafe ? 'Yes' : 'No'}</strong><span>Public export safe</span></div></div><section class="table-panel"><div class="panel-heading panel-heading--table"><div><h2>Audit findings</h2><p>Showing the first 30 of ${metrics.warnings} current findings.</p></div></div><table class="data-table">${tableHead(['Severity','Code','Subject','Finding'])}<tbody>${fidelityFindingRows(30)}</tbody></table><footer class="table-footer"><span>${metrics.errors} errors · ${metrics.warnings} warnings</span></footer></section></div>`;
 }
 
 function settingsPage() {
   const selected = configurationFiles.find((file) => file.id === state.selectedConfigFile) ?? configurationFiles[0];
   const configuration = selected ? `<section class="settings-section settings-configuration">
-    <div class="settings-section-heading"><div><h2>Service configuration</h2><p>Exact source snapshot used to generate this Inttegro service.</p></div>${badge('SOURCE')}</div>
+    <div class="settings-section-heading"><div><h2>Service configuration</h2><p>Exact source snapshot used to generate ${serviceName}.</p></div>${badge('SOURCE')}</div>
     <div class="config-workbench">
       <div class="config-file-tabs" role="tablist" aria-label="Service configuration files">${configurationFiles.map((file) => `<button role="tab" aria-selected="${file.id === selected.id}" class="${file.id === selected.id ? 'is-active' : ''}" data-config-file="${file.id}">${file.name}</button>`).join('')}</div>
       <div class="config-source code-panel" role="tabpanel">
@@ -1253,7 +1291,7 @@ function settingsPage() {
 }
 
 function docsPage() {
-  return `<div class="page page--narrow">${header('Documentation', 'Use Simile locally and understand what the emulator guarantees')}<section class="docs-list"><a href="https://os.inttegro.dev/simile/quickstart" target="_blank" rel="noreferrer"><span>${icon('docs')}<span><strong>Quickstart</strong><small>Install Simile and run your first service.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/service-configuration" target="_blank" rel="noreferrer"><span>${icon('settings')}<span><strong>Service configuration</strong><small>Compose contracts, behaviors, listeners, and profiles.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/state-and-replay" target="_blank" rel="noreferrer"><span>${icon('state')}<span><strong>State and replay</strong><small>Understand persisted resources and causal history.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/outcome-fidelity" target="_blank" rel="noreferrer"><span>${icon('fidelity')}<span><strong>Outcome fidelity</strong><small>Measure exact outcomes and schema synthesis gaps.</small></span></span>${icon('chevron')}</a></section><section class="command-panel"><div><span class="terminal-dots"><i></i><i></i><i></i></span><strong>Open this service from the terminal</strong></div><code>simile web inttegro</code><button class="icon-only" data-copy="terminal command" aria-label="Copy terminal command">${icon('copy')}</button></section></div>`;
+  return `<div class="page page--narrow">${header('Documentation', 'Use Simile locally and understand what the emulator guarantees')}<section class="docs-list"><a href="https://os.inttegro.dev/simile/quickstart" target="_blank" rel="noreferrer"><span>${icon('docs')}<span><strong>Quickstart</strong><small>Install Simile and run your first service.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/service-configuration" target="_blank" rel="noreferrer"><span>${icon('settings')}<span><strong>Service configuration</strong><small>Compose contracts, behaviors, listeners, and profiles.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/state-and-replay" target="_blank" rel="noreferrer"><span>${icon('state')}<span><strong>State and replay</strong><small>Understand persisted resources and causal history.</small></span></span>${icon('chevron')}</a><a href="https://os.inttegro.dev/simile/outcome-fidelity" target="_blank" rel="noreferrer"><span>${icon('fidelity')}<span><strong>Outcome fidelity</strong><small>Measure exact outcomes and schema synthesis gaps.</small></span></span>${icon('chevron')}</a></section><section class="command-panel"><div><span class="terminal-dots"><i></i><i></i><i></i></span><strong>Open this service from the terminal</strong></div><code>simile console ${serviceName}</code><button class="icon-only" data-copy="terminal command" aria-label="Copy terminal command">${icon('copy')}</button></section></div>`;
 }
 
 function exchangeDetail() {
@@ -1261,7 +1299,7 @@ function exchangeDetail() {
   if (liveExchange) return liveExchangeDetail(liveExchange);
   const tabs = [['timeline','Timeline'],['request','Request'],['response','Response'],['state','State 1'],['deferred','Deferred work 0'],['faults','Faults 0'],['validation','Validation']];
   const tabLabels = tabs.map(([key, label]) => [key, label.replace(/ (\d+)$/, ' <span class="tab-count">$1</span>')]);
-  return `<div class="page exchange-page"><a class="back-link" href="#exchanges">‹ Back to Exchanges</a><div class="preview-notice"><span>Preview trace</span>This representative exchange demonstrates the intended inspection workflow; it was not streamed from the current runtime.</div><div class="exchange-heading"><div><div class="title-line">${badge('DELIVERED','success')}${badge('PREVIEW','neutral')}<h1><a class="operation-link" href="#operations/createOrder">createOrder</a><span aria-hidden="true">·</span><code>${exchangeId}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>Nov 22, 2026, 7:18:04.114 PM</dd></div><div><dt>Request ID</dt><dd><code>req_01JDC6Y8P7Y4K0FJ9Q3T5</code></dd></div><div><dt>Response</dt><dd><code>200 OK · ${orderResponseSize}</code></dd></div><div><dt>Ended</dt><dd>Nov 22, 2026, 7:18:04.152 PM</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="#operations/createOrder"><code>${createOrderOperation.key} · createOrder</code></a></dd></div><div><dt>Outcome</dt><dd><code>requires_payment</code></dd></div><div><dt>Duration</dt><dd><code>38ms</code></dd></div><div><dt>Profile</dt><dd><code>${activeProfileName}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" disabled>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabLabels, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${exchangeTabPanel()}</div></div>`;
+  return `<div class="page exchange-page"><a class="back-link" href="/exchanges">‹ Back to Exchanges</a><div class="preview-notice"><span>Preview trace</span>This representative exchange demonstrates the intended inspection workflow; it was not streamed from the current runtime.</div><div class="exchange-heading"><div><div class="title-line">${badge('DELIVERED','success')}${badge('PREVIEW','neutral')}<h1><a class="operation-link" href="/operations/${representativeOperation.id}">${representativeOperation.id}</a><span aria-hidden="true">·</span><code>${exchangeId}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>Nov 22, 2026, 7:18:04.114 PM</dd></div><div><dt>Request ID</dt><dd><code>req_01JDC6Y8P7Y4K0FJ9Q3T5</code></dd></div><div><dt>Response</dt><dd><code>${representativeOperation.success} · ${representativeResponseSize}</code></dd></div><div><dt>Ended</dt><dd>Nov 22, 2026, 7:18:04.152 PM</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="/operations/${representativeOperation.id}"><code>${representativeOperation.key} · ${representativeOperation.id}</code></a></dd></div><div><dt>Outcome</dt><dd><code>${representativeOutcomeName}</code></dd></div><div><dt>Duration</dt><dd><code>38ms</code></dd></div><div><dt>Profile</dt><dd><code>${activeProfileName}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" disabled>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabLabels, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${exchangeTabPanel()}</div></div>`;
 }
 
 function exchangeReportPage() {
@@ -1274,11 +1312,11 @@ function exchangeReportPage() {
   const journal = JSON.stringify(report.relatedJournalEvents, null, 2);
   const generated = new Date(report.generatedAt).toLocaleString();
   return `<div class="page exchange-page exchange-report-page">
-    <a class="back-link" href="#exchanges/${report.exchange.id}">‹ Back to Exchange</a>
+    <a class="back-link" href="/exchanges/${report.exchange.id}">‹ Back to Exchange</a>
     ${header('Exchange report', 'Sanitized technical evidence generated from one captured exchange.', `${verified && !submitted ? '<button class="button button--primary" data-action="submit-exchange-report">Submit report</button>' : ''}<button class="button" data-action="download-exchange-report">${icon('download')}Download JSON</button>`)}
     <div class="report-status-line">${badge(report.source === 'live_inspection' ? 'LIVE' : 'PREVIEW', report.source === 'live_inspection' ? 'success' : 'neutral')}${badge(submitted ? 'SUBMITTED' : verified ? 'VERIFIED' : 'UNVERIFIED', submitted || verified ? 'success' : 'warning')}<code>${report.runtimeReport?.id || report.exchange.id}</code></div>
     <dl class="operation-summary">
-      <div><dt>Operation</dt><dd><a class="operation-link" href="#operations/${report.exchange.operation.id}"><code>${report.exchange.operation.id}</code></a></dd></div>
+      <div><dt>Operation</dt><dd><a class="operation-link" href="/operations/${report.exchange.operation.id}"><code>${report.exchange.operation.id}</code></a></dd></div>
       <div><dt>Request</dt><dd><code>${report.exchange.operation.method} ${report.exchange.operation.path}</code></dd></div>
       <div><dt>Response</dt><dd><code>${report.exchange.status}${report.exchange.outcome ? ` · ${report.exchange.outcome}` : ''}</code></dd></div>
       <div><dt>Duration</dt><dd><code>${formatDuration(report.exchange.durationMicros)}</code></dd></div>
@@ -1301,7 +1339,7 @@ function liveExchangeDetail(exchange) {
   const ended = new Date(exchange.startedAtMs + exchange.durationMicros / 1000);
   const responseBody = messageBody(exchange.response);
   const tabs = [['timeline','Timeline'],['request','Request'],['response','Response'],['state','State']];
-  return `<div class="page exchange-page"><a class="back-link" href="#exchanges">‹ Back to Exchanges</a><div class="exchange-heading"><div><div class="title-line">${badge(Number(exchange.status) < 400 ? 'DELIVERED' : 'ISSUE',Number(exchange.status) < 400 ? 'success' : 'warning')}${badge('LIVE','success')}<h1><a class="operation-link" href="#operations/${operationId}">${operationId}</a><span aria-hidden="true">·</span><code>${exchange.id}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>${started.toLocaleString()}</dd></div><div><dt>Request ID</dt><dd><code>${exchange.id}</code></dd></div><div><dt>Response</dt><dd><code>${exchange.status} · ${new TextEncoder().encode(responseBody).length} bytes</code></dd></div><div><dt>Ended</dt><dd>${ended.toLocaleString()}</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="#operations/${operationId}"><code>${exchange.operation}</code></a></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div><div><dt>Duration</dt><dd><code>${duration}</code></dd></div><div><dt>Profile</dt><dd><code>${exchange.profile || 'default'}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" disabled>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabs, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${liveExchangeTabPanel(exchange)}</div></div>`;
+  return `<div class="page exchange-page"><a class="back-link" href="/exchanges">‹ Back to Exchanges</a><div class="exchange-heading"><div><div class="title-line">${badge(Number(exchange.status) < 400 ? 'DELIVERED' : 'ISSUE',Number(exchange.status) < 400 ? 'success' : 'warning')}${badge('LIVE','success')}<h1><a class="operation-link" href="/operations/${operationId}">${operationId}</a><span aria-hidden="true">·</span><code>${exchange.id}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>${started.toLocaleString()}</dd></div><div><dt>Request ID</dt><dd><code>${exchange.id}</code></dd></div><div><dt>Response</dt><dd><code>${exchange.status} · ${new TextEncoder().encode(responseBody).length} bytes</code></dd></div><div><dt>Ended</dt><dd>${ended.toLocaleString()}</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="/operations/${operationId}"><code>${exchange.operation}</code></a></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div><div><dt>Duration</dt><dd><code>${duration}</code></dd></div><div><dt>Profile</dt><dd><code>${exchange.profile || 'default'}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" disabled>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabs, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${liveExchangeTabPanel(exchange)}</div></div>`;
 }
 
 function liveExchangeTabPanel(exchange) {
@@ -1311,7 +1349,7 @@ function liveExchangeTabPanel(exchange) {
     timeline: () => `<section class="payload-view"><header><div><h2>Runtime exchange</h2><p>The service captured this request and response directly from its loopback listener.</p></div>${badge(formatDuration(exchange.durationMicros),'success')}</header><dl class="payload-facts"><div><dt>Method</dt><dd><code>${exchange.method}</code></dd></div><div><dt>Path</dt><dd><code>${exchange.path}</code></dd></div><div><dt>Status</dt><dd><code>${exchange.status}</code></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div></dl><div class="runtime-exchange-flow"><span>Request received</span><i></i><span>Contract executed</span><i></i><span>Response ${exchange.status}</span></div></section>`,
     request: () => payloadPanel('Request', 'Sanitized request payload captured by the local runtime.', [['Method',exchange.method],['Path',`<code>${exchange.path}</code>`],['Content type',exchange.request.contentType || '—'],['Capture',exchange.request.truncated ? 'Body omitted' : 'Complete']], requestBody),
     response: () => payloadPanel('Response', 'Response payload produced by the running service.', [['Status',String(exchange.status)],['Content type',exchange.response.contentType || '—'],['Outcome',exchange.outcome || '—'],['Duration',formatDuration(exchange.durationMicros)]], responseBody),
-    state: () => `<section class="payload-view"><header><div><h2>State after exchange</h2><p>Inspect the current Stack and its payload-free causal journal.</p></div><a class="button button--compact" href="#state">Open live state</a></header></section>`,
+    state: () => `<section class="payload-view"><header><div><h2>State after exchange</h2><p>Inspect the current Stack and its payload-free causal journal.</p></div><a class="button button--compact" href="/state">Open live state</a></header></section>`,
   };
   return (panels[state.exchangeTab] || panels.timeline)();
 }
@@ -1319,8 +1357,8 @@ function liveExchangeTabPanel(exchange) {
 function exchangeTabPanel() {
   const panels = {
     timeline: timelinePanel,
-    request: () => payloadPanel('Request', 'Representative request generated from the current createOrder contract.', [['Method','POST'],['Path',createOrderOperation.path],['Content type','application/json'],['Schema',createOrderDetail.requestSchema]], orderRequest),
-    response: () => payloadPanel('Response', 'Representative response generated from the current createOrder contract.', [['Status','200 OK'],['Content type','application/json'],['Size',orderResponseSize],['Outcome','requires_payment']], orderResponse),
+    request: () => payloadPanel('Request', `Representative request generated from ${representativeOperation.id}.`, [['Method',representativeOperation.method],['Path',representativeOperation.path],['Content type','application/json'],['Schema',representativeOperationDetail.requestSchema]], representativeRequest),
+    response: () => payloadPanel('Response', `Representative response generated from ${representativeOperation.id}.`, [['Status',String(representativeOperation.success)],['Content type',representativeOutcome?.contentType ?? 'application/json'],['Size',representativeResponseSize],['Outcome',representativeOutcomeName]], representativeResponse),
     state: stateEffectPanel,
     deferred: () => emptyExchangePanel('deferred', 'No deferred work', 'The selected outcome did not schedule an event, webhook, or asynchronous action.'),
     faults: () => emptyExchangePanel('faults', 'No fault applied', 'This exchange used the default deterministic profile. Transport and dependency behavior were unchanged.'),
@@ -1338,11 +1376,11 @@ function emptyExchangePanel(iconName, title, copy) {
 }
 
 function stateEffectPanel() {
-  return `<section class="payload-view"><header><div><h2>State effect</h2><p>This representative exchange creates one order resource.</p></div><a class="button button--compact" href="#state">Open state preview</a></header><dl class="payload-facts"><div><dt>Collection</dt><dd>orders</dd></div><div><dt>Key</dt><dd>or_simile_requires_payment</dd></div><div><dt>Revision</dt><dd>1</dd></div><div><dt>Effect</dt><dd>create</dd></div></dl>${codePanel('Representative stored value',orderResponse,{copy:'state effect',className:'code-panel--large'})}</section>`;
+  return `<section class="payload-view"><header><div><h2>State effect</h2><p>The preview does not invent a state mutation for this operation.</p></div><a class="button button--compact" href="/state">Open state</a></header>${codePanel('Representative response', representativeResponse, {copy:'state effect',className:'code-panel--large'})}</section>`;
 }
 
 function validationPanel() {
-  const checks = [['Operation matched',`${createOrderOperation.key} resolved uniquely to createOrder.`],['Request schema',`${createOrderDetail.requestSchema} accepted the supplied body.`],['Request relationships','Required IDs, quantities, URLs, and currencies were coherent.'],['Response schema',`The 200 response matched ${createOrderDetail.responseSchema}.`],['Response relationships','Currency equality, totals, identifiers, and timestamps were coherent.'],['State projection','The stored resource validates against the declared order representation.']];
+  const checks = [['Operation matched',`${representativeOperation.key} resolved uniquely to ${representativeOperation.id}.`],['Request schema',`${representativeOperationDetail.requestSchema} accepted the representative body.`],['Response schema',`The ${representativeOperation.success} response matched ${representativeOperationDetail.responseSchema}.`],['Outcome selection',`${representativeOutcomeName} is declared by the compiled operation.`]];
   return `<section class="validation-view"><header>${icon('check')}<div><h2>Contract sound</h2><p>The request, selected outcome, response, and stored state all satisfy the compiled contract.</p></div></header><div class="check-list">${checks.map(([title,copy]) => `<div>${icon('check')}<span><strong>${title}</strong><small>${copy}</small></span>${badge('PASSED','success')}</div>`).join('')}</div></section>`;
 }
 
@@ -1352,20 +1390,20 @@ function timelinePanel() {
 
 function selectedEventPanel() {
   const events = {
-    request:['Request received','4ms',[['Event ID','1'],['Method','POST'],['Path',createOrderOperation.path],['Principal','application']],'Request',orderRequest],
-    validate:['Request validated','4ms',[['Event ID','2'],['Operation','createOrder'],['Schema',createOrderDetail.requestSchema],['Result','Valid']],'Validation','Contract checks passed'],
-    outcome:['Outcome selected','2ms',[['Event ID','3'],['Outcome','requires_payment'],['Source','OpenAPI example'],['Selection','Deterministic success']],'Decision','Selected from the operation’s declared 200 outcomes.'],
-    state:['Resource stored','17ms',[['Event ID','4'],['Collection','orders'],['Key','or_simile_requires_payment'],['Revision','1']],'State effect','Created order or_simile_requires_payment'],
-    response:['Response synthesized','9ms',[['Event ID','5'],['Operation','createOrder'],['Outcome','requires_payment'],['Status','200 OK'],['Schema',createOrderDetail.responseSchema],['Constraints','Contract satisfied']],'Response',orderResponse],
-    deliver:['Response delivered','2ms',[['Event ID','6'],['Status','200 OK'],['Size',orderResponseSize],['Total duration','38ms']],'Delivery','Completed without a transport fault.'],
+    request:['Request received','4ms',[['Event ID','1'],['Method',representativeOperation.method],['Path',representativeOperation.path],['Principal','application']],'Request',representativeRequest],
+    validate:['Request validated','4ms',[['Event ID','2'],['Operation',representativeOperation.id],['Schema',representativeOperationDetail.requestSchema],['Result','Valid']],'Validation','Contract checks passed'],
+    outcome:['Outcome selected','2ms',[['Event ID','3'],['Outcome',representativeOutcomeName],['Source',provenanceLabel(representativeOutcome?.provenance ?? 'open_api_derived')],['Selection','Deterministic success']],'Decision','Selected from the operation’s declared outcomes.'],
+    state:['State evaluated','17ms',[['Event ID','4'],['Operation',representativeOperation.id],['Mutation','Not asserted by preview']],'State effect','Inspect the live runtime for committed state.'],
+    response:['Response synthesized','9ms',[['Event ID','5'],['Operation',representativeOperation.id],['Outcome',representativeOutcomeName],['Status',String(representativeOperation.success)],['Schema',representativeOperationDetail.responseSchema],['Constraints','Contract satisfied']],'Response',representativeResponse],
+    deliver:['Response delivered','2ms',[['Event ID','6'],['Status',String(representativeOperation.success)],['Size',representativeResponseSize],['Total duration','38ms']],'Delivery','Completed without a transport fault.'],
   };
   const [title,duration,facts,panelTitle,panelValue] = events[state.selectedEvent];
   const value = panelValue.startsWith('{') ? codePanel(panelTitle,panelValue,{copy:panelTitle,className:'selected-code'}) : `<div class="event-message">${icon('check')}<span>${panelValue}</span></div>`;
-  return `<article class="selected-event"><header><div>${badge('COMPLETED','success')}<span class="selected-event__title">${title}</span><code>${duration}</code></div><button type="button" data-action="close-event">Close ×</button></header><div class="selected-event__body"><dl>${facts.map(([label,item]) => `<div><dt>${label}</dt><dd>${label === 'Operation' ? `<a class="operation-link" href="#operations/${item}"><code>${item}</code></a>` : `<code>${item}</code>`}</dd></div>`).join('')}</dl>${value}</div></article>`;
+  return `<article class="selected-event"><header><div>${badge('COMPLETED','success')}<span class="selected-event__title">${title}</span><code>${duration}</code></div><button type="button" data-action="close-event">Close ×</button></header><div class="selected-event__body"><dl>${facts.map(([label,item]) => `<div><dt>${label}</dt><dd>${label === 'Operation' ? `<a class="operation-link" href="/operations/${item}"><code>${item}</code></a>` : `<code>${item}</code>`}</dd></div>`).join('')}</dl>${value}</div></article>`;
 }
 
 function historyRows() {
-  const rows = [['request','1','Request received','19:18:04.114','POST',createOrderOperation.path],['validate','2','Request validated','19:18:04.118',createOrderDetail.requestSchema,'Contract checks passed'],['outcome','3','Outcome selected','19:18:04.122','requires_payment','OpenAPI example'],['state','4','Resource stored','19:18:04.124','orders','or_simile_requires_payment'],['response','5','Response synthesized','19:18:04.141','200 OK',createOrderDetail.responseSchema],['deliver','6','Response delivered','19:18:04.152',orderResponseSize,'38ms total']];
+  const rows = [['request','1','Request received','19:18:04.114',representativeOperation.method,representativeOperation.path],['validate','2','Request validated','19:18:04.118',representativeOperationDetail.requestSchema,'Contract checks passed'],['outcome','3','Outcome selected','19:18:04.122',representativeOutcomeName,provenanceLabel(representativeOutcome?.provenance ?? 'open_api_derived')],['state','4','State evaluated','19:18:04.124',representativeOperation.id,'No preview assertion'],['response','5','Response synthesized','19:18:04.141',String(representativeOperation.success),representativeOperationDetail.responseSchema],['deliver','6','Response delivered','19:18:04.152',representativeResponseSize,'38ms total']];
   return rows.map(([id,index,title,time,left,right]) => `<button class="history-row ${state.selectedEvent === id ? 'is-active' : ''}" data-event="${id}"><span class="history-index">${index}</span><span><span class="history-title">${title}</span><small>${left}</small></span><span class="history-secondary">${right}</span><time>${time}</time>${icon('chevron')}</button>`).join('');
 }
 
@@ -1386,12 +1424,12 @@ function bindInteractions() {
   bindLocalTabs('exchange-tab', 'exchangeTab');
   bindLocalTabs('config-file', 'selectedConfigFile');
   document.querySelectorAll('[data-exchange]').forEach((row) => {
-    const open = () => { window.location.hash = `exchanges/${row.dataset.exchange}`; };
+    const open = () => { navigate(`/exchanges/${row.dataset.exchange}`); };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') open(); });
   });
   document.querySelectorAll('[data-operation]').forEach((row) => {
-    const open = () => { window.location.hash = `operations/${row.dataset.operation}`; };
+    const open = () => { navigate(`/operations/${row.dataset.operation}`); };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') open(); });
   });
@@ -1481,9 +1519,9 @@ function filterCurrentList(query) {
 function openMenu(button) {
   const popover = document.querySelector('[data-popover]');
   const menus = {
-    'service-switcher': `<button disabled><strong>${serviceData.service.name}</strong><small>${serviceData.service.listen} · ${serviceData.service.version}</small></button><hr><button data-action="register-service">Register service…</button>`,
+    'service-switcher': `${registeredServices.map((service) => `<a class="${service.name === serviceData.service.name ? 'is-selected' : ''}" href="/?service=${encodeURIComponent(service.name)}"><strong>${service.name}</strong><small>${service.listen} · ${service.version}</small></a>`).join('')}<hr><button data-action="register-service">Register service…</button>`,
     environment: `<button class="${state.environment === 'local' ? 'is-selected' : ''}" data-environment="local"><strong>local</strong><small>${activeProfileName}</small></button><button class="${state.environment === 'test' ? 'is-selected' : ''}" data-environment="test"><strong>fault test</strong><small>${serviceData.faultProfiles[0]?.name}</small></button>`,
-    profile: `<button disabled><strong>Yaw</strong><small>Local session</small></button><hr><a href="#settings">Settings</a>`,
+    profile: `<button disabled><strong>Yaw</strong><small>Local session</small></button><hr><a href="/settings">Settings</a>`,
     'exchange-actions': `<button data-action="generate-exchange-report">Generate report</button><button data-copy="exchange ID">Copy exchange ID</button><button data-action="download-trace">Download trace</button><button data-action="create-reproduction">Create reproduction</button>`,
     'copy-request': Object.entries(requestFormats).map(([format, { label }]) => `<button class="request-format-option ${state.requestCopyFormat === format ? 'is-selected' : ''}" data-request-format="${format}">${label}</button>`).join(''),
   };
@@ -1533,7 +1571,7 @@ function closeMenu(event) {
 function handleAction(action) {
   const actions = {
     'collapse-sidebar': () => { state.sidebarCollapsed = !state.sidebarCollapsed; renderShell(); },
-    'open-console': () => { window.location.hash = 'exchanges'; },
+    'open-console': () => { navigate('/exchanges'); },
     restart: () => showToast('Restart the service from its owning terminal', 'warning'),
     runtime: () => showToast(runtime.connected ? `${serviceData.service.name} inspection is connected` : `Waiting for ${localServiceUrl}`, runtime.connected ? 'success' : 'warning'),
     terminal: () => showToast(`simile start ${serviceData.service.name} · already running`),
@@ -1568,7 +1606,7 @@ function handleAction(action) {
     'download-exchange-report': downloadExchangeReport,
     'download-report': downloadFidelityReport,
     'export-state': exportRuntimeState,
-    'state-command': () => showToast('simile state inttegro --output json --values'),
+    'state-command': () => showToast(`simile state ${serviceName} --output json --values`),
     'copy-resource': () => document.querySelector('[data-copy="stored resource"]')?.click(),
     'copy-request': () => copyPreparedRequest(state.requestCopyFormat),
     'resource-actions': () => showToast('Resource actions are available from its operation history'),
@@ -1584,14 +1622,18 @@ function handleAction(action) {
   actions[action]?.();
 }
 
-window.addEventListener('hashchange', () => {
-  state.serviceTab = 'overview';
-  state.operationTab = 'contract';
-  state.selectedOutcome = null;
-  state.exchangeTab = 'timeline';
-  renderShell();
-  document.getElementById('workspace')?.focus({preventScroll:true});
-  window.scrollTo(0, 0);
+window.addEventListener('popstate', handleNavigation);
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[href]');
+  if (!link || link.target || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const destination = new URL(link.href, window.location.href);
+  if (destination.origin !== window.location.origin || destination.search || destination.hash) return;
+  const section = destination.pathname.split('/').filter(Boolean)[0] || 'service';
+  const known = navItems.some(([key]) => key === section) || section === 'settings' || section === 'docs';
+  if (!known) return;
+  event.preventDefault();
+  navigate(destination.pathname);
 });
 
 window.addEventListener('keydown', (event) => {

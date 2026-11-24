@@ -87,6 +87,25 @@ fn prints_version_as_json() {
 }
 
 #[test]
+fn exposes_the_terminal_and_web_console_forms() {
+    let help = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["console", "--help"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("Usage: simile console [OPTIONS] [SERVICE]"));
+    assert!(help.contains("--web"));
+    assert!(help.contains("Open the console in the system browser instead of the terminal"));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "console"])
+        .assert()
+        .failure()
+        .stderr_eq("invalid command arguments: console is interactive and does not support --output json\n");
+}
+
+#[test]
 fn doctor_writes_machine_output_only_to_stdout() {
     Command::new(snapbox::cmd::cargo_bin!("simile"))
         .args(["--output", "json", "doctor"])

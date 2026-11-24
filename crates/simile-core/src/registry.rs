@@ -247,6 +247,49 @@ impl Registry {
         })
     }
 
+    /// Return every currently registered service in stable name order.
+    ///
+    /// The registry is an implementation detail, but discovery is a domain
+    /// capability used by interactive clients such as the console. Loading
+    /// each entry here also gives callers the same manifest and artifact
+    /// validation guarantees as an explicit service lookup.
+    pub(crate) fn list(&self) -> Result<Vec<RegisteredService>> {
+        if !self.root.join("layout-version").exists() {
+            return Ok(Vec::new());
+        }
+        self.verify_layout()?;
+
+        let services_path = self.root.join("services");
+        let entries = fs::read_dir(&services_path).map_err(|source| Error::RegistryIo {
+            action: "list registered services",
+            path: services_path,
+            source,
+        })?;
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| Error::RegistryIo {
+                action: "read registered service entry",
+                path: self.root.join("services"),
+                source,
+            })?;
+            let file_type = entry.file_type().map_err(|source| Error::RegistryIo {
+                action: "inspect registered service entry",
+                path: entry.path(),
+                source,
+            })?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            validate_service_name(&name)?;
+            names.push(name);
+        }
+        names.sort();
+        names.into_iter().map(|name| self.load(&name)).collect()
+    }
+
     pub(crate) fn remove(&self, service: &str) -> Result<PathBuf> {
         validate_service_name(service)?;
         if !self.root.join("layout-version").exists() {

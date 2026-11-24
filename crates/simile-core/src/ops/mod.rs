@@ -1,6 +1,7 @@
 mod audit;
 mod compile;
 mod conformance;
+mod console;
 mod describe;
 mod doctor;
 mod inspect;
@@ -17,9 +18,13 @@ mod test;
 mod update;
 mod version;
 
-pub use audit::{AuditFinding, AuditReport, AuditRequest, AuditSeverity, audit};
+pub use audit::{AuditFinding, AuditReport, AuditRequest, AuditSeverity, audit, audit_artifact};
 pub use compile::{CompileReport, CompileRequest, ContractFormat, WrittenArtifact, compile};
 pub use conformance::{ConformanceCase, ConformanceReport, ConformanceRequest, verify_conformance};
+pub use console::{
+    ConsoleArtifact, ConsoleCatalog, ConsoleMetrics, ConsoleOperation, ConsoleOutcome,
+    ConsoleRequest, ConsoleService, ConsoleServiceEntry, ConsoleServiceIdentity, console,
+};
 pub use describe::{
     DescribeServiceReport, DescribeServiceRequest, DescribedAsyncOperation, DescribedBackend,
     DescribedFault, DescribedFaultProfile, DescribedObject, DescribedOperation, DescribedOutcome,

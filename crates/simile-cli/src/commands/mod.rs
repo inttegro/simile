@@ -1,7 +1,8 @@
 mod audit;
-mod automatic_reporting;
+pub(crate) mod automatic_reporting;
 mod compile;
 mod conformance;
+mod console;
 mod describe;
 mod doctor;
 mod inspect;
@@ -40,6 +41,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
     match command {
         Command::Audit(arguments) => audit::execute(arguments, terminal),
         Command::Compile(arguments) => compile::execute(arguments, terminal),
+        Command::Console(arguments) => console::execute(arguments, ctx, terminal),
         Command::Conformance(arguments) => conformance::execute(arguments, terminal),
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Describe(arguments) => describe::execute(arguments, ctx, terminal),
