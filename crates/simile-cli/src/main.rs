@@ -41,7 +41,11 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
             | cli::Command::Start(_)
             | cli::Command::Test(_)
     );
-    init_tracing(cli.verbose, cli.quiet, runs_server, terminal);
+    let owns_terminal = matches!(
+        &cli.command,
+        cli::Command::Console(arguments) if !arguments.web
+    );
+    init_tracing(cli.verbose, cli.quiet, runs_server, owns_terminal, terminal);
     let build = BuildInfo::new(
         env!("CARGO_PKG_VERSION"),
         option_env!("SIMILE_BUILD_COMMIT"),
@@ -52,8 +56,16 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
     commands::execute(cli.command, &ctx, terminal)
 }
 
-fn init_tracing(verbosity: u8, quiet: bool, runs_server: bool, terminal: &Terminal) {
-    let fallback = if quiet {
+fn init_tracing(
+    verbosity: u8,
+    quiet: bool,
+    runs_server: bool,
+    owns_terminal: bool,
+    terminal: &Terminal,
+) {
+    // Why: the native console owns every terminal cell. Background trace lines would corrupt the
+    // alternate-screen UI, while runtime activity remains visible in its live exchange workspace.
+    let fallback = if quiet || owns_terminal {
         "off"
     } else {
         match verbosity {

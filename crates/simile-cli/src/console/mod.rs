@@ -124,11 +124,41 @@ impl ConsoleSession {
     }
 
     pub(crate) async fn inspect(&self, path: &str) -> Option<Value> {
-        let response = raw_get(self.runtime_address(), path).await.ok()?;
+        let response = raw_request(self.runtime_address(), "GET", path, None)
+            .await
+            .ok()?;
         if response.status != 200 {
             return None;
         }
         serde_json::from_slice(&response.body).ok()
+    }
+
+    pub(crate) async fn act(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Value> {
+        let encoded = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(Error::Serialize)?;
+        let response = raw_request(self.runtime_address(), method, path, encoded.as_deref())
+            .await
+            .map_err(Error::ConsoleRequest)?;
+        let decoded = serde_json::from_slice::<Value>(&response.body).map_err(Error::Serialize)?;
+        if (200..300).contains(&response.status) {
+            return Ok(decoded);
+        }
+        let message = decoded
+            .pointer("/error/message")
+            .or_else(|| decoded.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("runtime inspection action failed");
+        Err(Error::ConsoleAction(format!(
+            "{message} (HTTP {})",
+            response.status
+        )))
     }
 
     pub(crate) async fn close(&mut self) {
@@ -237,7 +267,7 @@ struct RawResponse {
 async fn probe(address: SocketAddr) -> Probe {
     let response = tokio::time::timeout(
         Duration::from_millis(350),
-        raw_get(address, "/.simile/inspection"),
+        raw_request(address, "GET", "/.simile/inspection", None),
     )
     .await;
     match response {
@@ -249,10 +279,20 @@ async fn probe(address: SocketAddr) -> Probe {
     }
 }
 
-async fn raw_get(address: SocketAddr, path: &str) -> std::io::Result<RawResponse> {
+async fn raw_request(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> std::io::Result<RawResponse> {
     let mut stream = tokio::net::TcpStream::connect(address).await?;
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    let body = body.unwrap_or_default();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
     stream.write_all(request.as_bytes()).await?;
+    stream.write_all(body).await?;
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).await?;
     let header_end = bytes

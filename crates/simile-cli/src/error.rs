@@ -48,6 +48,12 @@ pub enum Error {
     #[error("could not render the interactive console")]
     ConsoleRender(#[source] io::Error),
 
+    #[error("could not communicate with the local console runtime")]
+    ConsoleRequest(#[source] io::Error),
+
+    #[error("console action failed: {0}")]
+    ConsoleAction(String),
+
     #[error("no registered services; run `simile register NAME --config URL_OR_FILE` first")]
     NoRegisteredServices,
 
@@ -81,6 +87,8 @@ impl Error {
             | Self::ConsoleTerminalRequired
             | Self::ConsoleEvent(_)
             | Self::ConsoleRender(_)
+            | Self::ConsoleRequest(_)
+            | Self::ConsoleAction(_)
             | Self::NoRegisteredServices
             | Self::ConsoleServiceConflict { .. }
             | Self::Server(_)
