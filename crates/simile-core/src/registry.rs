@@ -14,6 +14,7 @@ use crate::{Error, Result};
 const LAYOUT_VERSION: &str = "1";
 const MANIFEST_VERSION: u16 = 1;
 const CONFIG_FILE: &str = "config.hcl";
+const CONTRACT_FILE: &str = "contract.source";
 const ARTIFACT_FILE: &str = "service.similec";
 const MANIFEST_FILE: &str = "manifest.json";
 const CURRENT_FILE: &str = "current";
@@ -27,6 +28,7 @@ pub(crate) struct Registry {
 pub(crate) struct RegistrationInput<'a> {
     pub service: &'a str,
     pub config: &'a str,
+    pub contract: &'a str,
     pub config_source: SourceLocation,
     pub openapi_source: SourceLocation,
     pub listen: SocketAddr,
@@ -42,6 +44,7 @@ pub(crate) struct RegisteredService {
     pub artifact: Artifact,
     pub artifact_bytes: Vec<u8>,
     pub config_contents: String,
+    pub contract_contents: Option<String>,
     pub directory: PathBuf,
 }
 
@@ -119,6 +122,11 @@ impl Registry {
 
         let result = (|| {
             write_private(&staging.join(CONFIG_FILE), input.config.as_bytes(), false)?;
+            write_private(
+                &staging.join(CONTRACT_FILE),
+                input.contract.as_bytes(),
+                false,
+            )?;
             write_private(&staging.join(ARTIFACT_FILE), input.artifact_bytes, false)?;
 
             let summary = input.artifact.summary();
@@ -172,6 +180,7 @@ impl Registry {
                 artifact: input.artifact.clone(),
                 artifact_bytes: input.artifact_bytes.to_vec(),
                 config_contents: input.config.to_owned(),
+                contract_contents: Some(input.contract.to_owned()),
                 directory: revision_directory.clone(),
             })
         })();
@@ -236,6 +245,31 @@ impl Registry {
                 service: service.to_owned(),
                 reason: format!("stored service configuration is not UTF-8: {source}"),
             })?;
+        // Why: revisions created before contract snapshots existed remain loadable. New revisions
+        // always use the immutable stored source so the console shows the contract that compiled.
+        let contract_contents = match fs::read(directory.join(CONTRACT_FILE)) {
+            Ok(bytes) => {
+                Some(
+                    String::from_utf8(bytes).map_err(|source| Error::InvalidRegistration {
+                        service: service.to_owned(),
+                        reason: format!("stored contract source is not UTF-8: {source}"),
+                    })?,
+                )
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                match &manifest.openapi_source {
+                    SourceLocation::Path { value } => fs::read_to_string(value).ok(),
+                    SourceLocation::Url { .. } => None,
+                }
+            }
+            Err(source) => {
+                return Err(Error::RegistryIo {
+                    action: "read registered contract source",
+                    path: directory.join(CONTRACT_FILE),
+                    source,
+                });
+            }
+        };
 
         Ok(RegisteredService {
             revision,
@@ -243,6 +277,7 @@ impl Registry {
             artifact,
             artifact_bytes,
             config_contents,
+            contract_contents,
             directory,
         })
     }

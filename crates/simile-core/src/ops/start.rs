@@ -63,6 +63,7 @@ impl PreparedService {
 pub(crate) struct PreparedConfiguration {
     pub service: PreparedService,
     pub openapi_source: SourceLocation,
+    pub contract_contents: String,
 }
 
 /// Resolve, validate, and compile a runnable service without binding its socket.
@@ -135,6 +136,7 @@ pub(crate) fn prepare_loaded_service(
             }
         }
     };
+    let contract_contents = contract_snapshot(&contract);
     let mut modules = Vec::with_capacity(document.service.modules.len() + 1);
     if !module_is_empty(&document.inline_module) {
         modules.push(document.inline_module);
@@ -207,7 +209,20 @@ pub(crate) fn prepare_loaded_service(
             artifact_bytes: encoded,
         },
         openapi_source,
+        contract_contents,
     })
+}
+
+fn contract_snapshot(contract: &LoadedContract) -> String {
+    if contract.sources.len() == 1 {
+        return contract.sources[0].1.clone();
+    }
+    contract
+        .sources
+        .iter()
+        .map(|(name, contents)| format!("// source: {name}\n{contents}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn prepare_registered_service(

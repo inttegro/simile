@@ -23,7 +23,8 @@ pub struct ConsoleRequest {
 ///
 /// Terminal and browser presentations consume this same model. It contains
 /// public contract metadata and local runtime addresses, never profile secret
-/// values or raw configuration contents.
+/// values. The registered HCL snapshot is available only to the local terminal
+/// presentation and is deliberately omitted from serialized browser payloads.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleCatalog {
@@ -56,6 +57,10 @@ pub struct ConsoleService {
     pub principals: Vec<DescribedPrincipal>,
     pub profiles: Vec<DescribedProfile>,
     pub findings: Vec<AuditFinding>,
+    #[serde(skip_serializing)]
+    pub config_contents: String,
+    #[serde(skip_serializing)]
+    pub contract_contents: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -191,6 +196,10 @@ fn service_model(registered: RegisteredService) -> ConsoleService {
     model_from_parts(
         &registered.artifact,
         registered.artifact_bytes.len(),
+        ConsoleSourceSnapshots {
+            config: registered.config_contents,
+            contract: registered.contract_contents,
+        },
         source,
         contract,
         registered.revision,
@@ -198,9 +207,15 @@ fn service_model(registered: RegisteredService) -> ConsoleService {
     )
 }
 
+struct ConsoleSourceSnapshots {
+    config: String,
+    contract: Option<String>,
+}
+
 fn model_from_parts(
     artifact: &Artifact,
     encoded_bytes: usize,
+    snapshots: ConsoleSourceSnapshots,
     source: String,
     contract: String,
     revision: String,
@@ -376,6 +391,8 @@ fn model_from_parts(
         principals: described.principals,
         profiles: described.profiles,
         findings: audit.findings,
+        config_contents: snapshots.config,
+        contract_contents: snapshots.contract,
     }
 }
 
@@ -440,6 +457,17 @@ mod tests {
             .unwrap_or_else(|| panic!("selected service"));
         assert_eq!(selected.service.name, "orders");
         assert_eq!(selected.metrics.operations, 3);
+        assert!(selected.config_contents.contains("service \"orders\""));
+        assert!(
+            selected
+                .contract_contents
+                .as_deref()
+                .is_some_and(|contract| contract.contains("openapi:"))
+        );
+        let serialized = serde_json::to_value(&selected)
+            .unwrap_or_else(|error| panic!("could not serialize console model: {error}"));
+        assert!(serialized.get("configContents").is_none());
+        assert!(serialized.get("contractContents").is_none());
         assert!(
             selected
                 .operations

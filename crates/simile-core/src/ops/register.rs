@@ -60,6 +60,7 @@ pub(crate) fn install(
     let registered = registry.register(RegistrationInput {
         service,
         config: &config.contents,
+        contract: &configured.contract_contents,
         config_source: config.source.clone(),
         openapi_source: configured.openapi_source,
         listen: prepared.report.listen,
@@ -142,6 +143,12 @@ mod tests {
 
         assert!(report.config.is_file());
         assert!(report.artifact.is_file());
+        assert!(report.directory.join("contract.source").is_file());
+        assert!(
+            fs::read_to_string(report.directory.join("contract.source"))
+                .unwrap_or_else(|error| panic!("{error}"))
+                .contains("openapi:")
+        );
         assert!(report.directory.join("manifest.json").is_file());
         assert_eq!(
             fs::read_to_string(root.join("services/orders/current"))
