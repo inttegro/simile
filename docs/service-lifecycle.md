@@ -196,6 +196,6 @@ atomic rename.
 
 - [Set up a service](/service-setup) when the provider provisions credentials or caller settings.
 - [Run one operation](/run-operation) to exercise the contract without a long-running server.
-- [Local testing](/local-testing) to supervise an application test process.
-- [State inspection](/state-inspection) to follow persisted resources and causal history.
+- [Test an application](/local-testing) to give a test process ownership of the emulator lifecycle.
+- [Open the console](/simile-web) to inspect operations, exchanges, state, and deferred work.
 - [Application and registry](/application-registry) for the installation and ownership internals.

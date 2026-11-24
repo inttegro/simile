@@ -13,10 +13,6 @@ results, persists declared state, and reproduces failures.
 
 Choose the path that matches what you need to do.
 
-Evaluating Simile for a team? Start with the [design trade-offs](/design-trade-offs),
-[security boundary](/hosted-test-environment-risks), and
-[cost model](/test-infrastructure-costs).
-
 <Columns cols={2}>
   <Card
     title="Run your first service"
@@ -28,13 +24,31 @@ Evaluating Simile for a team? Start with the [design trade-offs](/design-trade-o
     Define one operation, start its local endpoint, and run an application test.
   </Card>
   <Card
-    title="Use a service"
+    title="Run a service"
     icon="play"
     href="/service-lifecycle"
     cta="Follow the lifecycle"
     arrow="true"
   >
-    Register a provider definition, create caller profiles, start it, test, inspect, and update it.
+    Register a provider definition, create caller profiles, start it, call it, and update it.
+  </Card>
+  <Card
+    title="Test an application"
+    icon="vial"
+    href="/local-testing"
+    cta="Run an integration test"
+    arrow="true"
+  >
+    Supervise a local test command or run the same service in Docker and CI.
+  </Card>
+  <Card
+    title="Inspect a service"
+    icon="display"
+    href="/simile-web"
+    cta="Open the console"
+    arrow="true"
+  >
+    Follow operations, exchanges, state, deferred work, scenarios, faults, and fidelity evidence.
   </Card>
   <Card
     title="Author a service"
@@ -54,22 +68,9 @@ Evaluating Simile for a team? Start with the [design trade-offs](/design-trade-o
   >
     Proxy a local integration through a real service and review the draft Simile creates.
   </Card>
-  <Card
-    title="Report an inconsistency"
-    icon="bug"
-    href="/issue-reporting"
-    cta="Prepare a report"
-    arrow="true"
-  >
-    Capture a reproducible mismatch, verify it locally, and send it with explicit consent.
-  </Card>
-  <Card
-    title="Understand the system"
-    icon="diagram-project"
-    href="/architecture"
-    cta="Explore the architecture"
-    arrow="true"
-  >
-    Follow sources through compilation, execution, durable state, and delivery.
-  </Card>
 </Columns>
+
+Evaluating Simile for a team? Review the [design trade-offs](/design-trade-offs),
+[security boundary](/hosted-test-environment-risks), and
+[cost model](/test-infrastructure-costs). When an emulator result contradicts its definition,
+[prepare a verified issue report](/issue-reporting).

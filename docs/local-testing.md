@@ -122,3 +122,10 @@ simile start inttegro --port 8484
 
 The process remains in the foreground until interrupted. See [Lifecycle](/service-lifecycle) for
 registration, updates, setup, and long-running startup.
+
+## Continue
+
+- [Open the console](/simile-web) to follow the exchanges and state produced by a test.
+- [Run in CI](/ci-testing) to move the same lifecycle into an isolated pipeline job.
+- [Use GitHub Actions](/github-actions) or [Docker](/docker) for concrete environment setup.
+- [Run a conformance suite](/conformance-suites) when several exact reproductions form one gate.

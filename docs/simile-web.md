@@ -149,6 +149,9 @@ console on a machine you trust.
 
 ## Related guides
 
+- [State, identity, and replay](/state-and-replay) explains which continuity survives a restart.
 - [State inspection](/state-inspection) explains live and offline ownership boundaries.
+- [Reproduction bundles](/reproduction-bundles) preserve one exact execution outside the console.
+- [Report an issue](/issue-reporting) verifies and submits a captured inconsistency.
 - [Fidelity audit](/fidelity-audit) explains the findings shown in the console.
 - [Describe a service](/describe-service) provides a non-interactive summary.

@@ -22,6 +22,15 @@
 					"index",
 					"why-simile",
 					"downloads",
+					"quickstart",
+					{
+						"group": "Adoption and trust",
+						"pages": [
+							"design-trade-offs",
+							"hosted-test-environment-risks",
+							"test-infrastructure-costs"
+						]
+					},
 					{
 						"group": "Release notes",
 						"pages": [
@@ -32,24 +41,15 @@
 							"release-notes/v0-1-1",
 							"release-notes/v0-1-0"
 						]
-					},
-					"quickstart"
+					}
 				]
 			},
 			{
-				"group": "Trust",
-				"pages": [
-					"design-trade-offs",
-					"hosted-test-environment-risks",
-					"test-infrastructure-costs"
-				]
-			},
-			{
-				"group": "Use a service",
+				"group": "Run a service",
 				"pages": [
 					"service-lifecycle",
 					{
-						"group": "Set up access",
+						"group": "Access and profiles",
 						"pages": [
 							"principals",
 							"service-setup",
@@ -66,26 +66,26 @@
 							"request-validation",
 							"response-synthesis"
 						]
-					},
-					{
-						"group": "Test an application",
-						"pages": [
-							"local-testing",
-							"ci-testing",
-							"github-actions",
-							"docker"
-						]
-					},
-					{
-						"group": "Inspect and reproduce",
-						"pages": [
-							"simile-web",
-							"state-inspection",
-							"state-and-replay",
-							"reproduction-bundles",
-							"conformance-suites"
-						]
 					}
+				]
+			},
+			{
+				"group": "Test an application",
+				"pages": [
+					"local-testing",
+					"ci-testing",
+					"github-actions",
+					"docker",
+					"conformance-suites"
+				]
+			},
+			{
+				"group": "Inspect a service",
+				"pages": [
+					"simile-web",
+					"state-and-replay",
+					"state-inspection",
+					"reproduction-bundles"
 				]
 			},
 			{
@@ -126,7 +126,7 @@
 				]
 			},
 			{
-				"group": "Proxy and learn",
+				"group": "Learn a service",
 				"pages": [
 					"proxy-and-learn",
 					"proxy-api-calls",

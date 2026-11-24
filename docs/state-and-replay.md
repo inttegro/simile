@@ -66,4 +66,5 @@ expected response. `simile replay PATH` verifies the digest and re-executes the 
 [Conformance suites](/conformance-suites) for batch verification.
 
 Use [State inspection](/state-inspection) to inspect resource identities and causal history without
-printing stored values by default.
+printing stored values by default. Use the [Console](/simile-web) when the service is running and
+you want exchanges, state, and deferred work in one workspace.
