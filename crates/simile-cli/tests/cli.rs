@@ -94,7 +94,11 @@ fn exposes_the_terminal_and_web_console_forms() {
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
-    assert!(help.contains("Usage: simile console [OPTIONS] [SERVICE]"));
+    let usage = format!(
+        "Usage: simile{} console [OPTIONS] [SERVICE]",
+        std::env::consts::EXE_SUFFIX
+    );
+    assert!(help.contains(&usage));
     assert!(help.contains("--web"));
     assert!(help.contains("Open the console in the system browser instead of the terminal"));
 
