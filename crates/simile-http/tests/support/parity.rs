@@ -63,6 +63,26 @@ pub fn exercise(service: &Service) -> Result<(), Box<dyn std::error::Error>> {
             expected,
             "{method} {uri}"
         );
+        if exchange.response.status().is_success() {
+            let capture = exchange
+                .capture
+                .as_ref()
+                .ok_or("successful exchange has no replay evidence")?;
+            assert_eq!(
+                capture.logical_time_milliseconds,
+                service.logical_time_milliseconds()?
+            );
+            assert_eq!(capture.status, expected);
+            assert!(!capture.effect_failed);
+            if method != "HEAD" {
+                assert_eq!(&capture.response_bytes, exchange.response.body());
+            }
+        } else {
+            assert!(
+                exchange.capture.is_none(),
+                "rejected request was recorded as an execution"
+            );
+        }
         if method == "HEAD" {
             assert!(exchange.response.body().is_empty());
         }

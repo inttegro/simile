@@ -263,8 +263,8 @@ fn dispatch(
         Err(_) => {
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "clock_unavailable",
-                "service clock is unavailable",
+                "service_unavailable",
+                "the service clock is unavailable",
             );
         }
     };

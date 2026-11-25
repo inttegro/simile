@@ -2,7 +2,7 @@
 
 Build and verify the portable Rust engine, shared application workflows, and a typed
 Worker API, then the browser playground and explicit browser persistence.
-The first three implementation PRs are merged; the playground builds on `origin/wasm`.
+The implementation and playground PRs are merged into `wasm`.
 
 ## Phase 1 — Portable core
 
@@ -141,7 +141,33 @@ The first three implementation PRs are merged; the playground builds on `origin/
   lint, build, and all five repository checks pass. Cloudflare version:
   `3368f291-ba84-4816-9807-06f76353fa6e`.
 
+## Upstream integration — 25 November 2026
+
+- [x] Fetch both remotes and fast-forward local and fork `master` to upstream
+  `12bf17b` (18 commits). Preserve the prior master and wasm tips in local
+  `backup/*-before-upstream-20261125` branches; keep upstream fetch-only.
+- [x] Rebase all 20 feature commits and four merge commits onto updated `master`
+  in an isolated worktree, preserving the merged PR structure.
+- [x] Resolve the console, durable exchange history, logical-time, and deferred-work
+  conflicts. Keep upstream native APIs, idle queue polling, and state migration;
+  retain browser feature gates, head-first validation, and stale-receipt rejection.
+- [x] Support upstream exchange bundle verification from in-memory files. Extend
+  regressions for capture timestamps and replay after the source directory is removed.
+  Align the private TypeScript package with the Rust workspace's 0.5.0 version.
+- [x] Pass all five repository checks, 363 native tests, portable dependency checks,
+  five Chromium Rust tests, and 149 Worker assertions under Rust 1.85.0.
+- [x] Pass playground typecheck, lint, 21 unit tests, the release build, all 13
+  Chromium end-to-end tests, and native CLI handoff of downloaded files.
+
 ## Decisions and tradeoffs
+
+- Keep durable exchange history and report submission in the native listener. The
+  shared HTTP layer returns execution evidence and the exact logical timestamp;
+  the listener sanitizes evidence before storing or reporting it. This preserves
+  the inspector without pulling native storage into browser dependencies.
+- Keep upstream's infallible artifact-audit API and its deferred-work module; adapt
+  the WASM caller and move lease validation into that module. Reuse upstream
+  behavior rather than restoring the older service layout.
 
 - Preserve default native crate behavior; portable consumers explicitly disable
   native features. The CLI explicitly enables its native feature set.
@@ -223,6 +249,9 @@ The first three implementation PRs are merged; the playground builds on `origin/
 
 ## What was achieved
 
+- Upstream integration: the merged browser work now builds on upstream 0.5.0,
+  including its console, durable history, and logical-time execution.
+
 - Phase 1: portable feature boundaries, browser entropy and clocks, and a real
   Chromium harness are implemented. Native checks pass under Rust 1.85.
 - Phase 2: shared workspace and application operations, HTTP exchanges, webhook
@@ -272,3 +301,7 @@ The first three implementation PRs are merged; the playground builds on `origin/
   documentation has validated diagrams and source links; repository checks pass.
   The Cloudflare deployment passes the complete browser suite over HTTPS and the
   native checks using files exported from the public site.
+
+- Upstream integration: passed locally on the rebased branch. All repository,
+  portable, Worker, playground, and native handoff checks above pass. The browser
+  graph still excludes Axum, Tokio, redb, fs2, ureq, and Tree-sitter.

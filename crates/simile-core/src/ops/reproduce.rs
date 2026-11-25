@@ -897,7 +897,14 @@ effect "schedule_work" {
             verified.diagnostic.message,
             "the captured HTTP exchange is reproduced"
         );
-        drop(fs::remove_dir_all(path));
+        let bundle = MemoryBundle::load(&path).unwrap_or_else(|error| panic!("{error}"));
+        fs::remove_dir_all(path).unwrap_or_else(|error| panic!("{error}"));
+        // Portable replay must use uploaded bundle bytes, even when the original
+        // directory no longer exists.
+        assert_eq!(
+            verify_bundle(&bundle).unwrap_or_else(|error| panic!("{error}")),
+            verified
+        );
     }
 
     #[test]
