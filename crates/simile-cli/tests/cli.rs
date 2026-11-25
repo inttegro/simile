@@ -79,7 +79,7 @@ fn prints_version_as_json() {
         .success()
         .stdout_eq(concat!(
             "{\n",
-            "  \"version\": \"0.5.0\",\n",
+            "  \"version\": \"0.5.1\",\n",
             "  \"architecture\": \"[..]\",\n",
             "  \"operatingSystem\": \"[..]\"\n",
             "}\n"
@@ -122,7 +122,7 @@ fn doctor_writes_machine_output_only_to_stdout() {
             "    {\n",
             "      \"name\": \"build\",\n",
             "      \"status\": \"pass\",\n",
-            "      \"detail\": \"simile 0.5.0\"\n",
+            "      \"detail\": \"simile 0.5.1\"\n",
             "    },\n",
             "    {\n",
             "      \"name\": \"current-directory\",\n",
@@ -214,7 +214,7 @@ fn start_rejects_a_name_that_does_not_match_the_service_configuration() {
         .assert()
         .failure()
         .stderr_eq(concat!(
-            "🎭 simile v0.5.0\n",
+            "🎭 simile v0.5.1\n",
             "▸ preparing payments\n",
             "✗ could not prepare payments [..]\n",
             "service configuration names `orders`, but `payments` was requested\n"
@@ -258,9 +258,9 @@ fn supervises_a_test_command_against_the_current_simfile() {
         ])
         .assert()
         .success()
-        .stdout_eq(concat!("simile 0.5.0\n", "target [..]\n"))
+        .stdout_eq(concat!("simile 0.5.1\n", "target [..]\n"))
         .stderr_eq(concat!(
-            "🎭 simile v0.5.0\n",
+            "🎭 simile v0.5.1\n",
             "▸ preparing the current Simfile\n",
             "✓ prepared orders [..]\n",
             "▸ starting orders\n",
@@ -323,7 +323,7 @@ fn injects_the_selected_profile_and_bound_service_address() {
         .success()
         .stdout_eq("")
         .stderr_eq(concat!(
-            "🎭 simile v0.5.0\n",
+            "🎭 simile v0.5.1\n",
             "▸ preparing payments\n",
             "✓ prepared payments [..]\n",
             "▸ starting payments\n",
@@ -406,7 +406,7 @@ fn registers_a_service_in_simile_home() {
         .assert()
         .failure()
         .stderr_eq(concat!(
-            "🎭 simile v0.5.0\n",
+            "🎭 simile v0.5.1\n",
             "▸ registering orders\n",
             "✗ could not register orders [..]\n",
             "service `orders` is already registered; pass --force to replace it\n"
@@ -1040,7 +1040,7 @@ fn start_reports_an_unregistered_service_without_config() {
         .assert()
         .failure()
         .stderr_eq(concat!(
-            "🎭 simile v0.5.0\n",
+            "🎭 simile v0.5.1\n",
             "▸ preparing orders\n",
             "✗ could not prepare orders [..]\n",
             "service `orders` is not registered; run `simile register orders --config URL_OR_FILE`\n"
@@ -1094,7 +1094,7 @@ fn writes_and_inspects_a_compiled_artifact() {
             // Why: machine-readable inspection must report the same envelope version as the
             // human compile output so tooling cannot ignore state-projection runtime records.
             "  \"formatVersion\": 24,\n",
-            "  \"compilerVersion\": \"0.5.0\",\n",
+            "  \"compilerVersion\": \"0.5.1\",\n",
             "  \"service\": \"Orders\",\n",
             "  \"serviceVersion\": \"1.0.0\",\n",
             "  \"openapiVersion\": \"3.2.1\",\n",

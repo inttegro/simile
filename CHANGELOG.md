@@ -4,6 +4,19 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.5.1 - 2026-11-25
+
+- Expand `simile console` into an immersive terminal interface and add live, searchable HTTP and
+  Stack logs to the browser console, including split and full-screen views.
+- Preserve registered contract sources and compatible durable service state across updates and
+  restarts, while deriving request-related timestamps from the service clock.
+- Decode documented `scheduler.schedule` effects correctly and retain failed effect commits in
+  exchange history so they remain inspectable and reportable.
+- Preserve path, query, header, cookie, multipart, and binary request evidence in reproduction
+  bundles, including safe deterministic fixtures for file parts.
+- Accept current reproduction-bundle versions in the report receiver and verify complete evidence
+  without silently discarding transport data.
+
 ## 0.5.0 - 2026-11-24
 
 - Add `simile console` with terminal and browser interfaces for operations, outcomes, scenarios,

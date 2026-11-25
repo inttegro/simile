@@ -1,0 +1,66 @@
+---
+title: Simile 0.5.1
+sidebarTitle: 0.5.1
+description: Immersive consoles, durable service continuity, complete reproduction evidence, and scheduler reliability.
+---
+
+Released November 25, 2026.
+
+Simile 0.5.1 strengthens the feedback loop around a running emulator. The terminal and browser
+consoles now surface live service activity, ordinary restarts retain compatible state, and reports
+carry enough transport evidence to reproduce the exchange that prompted them.
+
+<Info>
+  The compiled artifact format remains at version 24. Existing 0.5.0 artifacts remain readable.
+  Run `simile update SERVICE` to rebuild an installed service with the current compiler.
+</Info>
+
+## Work from the terminal or browser
+
+Open the immersive terminal console:
+
+```bash
+simile console inttegro
+```
+
+Use the same command with `--web` for the browser interface:
+
+```bash
+simile console inttegro --web
+```
+
+The terminal console provides service, operation, exchange, state, deferred-work, scenario, fault,
+report, fidelity, and settings views. Both consoles include live HTTP and Stack activity. The
+browser log dock supports filtering, split and full-screen layouts, and light or dark appearance.
+
+## Continue across updates and restarts
+
+Simile now keeps the resolved contract sources needed to update a registered service. Compatible
+durable Stack state and sanitized exchange history survive ordinary restarts and artifact updates.
+State is removed only through an explicit clear or confirmed service removal.
+
+Request-related timestamps use the service clock, so created, updated, and lifecycle fields share
+the request instant when the contract permits it. Explicit bindings and scheduled timestamps keep
+their declared authority.
+
+## Reproduce complete HTTP exchanges
+
+Reproduction bundles now retain transport-neutral path, query, header, and cookie parameters.
+Multipart evidence keeps ordinary fields plus safe file metadata and deterministic replacement
+bytes, allowing file and upload failures to be reported without retaining original file contents.
+
+JSON file parts remain binary when the contract declares a file, regardless of the part's media
+type. The current report receiver accepts these bundles and verifies the complete evidence.
+
+## Commit scheduler effects reliably
+
+Documented `scheduler.schedule` effects now translate `due_at` correctly at the Stack boundary.
+If an effect commit fails, the 500 exchange is retained and available to the console and reporting
+workflow instead of disappearing from inspection history.
+
+## Install or inspect the release
+
+- [Download Simile 0.5.1](/downloads)
+- [Open the Console guide](/simile-web)
+- [Create a reproduction bundle](/reproduction-bundles)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.5.1)
