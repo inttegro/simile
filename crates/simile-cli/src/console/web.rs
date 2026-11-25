@@ -17,6 +17,8 @@ use crate::terminal::Terminal;
 const INDEX: &str = include_str!("../../../../web/index.html");
 const STYLES: &str = include_str!("../../../../web/styles.css");
 const APP: &str = include_str!("../../../../web/app.js");
+const INTER_VARIABLE: &[u8] =
+    include_bytes!("../../../../web/assets/fonts/inter/InterVariable-Latin.woff2");
 
 #[derive(Clone)]
 struct WebState {
@@ -31,6 +33,10 @@ pub(crate) async fn run(session: ConsoleSession, terminal: &Terminal) -> Result<
         .route("/", get(index))
         .route("/styles.css", get(styles))
         .route("/app.js", get(app_script))
+        .route(
+            "/assets/fonts/inter/InterVariable-Latin.woff2",
+            get(inter_variable),
+        )
         .route("/service-data.js", get(service_data))
         .route("/api/catalog", get(catalog))
         .fallback(index)
@@ -91,6 +97,16 @@ async fn app_script() -> impl IntoResponse {
     )
 }
 
+async fn inter_variable() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "font/woff2"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        INTER_VARIABLE,
+    )
+}
+
 async fn service_data(State(state): State<WebState>) -> Response {
     let session = state.session.lock().await;
     let services = match serde_json::to_string(&session.catalog().services) {
@@ -138,4 +154,14 @@ fn json_error(error: serde_json::Error) -> Response {
         ),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::INTER_VARIABLE;
+
+    #[test]
+    fn embedded_inter_font_is_woff2() {
+        assert!(INTER_VARIABLE.starts_with(b"wOF2"));
+    }
 }

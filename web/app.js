@@ -24,6 +24,7 @@ const navItems = [
   ['scenarios', 'Scenarios'],
   ['faults', 'Faults'],
   ['fidelity', 'Fidelity'],
+  ['settings', 'Settings'],
 ];
 
 const operationRows = serviceData.operations.map((operation) => [
@@ -144,6 +145,11 @@ const state = {
   exchangeQuery: '',
   selectedEvent: 'response',
   autoRefresh: true,
+  logDock: window.localStorage.getItem('simile-log-dock') || 'collapsed',
+  logQuery: '',
+  logFollowTail: true,
+  logScrollTop: 0,
+  soundEnabled: window.localStorage.getItem('simile-sound-alerts') !== 'muted',
   eventFilter: 'all',
   selectedResource: 'or_simile_requires_payment',
   selectedResourceGroup: 'orders',
@@ -157,6 +163,7 @@ const state = {
   sidebarCollapsed: false,
   theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
 };
+if (!['collapsed', 'partial', 'full'].includes(state.logDock)) state.logDock = 'collapsed';
 
 const runtime = {
   connected: false,
@@ -166,6 +173,7 @@ const runtime = {
   deferred: null,
   error: null,
   signature: '',
+  observationsReady: false,
 };
 
 function runtimeExchangeRows() {
@@ -516,6 +524,7 @@ const icons = {
   service: '<path d="M12 3 3.8 7.5 12 12l8.2-4.5L12 3Z"/><path d="m3.8 12 8.2 4.5 8.2-4.5M3.8 16.5 12 21l8.2-4.5"/>',
   operations: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="7" cy="6" r="1"/><circle cx="17" cy="12" r="1"/><circle cx="10" cy="18" r="1"/>',
   exchanges: '<path d="M4 7h11M12 4l3 3-3 3M20 17H9M12 14l-3 3 3 3"/>',
+  logs: '<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="3" cy="6" r=".7"/><circle cx="3" cy="12" r=".7"/><circle cx="3" cy="18" r=".7"/>',
   state: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/>',
   deferred: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   scenarios: '<path d="M5 4h14v6H5zM5 14h14v6H5zM9 7h6M9 17h6"/>',
@@ -533,6 +542,10 @@ const icons = {
   warning: '<path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v4M12 17h.01"/>',
   replay: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>',
   terminal: '<path d="m4 6 5 5-5 5M11 18h9"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  collapse: '<path d="m6 9 6 6 6-6"/>',
+  maximize: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
+  restore: '<path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M20.7 15.1A8.5 8.5 0 0 1 8.9 3.3 8.5 8.5 0 1 0 20.7 15.1Z"/>',
 };
@@ -628,7 +641,7 @@ function route() {
   const [section, detail, view] = raw.split('/').map((segment) => {
     try { return decodeURIComponent(segment); } catch { return segment; }
   });
-  const known = navItems.some(([key]) => key === section) || section === 'settings' || section === 'docs';
+  const known = navItems.some(([key]) => key === section) || ['logs', 'settings', 'docs'].includes(section);
   return { section: known ? section : 'service', detail, view };
 }
 
@@ -678,17 +691,27 @@ function codePanel(title, code, options = {}) {
 }
 
 function renderShell() {
-  const current = route();
+  let current = route();
+  if (current.section === 'logs') {
+    state.logDock = 'full';
+    window.localStorage.setItem('simile-log-dock', state.logDock);
+    window.history.replaceState(null, '', '/service');
+    current = { section: 'service' };
+  }
+  const page = current;
   const app = document.getElementById('simile-web');
-  app.className = 'app';
+  app.className = `app app--logs-${state.logDock}`;
   app.innerHTML = `
     <header class="topbar">
       <div class="topbar__inner">
-        <button class="service-switcher" type="button" data-menu="service-switcher">${icon('logo', 'logo')}<span>${serviceData.service.name}</span><span class="service-revision">${serviceData.service.version}</span><span class="down-caret"></span></button>
+        <a class="product-brand" href="/service" aria-label="Simile home">${icon('logo', 'logo')}<strong>Simile</strong></a>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <button class="service-switcher" type="button" data-menu="service-switcher" aria-label="Switch local service" title="Switch local service"><span class="service-switcher__context">Service</span><strong>${serviceData.service.name}</strong><span class="service-revision">${serviceData.service.version}</span><span class="down-caret"></span></button>
         <div class="topbar__rail"><div class="local-context"><span class="${runtime.connected ? 'live-dot' : 'idle-dot'}"></span><strong>Local service</strong><span>${serviceData.service.listen}</span></div></div>
         <div class="topbar__actions">
           <button class="runtime-status" type="button" data-action="runtime"><span class="${runtime.connected ? 'live-dot' : 'idle-dot'}"></span>${runtime.connected ? 'Connected' : 'Disconnected'}</button>
           <button class="environment" type="button" data-menu="environment"><span class="clock-face"></span>${state.environment}<span class="down-caret"></span></button>
+          <button class="top-icon sound-toggle ${state.soundEnabled ? 'is-active' : ''}" type="button" data-action="toggle-sound" aria-label="${state.soundEnabled ? 'Mute' : 'Enable'} issue sounds" title="${state.soundEnabled ? 'Issue sounds enabled' : 'Issue sounds muted'}">${icon('bell')}</button>
           <button class="top-icon theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} mode" title="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} mode">${icon(state.theme === 'dark' ? 'sun' : 'moon')}</button>
           <button class="top-icon" type="button" data-action="terminal" aria-label="Open terminal">${icon('terminal')}</button>
           <a class="top-icon" href="/docs" aria-label="Documentation">?</a>
@@ -699,15 +722,15 @@ function renderShell() {
     <div class="product-nav">
       <div class="product-nav__inner">
         <nav class="primary-nav" aria-label="Primary navigation">
-          ${navItems.map(([key, label]) => `<a href="/${key}" class="nav-link ${current.section === key ? 'is-active' : ''}" ${current.section === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'deferred' ? '<span class="nav-count">0</span>' : ''}</a>`).join('')}
+          ${navItems.map(([key, label]) => `<a href="/${key}" class="nav-link ${page.section === key ? 'is-active' : ''}" ${page.section === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'deferred' ? '<span class="nav-count">0</span>' : ''}</a>`).join('')}
         </nav>
         <nav class="secondary-nav" aria-label="Support navigation">
-          <a href="/settings" class="nav-link ${current.section === 'settings' ? 'is-active' : ''}">${icon('settings')}<span>Settings</span></a>
-          <a href="/docs" class="nav-link ${current.section === 'docs' ? 'is-active' : ''}">${icon('docs')}<span>Docs</span></a>
+          <a href="/docs" class="nav-link ${page.section === 'docs' ? 'is-active' : ''}">${icon('docs')}<span>Docs</span></a>
         </nav>
       </div>
     </div>
-    <main id="workspace" class="workspace" tabindex="-1">${renderPage(current)}</main>
+    <main id="workspace" class="workspace" tabindex="-1">${renderPage(page)}</main>
+    ${logDock()}
     <div class="popover" data-popover hidden></div>
   `;
   bindInteractions();
@@ -1202,6 +1225,78 @@ function exchangeTable(rows, headerVisible, modern = false) {
   return `<table class="data-table exchange-table">${headerVisible ? tableHead(['Time', 'Method', 'Path', 'Operation', 'Status', 'Duration', 'Result']) : ''}<tbody>${rows.map(([id,method,path,operation,status,duration,result,time]) => `<tr class="clickable-row" data-exchange="${id}" tabindex="0"><td class="mono subtle">${time}</td><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><strong>${operation}</strong></td><td><span class="status-code ${Number(status) < 400 ? 'status-code--good' : 'status-code--warn'}">${status}</span></td><td class="mono">${duration}</td><td>${badge(result, 'success')}</td></tr>`).join('')}</tbody></table>`;
 }
 
+function liveLogEntries() {
+  if (!runtime.connected) return [];
+  const http = runtime.exchanges.map((exchange) => ({
+    id: `http:${exchange.id}`,
+    at: Number(exchange.startedAtMs),
+    level: Number(exchange.status) >= 500 ? 'error' : Number(exchange.status) >= 400 ? 'warn' : 'info',
+    source: 'HTTP',
+    message: `${exchange.method} ${exchange.path} → ${exchange.status}`,
+    detail: `${operationIdByKey.get(exchange.operation) || exchange.operation} · ${formatDuration(exchange.durationMicros)}`,
+  }));
+  const stack = (runtime.inspectionState?.events ?? []).filter((event) => {
+    // Why: the service log should show customer-facing API activity, not Simile's own profile and
+    // delivery bookkeeping, which is implementation noise and can overwhelm useful events.
+    return !String(event.resource?.name || '').startsWith('__simile_');
+  }).map((event) => {
+    const status = event.outcome?.status ?? 'succeeded';
+    return {
+      id: `stack:${event.sequence}`,
+      at: Number(event.at),
+      level: status === 'failed' ? 'error' : 'info',
+      source: 'STACK',
+      message: `${event.resource?.kind || 'stack'}.${event.resource?.name || 'resource'} · ${event.action || 'activity'}`,
+      detail: `${status}${event.operationId ? ` · ${event.operationId}` : ''}`,
+    };
+  });
+  return [...http, ...stack].sort((left, right) => left.at - right.at);
+}
+
+function logTimestamp(milliseconds) {
+  return new Intl.DateTimeFormat('sv-SE', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(milliseconds));
+}
+
+function logDock() {
+  const normalizedQuery = state.logQuery.trim().toLowerCase();
+  const entries = liveLogEntries();
+  const visibleCount = entries.filter((entry) => !normalizedQuery
+    || `${entry.level} ${entry.source} ${entry.message} ${entry.detail}`.toLowerCase().includes(normalizedQuery)).length;
+  const expanded = state.logDock !== 'collapsed';
+  const full = state.logDock === 'full';
+  const rows = entries.map((entry) => {
+    const symbol = entry.level === 'error' ? '×' : entry.level === 'warn' ? '!' : '✓';
+    return `<li class="log-entry log-entry--${entry.level}">
+      <span class="log-entry__rail" aria-hidden="true"></span>
+      <time>${logTimestamp(entry.at)}</time>
+      <span class="log-entry__status" aria-label="${entry.level}">${symbol}</span>
+      <code class="log-entry__source">${entry.source}</code>
+      <code class="log-entry__message">${escapeHtml(entry.message)}</code>
+      <span class="log-entry__detail">${escapeHtml(entry.detail)}</span>
+    </li>`;
+  }).join('');
+  return `<section class="log-dock" aria-label="Live logs">
+    <header class="log-dock__header">
+      <button class="log-dock__title" type="button" data-action="toggle-log-dock" aria-expanded="${expanded}">
+        ${icon('logs')}<strong>Live logs</strong><span class="log-dock__count" data-log-count>${visibleCount}</span>
+        <span class="log-dock__live"><i class="${state.autoRefresh ? 'live-dot' : 'idle-dot'}"></i>${state.autoRefresh ? 'Live' : 'Paused'}</span>
+      </button>
+      <div class="log-dock__tools">
+        ${expanded ? `<label class="log-dock__search">${icon('search')}<input type="search" data-log-search value="${escapeHtml(state.logQuery)}" placeholder="Filter logs" aria-label="Filter live logs"></label>` : ''}
+        <button class="log-dock__icon" type="button" data-action="refresh-runtime" aria-label="Refresh live logs" title="Refresh live logs">${icon('replay')}</button>
+        <button class="log-dock__icon" type="button" data-action="toggle-log-fullscreen" aria-label="${full ? 'Restore split log view' : 'Show logs full screen'}" title="${full ? 'Restore split view' : 'Full screen'}">${icon(full ? 'restore' : 'maximize')}</button>
+        <button class="log-dock__icon log-dock__collapse" type="button" data-action="toggle-log-dock" aria-label="${expanded ? 'Collapse live logs' : 'Expand live logs'}" title="${expanded ? 'Collapse' : 'Expand'}">${icon('collapse')}</button>
+      </div>
+    </header>
+    <div class="log-dock__body" role="log" aria-live="polite" aria-label="Sanitized runtime activity">
+      ${rows ? `<ol class="log-stream" data-log-stream>${rows}</ol>` : `<div class="log-dock__empty">${icon('logs')}<span>${runtime.connected ? 'Waiting for HTTP and Stack activity…' : `Waiting for ${escapeHtml(localServiceUrl)}…`}</span></div>`}
+    </div>
+  </section>`;
+}
+
 function statePage() {
   const live = runtime.connected && runtime.inspectionState;
   const source = live ? runtimeResourceGroups() : resourceGroups;
@@ -1284,10 +1379,10 @@ function settingsPage() {
       </div>
     </div>
   </section>` : '';
-  return `<div class="page page--narrow">${header('Settings', 'Service configuration and local preferences')}
-    <section class="settings-section"><h2>Service</h2><div class="settings-row"><div><strong>Listener</strong><p>Address used by integration clients.</p></div><code>${localServiceUrl}</code></div><div class="settings-row"><div><strong>Active profile</strong><p>Consumer setup applied to requests.</p></div><button class="select-button" data-action="choose-profile">${activeProfileName}<span class="down-caret"></span></button></div><div class="settings-row"><div><strong>Contract source</strong><p>Compiled source for this local service.</p></div><code>${serviceData.service.contract}</code></div><div class="settings-row"><div><strong>Simfile</strong><p>Behavior, state, profiles, and faults.</p></div><code>${serviceData.service.source}</code></div></section>
+  return `<div class="page page--narrow">${header('Settings', 'Service configuration and local console preferences')}
+    <section class="settings-section"><h2>Service configuration</h2><div class="settings-row"><div><strong>Registered service</strong><p>Select any service registered on this machine.</p></div><button class="select-button" data-menu="service-switcher">${serviceName}<span class="down-caret"></span></button></div><div class="settings-row"><div><strong>Listener</strong><p>Address used by integration clients.</p></div><code>${localServiceUrl}</code></div><div class="settings-row"><div><strong>Active profile</strong><p>Consumer setup applied to requests.</p></div><button class="select-button" data-action="choose-profile">${activeProfileName}<span class="down-caret"></span></button></div><div class="settings-row"><div><strong>Contract source</strong><p>Compiled public contract for this local service.</p></div><code>${serviceData.service.contract}</code></div><div class="settings-row"><div><strong>Simfile</strong><p>Composition, behavior, state, profiles, and faults.</p></div><code>${serviceData.service.source}</code></div></section>
     ${configuration}
-    <section class="settings-section"><h2>Interface</h2><div class="settings-row"><div><strong>Auto-refresh exchanges</strong><p>Refresh when runtime inspection is connected.</p></div><label class="switch"><input type="checkbox" data-action="auto-refresh" ${state.autoRefresh ? 'checked' : ''}><span></span></label></div><div class="settings-row"><div><strong>Expand JSON by default</strong><p>Open structured payloads when selecting events.</p></div><label class="switch"><input type="checkbox" checked><span></span></label></div><div class="settings-row"><div><strong>Dense tables</strong><p>Reduce row height for large contracts.</p></div><label class="switch"><input type="checkbox" checked><span></span></label></div></section><section class="settings-section settings-section--danger"><h2>Local data</h2><div class="settings-row"><div><strong>Reset service state</strong><p>Clears every resource and journal entry in the running local service.</p></div><button class="button button--danger" data-action="reset-state" ${runtime.connected ? '' : 'disabled'}>Reset local data</button></div></section></div>`;
+    <section class="settings-section"><h2>Interface</h2><div class="settings-row"><div><strong>Auto-refresh runtime</strong><p>Keep exchanges, logs, state, and deferred work current.</p></div><label class="switch"><input type="checkbox" data-action="auto-refresh" ${state.autoRefresh ? 'checked' : ''}><span></span></label></div><div class="settings-row"><div><strong>Issue sounds</strong><p>Play a short alert for a new 4xx/5xx exchange or runtime disconnect.</p></div><span class="settings-actions"><button class="button button--compact" data-action="test-sound" ${state.soundEnabled ? '' : 'disabled'}>Test sound</button><label class="switch"><input type="checkbox" data-action="toggle-sound" ${state.soundEnabled ? 'checked' : ''}><span></span></label></span></div><div class="settings-row"><div><strong>Expand JSON by default</strong><p>Open structured payloads when selecting events.</p></div><label class="switch"><input type="checkbox" checked><span></span></label></div><div class="settings-row"><div><strong>Dense tables</strong><p>Reduce row height for large contracts.</p></div><label class="switch"><input type="checkbox" checked><span></span></label></div></section><section class="settings-section settings-section--danger"><h2>Local data</h2><div class="settings-row"><div><strong>Reset service state</strong><p>Clears every resource and journal entry in the running local service.</p></div><button class="button button--danger" data-action="reset-state" ${runtime.connected ? '' : 'disabled'}>Reset local data</button></div></section></div>`;
 }
 
 function docsPage() {
@@ -1417,6 +1512,31 @@ function showToast(message, tone = 'neutral') {
   window.setTimeout(() => toast.remove(), 2400);
 }
 
+let alertAudioContext;
+
+function playAlertSound() {
+  if (!state.soundEnabled) return;
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    alertAudioContext ||= new AudioContext();
+    const oscillator = alertAudioContext.createOscillator();
+    const gain = alertAudioContext.createGain();
+    const now = alertAudioContext.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(660, now);
+    oscillator.frequency.exponentialRampToValueAtTime(520, now + 0.1);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.07, now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    oscillator.connect(gain).connect(alertAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.13);
+  } catch {
+    // Why: sound is optional feedback. A browser audio policy must never interrupt inspection.
+  }
+}
+
 function bindInteractions() {
   document.querySelector('[data-dismiss-notice]')?.addEventListener('click', (event) => event.currentTarget.closest('.local-notice').remove());
   bindLocalTabs('service-tab', 'serviceTab');
@@ -1460,6 +1580,19 @@ function bindInteractions() {
   document.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', async () => { const label = button.dataset.copy; const panel = button.closest('.code-panel, .command-panel, .resource-detail'); const content = panel?.querySelector('code')?.innerText || label; try { await navigator.clipboard.writeText(content); showToast(`Copied ${label}`, 'success'); } catch { showToast('Clipboard access is unavailable', 'warning'); } }));
   document.querySelectorAll('[data-menu]').forEach((button) => button.addEventListener('click', () => openMenu(button)));
   document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button.dataset.action)));
+  document.querySelector('[data-log-search]')?.addEventListener('input', (event) => {
+    state.logQuery = event.currentTarget.value;
+    filterLogRows();
+  });
+  if (state.logQuery) filterLogRows();
+  const logBody = document.querySelector('.log-dock__body');
+  if (logBody && state.logDock !== 'collapsed') {
+    logBody.scrollTop = state.logFollowTail ? logBody.scrollHeight : state.logScrollTop;
+    logBody.addEventListener('scroll', () => {
+      state.logScrollTop = logBody.scrollTop;
+      state.logFollowTail = logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 24;
+    }, { passive: true });
+  }
   document.querySelectorAll('[data-exchange-filter]').forEach((button) => button.addEventListener('click', () => {
     state.exchangeFilter = button.dataset.exchangeFilter;
     document.querySelectorAll('[data-exchange-filter]').forEach((candidate) => {
@@ -1476,6 +1609,17 @@ function bindInteractions() {
   document.querySelectorAll('.switch input').forEach((input) => input.addEventListener('change', () => { const panel = input.closest('.panel'); panel?.querySelector('.disabled-config')?.classList.toggle('is-enabled', input.checked); panel?.querySelectorAll('.disabled-config input, .disabled-config select').forEach((field) => { field.disabled = !input.checked; }); }));
   document.querySelectorAll('.search-field input:not([data-exchange-search])').forEach((input) => input.addEventListener('input', () => filterCurrentList(input.value)));
   if (document.querySelector('[data-exchange-search]')) applyExchangeFilters();
+}
+
+function filterLogRows() {
+  const normalized = state.logQuery.trim().toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('.log-entry').forEach((row) => {
+    row.hidden = normalized && !row.textContent.toLowerCase().includes(normalized);
+    if (!row.hidden) visible += 1;
+  });
+  const count = document.querySelector('[data-log-count]');
+  if (count) count.textContent = String(visible);
 }
 
 function bindLocalTabs(dataAttribute, stateKey) {
@@ -1584,6 +1728,26 @@ function handleAction(action) {
     },
     replay: () => showToast('Replay is not exposed by the read-only inspector', 'warning'),
     'auto-refresh': () => { state.autoRefresh = !state.autoRefresh; renderShell(); },
+    'toggle-log-dock': () => {
+      state.logDock = state.logDock === 'collapsed' ? 'partial' : 'collapsed';
+      state.logFollowTail = true;
+      window.localStorage.setItem('simile-log-dock', state.logDock);
+      renderShell();
+    },
+    'toggle-log-fullscreen': () => {
+      state.logDock = state.logDock === 'full' ? 'partial' : 'full';
+      state.logFollowTail = true;
+      window.localStorage.setItem('simile-log-dock', state.logDock);
+      renderShell();
+    },
+    'toggle-sound': () => {
+      state.soundEnabled = !state.soundEnabled;
+      window.localStorage.setItem('simile-sound-alerts', state.soundEnabled ? 'enabled' : 'muted');
+      if (state.soundEnabled) playAlertSound();
+      renderShell();
+      showToast(state.soundEnabled ? 'Issue sounds enabled' : 'Issue sounds muted');
+    },
+    'test-sound': () => { playAlertSound(); showToast('Issue sound played', 'success'); },
     'event-filter': () => { state.eventFilter = state.eventFilter === 'all' ? 'contract' : 'all'; renderShell(); },
     'close-event': () => { document.querySelector('.selected-event')?.remove(); },
     'clear-exchanges': clearExchangeHistory,
@@ -1630,18 +1794,33 @@ document.addEventListener('click', (event) => {
   const destination = new URL(link.href, window.location.href);
   if (destination.origin !== window.location.origin || destination.search || destination.hash) return;
   const section = destination.pathname.split('/').filter(Boolean)[0] || 'service';
-  const known = navItems.some(([key]) => key === section) || section === 'settings' || section === 'docs';
+  const known = navItems.some(([key]) => key === section) || ['logs', 'settings', 'docs'].includes(section);
   if (!known) return;
   event.preventDefault();
   navigate(destination.pathname);
 });
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+  const editing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (event.key === '/' && !editing) {
     event.preventDefault();
     document.querySelector('.search-field input')?.focus();
   }
-  if (event.key === 'Escape') document.querySelector('[data-popover]')?.setAttribute('hidden', '');
+  if (!editing && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'g') {
+    event.preventDefault();
+    handleAction('toggle-log-dock');
+  }
+  if (!editing && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'G') {
+    event.preventDefault();
+    handleAction('toggle-log-fullscreen');
+  }
+  if (event.key === 'Escape' && state.logDock === 'full') {
+    state.logDock = 'partial';
+    window.localStorage.setItem('simile-log-dock', state.logDock);
+    renderShell();
+  } else if (event.key === 'Escape') {
+    document.querySelector('[data-popover]')?.setAttribute('hidden', '');
+  }
 });
 
 renderShell();
@@ -1662,6 +1841,10 @@ async function refreshRuntime(forceRender = false) {
     ]);
     if (!exchangeResponse.ok || !stateResponse.ok || !deferredResponse.ok) throw new Error('runtime inspection is incomplete');
     const [{ exchanges }, inspectionState, deferred] = await Promise.all([exchangeResponse.json(), stateResponse.json(), deferredResponse.json()]);
+    const knownExchangeIds = new Set(runtime.exchanges.map((exchange) => exchange.id));
+    const newIssue = runtime.observationsReady && runtime.connected
+      ? exchanges.find((exchange) => Number(exchange.status) >= 400 && !knownExchangeIds.has(exchange.id))
+      : null;
     const signature = `${status.exchanges}:${status.events}:${exchanges[0]?.id || ''}:${deferred.pending}:${deferred.leased}:${deferred.deadLetters}`;
     const changed = forceRender || !runtime.connected || signature !== runtime.signature;
     runtime.connected = true;
@@ -1671,8 +1854,14 @@ async function refreshRuntime(forceRender = false) {
     runtime.deferred = deferred;
     runtime.error = null;
     runtime.signature = signature;
+    runtime.observationsReady = true;
     if (changed) renderShell();
+    if (newIssue) {
+      showToast(`${newIssue.method} ${newIssue.path} returned ${newIssue.status}`, 'warning');
+      playAlertSound();
+    }
   } catch (error) {
+    const disconnected = runtime.observationsReady && runtime.connected;
     const changed = runtime.connected || runtime.error !== error.message;
     runtime.connected = false;
     runtime.status = null;
@@ -1681,6 +1870,11 @@ async function refreshRuntime(forceRender = false) {
     runtime.deferred = null;
     runtime.error = error.message;
     runtime.signature = '';
+    runtime.observationsReady = true;
     if (changed) renderShell();
+    if (disconnected) {
+      showToast('Local service inspection disconnected', 'warning');
+      playAlertSound();
+    }
   }
 }
