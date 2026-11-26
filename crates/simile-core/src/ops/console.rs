@@ -4,6 +4,11 @@ use std::net::SocketAddr;
 use serde::Serialize;
 use serde_json::Value;
 use simile_artifact::Artifact;
+use simile_runtime::{
+    IncomingParameters, IncomingValue, ResponseSynthesisRequest, SynthesisRequest, ValidatedBody,
+    ValidatedParameters, synthesize_minimal_request_value, synthesize_missing_parameters,
+    synthesize_response_with_seed, validate_parameters, validate_request_value,
+};
 use simile_spec::{BehaviorOrigin, OutcomeProvenance};
 
 use super::audit::{AuditFinding, audit_artifact};
@@ -13,6 +18,8 @@ use super::describe::{
 };
 use crate::registry::{RegisteredService, Registry, SourceLocation};
 use crate::{Context, Result};
+
+const CONSOLE_EXAMPLE_SEED: u64 = 0x7369_6d69_6c65;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConsoleRequest {
@@ -242,26 +249,45 @@ fn model_from_parts(
                 .to_owned();
             let described = described_operations.get(id.as_str()).copied();
             let outcome_summary = operation_summaries.get(operation.key()).copied();
+            let (request_example, request_body, request_parameters) =
+                representative_request(artifact, operation.key());
             let outcomes = operation
                 .outcomes()
-                .map(|outcome| ConsoleOutcome {
-                    name: outcome.name().to_owned(),
-                    status: outcome.status(),
-                    provenance: provenance(outcome.provenance()).to_owned(),
-                    content_type: outcome.content_type().map(str::to_owned),
-                    example: outcome.body().cloned(),
-                    description: described
-                        .and_then(|operation| {
-                            operation
-                                .outcomes
-                                .iter()
-                                .find(|candidate| candidate.name == outcome.name())
-                        })
-                        .and_then(|outcome| outcome.description.clone())
-                        .unwrap_or_default(),
-                    response_schema: format!("HTTP {} response", outcome.status()),
-                    response_variants: 1,
-                    headers: Vec::new(),
+                .enumerate()
+                .map(|(index, outcome)| {
+                    let example = synthesize_response_with_seed(
+                        artifact,
+                        ResponseSynthesisRequest {
+                            operation: operation.key(),
+                            status: Some(outcome.status()),
+                            content_type: outcome.content_type(),
+                            request_body: request_body.as_ref(),
+                            request_parameters: request_parameters.as_ref(),
+                            body: outcome.body(),
+                        },
+                        CONSOLE_EXAMPLE_SEED.wrapping_add(index as u64),
+                    )
+                    .ok()
+                    .and_then(|response| response.value().cloned());
+                    ConsoleOutcome {
+                        name: outcome.name().to_owned(),
+                        status: outcome.status(),
+                        provenance: provenance(outcome.provenance()).to_owned(),
+                        content_type: outcome.content_type().map(str::to_owned),
+                        example,
+                        description: described
+                            .and_then(|operation| {
+                                operation
+                                    .outcomes
+                                    .iter()
+                                    .find(|candidate| candidate.name == outcome.name())
+                            })
+                            .and_then(|outcome| outcome.description.clone())
+                            .unwrap_or_default(),
+                        response_schema: format!("HTTP {} response", outcome.status()),
+                        response_variants: 1,
+                        headers: Vec::new(),
+                    }
                 })
                 .collect::<Vec<_>>();
             let success = outcomes
@@ -308,7 +334,7 @@ fn model_from_parts(
                     .map(|body| body.media_types().collect::<Vec<_>>().join(", "))
                     .unwrap_or_else(|| "No request body".to_owned()),
                 response_schema: format!("HTTP {success} response"),
-                request_example: Value::Object(serde_json::Map::new()),
+                request_example,
                 response_example,
                 tags: Vec::new(),
             }
@@ -396,6 +422,43 @@ fn model_from_parts(
     }
 }
 
+fn representative_request(
+    artifact: &Artifact,
+    operation: &str,
+) -> (Value, Option<ValidatedBody>, Option<ValidatedParameters>) {
+    let request = synthesize_minimal_request_value(
+        artifact,
+        SynthesisRequest {
+            operation,
+            content_type: None,
+        },
+    )
+    .ok();
+    let request_body = request.as_ref().and_then(|request| {
+        validate_request_value(
+            artifact,
+            IncomingValue {
+                operation,
+                content_type: Some(request.media_type()),
+                value: request.value(),
+            },
+        )
+        .ok()
+    });
+    let request_example = request.map_or(Value::Null, |request| request.into_parts().1);
+    let incoming_parameters = synthesize_missing_parameters(
+        artifact,
+        operation,
+        &IncomingParameters::default(),
+        CONSOLE_EXAMPLE_SEED,
+    )
+    .ok();
+    let request_parameters = incoming_parameters
+        .as_ref()
+        .and_then(|parameters| validate_parameters(artifact, operation, parameters).ok());
+    (request_example, request_body, request_parameters)
+}
+
 fn source_label(source: &SourceLocation) -> String {
     match source {
         SourceLocation::Path { value } | SourceLocation::Url { value } => value.clone(),
@@ -468,12 +531,18 @@ mod tests {
             .unwrap_or_else(|error| panic!("could not serialize console model: {error}"));
         assert!(serialized.get("configContents").is_none());
         assert!(serialized.get("contractContents").is_none());
-        assert!(
-            selected
-                .operations
-                .iter()
-                .any(|operation| operation.id == "createOrder")
+        let create_order = selected
+            .operations
+            .iter()
+            .find(|operation| operation.id == "createOrder")
+            .unwrap_or_else(|| panic!("createOrder operation"));
+        assert_eq!(
+            create_order.request_example,
+            serde_json::json!({ "product": "beat_pack", "quantity": 2 })
         );
+        assert_eq!(create_order.response_example["id"], "ord_simile");
+        assert!(create_order.response_example["product"].is_string());
+        assert!(create_order.response_example["quantity"].is_number());
 
         fs::remove_dir_all(root).unwrap_or_else(|error| panic!("{error}"));
     }
