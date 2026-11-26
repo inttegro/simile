@@ -97,6 +97,45 @@ impl Stack {
         &self.journal
     }
 
+    /// Inspect pending and leased messages without changing the queue or journal.
+    pub fn queue_messages(&self, resource: &ResourceAddress) -> Result<Vec<crate::QueueMessage>> {
+        if !self.resources.contains(resource) || resource.kind != simile_spec::ResourceKind::Queue {
+            return Err(ResourceError::new(
+                ErrorCode::UndeclaredResource,
+                "expected a declared queue",
+            ));
+        }
+        Ok(self.queue.messages(&resource.name))
+    }
+
+    /// Inspect a queue receipt without executing a command or changing the journal.
+    pub fn queue_lease_is_current(
+        &self,
+        resource: &ResourceAddress,
+        message_id: &str,
+        receipt_handle: &str,
+    ) -> Result<bool> {
+        if !self.resources.contains(resource) {
+            return Err(ResourceError::new(
+                ErrorCode::UndeclaredResource,
+                format!("resource `{resource}` was not declared"),
+            ));
+        }
+        if resource.kind != simile_spec::ResourceKind::Queue {
+            return Err(ResourceError::new(
+                ErrorCode::KindMismatch,
+                "lease validation requires a queue",
+            ));
+        }
+        let now = self
+            .clock
+            .now()
+            .map_err(|error| ResourceError::new(ErrorCode::Unavailable, error.to_string()))?;
+        Ok(self
+            .queue
+            .lease_is_current(&resource.name, message_id, receipt_handle, now))
+    }
+
     pub fn execute(
         &mut self,
         resource: ResourceAddress,

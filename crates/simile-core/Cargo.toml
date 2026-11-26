@@ -9,7 +9,13 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = ["native", "smithy"]
+native = ["dep:ureq", "simile-service/persistence", "simile-stack/persistence"]
+smithy = ["simile-compiler/smithy"]
+
 [dependencies]
+simile-http.workspace = true
 rand.workspace = true
 semver.workspace = true
 serde.workspace = true
@@ -25,7 +31,7 @@ simile-stack.workspace = true
 simile-typescript.workspace = true
 thiserror.workspace = true
 time.workspace = true
-ureq.workspace = true
+ureq = { workspace = true, optional = true }
 
 [lints]
 workspace = true

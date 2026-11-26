@@ -1,18 +1,27 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use simile_spec::ResourceKind;
 
 use super::supervisor::ReplayRecord;
-use crate::cache::{CacheEngine, CacheEntry};
-use crate::db::{DbEngine, StoredDocument};
-use crate::event_bus::{BusEngine, BusState};
-use crate::http::{HttpEngine, HttpState};
-use crate::mail::{MailEngine, MailMessage};
-use crate::object_store::{ObjectEngine, StoredObject};
-use crate::queue::{QueueEngine, StoredMessage};
+use crate::JournalEntry;
+use crate::cache::CacheEngine;
+use crate::cache::CacheEntry;
+use crate::db::DbEngine;
+use crate::db::StoredDocument;
+use crate::event_bus::BusEngine;
+use crate::event_bus::BusState;
+use crate::http::HttpEngine;
+use crate::http::HttpState;
+use crate::mail::MailEngine;
+use crate::mail::MailMessage;
+use crate::object_store::ObjectEngine;
+use crate::object_store::StoredObject;
+use crate::queue::QueueEngine;
+use crate::queue::StoredMessage;
 use crate::scheduler::SchedulerEngine;
-use crate::{ClockSnapshot, Journal, JournalEntry, LogicalTime, ResourceAddress, ScheduledTask};
+use crate::{ClockSnapshot, Journal, LogicalTime, ResourceAddress, ScheduledTask};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +99,37 @@ impl StackSnapshot {
     #[must_use]
     pub const fn now(&self) -> LogicalTime {
         self.clock.now
+    }
+
+    #[must_use]
+    pub const fn clock(&self) -> ClockSnapshot {
+        self.clock
+    }
+
+    #[must_use]
+    pub const fn initial_clock(&self) -> ClockSnapshot {
+        self.initial_clock
+    }
+
+    /// Reject undeclared engine state, duplicate journal/replay records, and
+    /// counters that could reuse committed command or event identities.
+    pub fn validate(&self) -> Result<(), String> {
+        let rebuilt = Self::from_records(self.to_records())?;
+        if rebuilt != *self {
+            return Err("snapshot records are inconsistent".to_owned());
+        }
+        if self
+            .journal
+            .entries()
+            .windows(2)
+            .any(|pair| pair[0].sequence >= pair[1].sequence)
+            || self.journal.entries().iter().any(|entry| {
+                entry.sequence > self.next_event || entry.command_id.0 > self.next_command
+            })
+        {
+            return Err("snapshot journal counters are inconsistent".to_owned());
+        }
+        Ok(())
     }
 
     /// Return a JSON view of one resource's engine state.

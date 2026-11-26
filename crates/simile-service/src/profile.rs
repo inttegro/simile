@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use rand::Rng as _;
+use rand::{Rng as _, SeedableRng as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use simile_artifact::ArtifactOperation;
 use simile_runtime::{
     ExecutionOptions, OperationExecution, OperationValueCall, SynthesisRequest,
@@ -130,13 +131,28 @@ impl Service {
         supplied: BTreeMap<String, Value>,
         select: bool,
     ) -> Result<SetupProfileResult> {
+        self.setup_profile_with_seed(principal, name, supplied, select, rand::random())
+    }
+
+    /// Reproduce setup values, credentials, and identifiers for a principal/name/seed.
+    /// Distinct names have independent entropy; reconfiguring an existing profile
+    /// preserves its identity and credentials.
+    pub fn setup_profile_with_seed(
+        &self,
+        principal: Option<&str>,
+        name: Option<&str>,
+        supplied: BTreeMap<String, Value>,
+        select: bool,
+        seed: u64,
+    ) -> Result<SetupProfileResult> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let definition = resolve_principal_setup(self, principal)?;
         let name = match name {
             Some(name) => {
                 validate_profile_name(name)?;
                 name.to_owned()
             }
-            None => self.available_profile_name()?,
+            None => self.available_profile_name(&mut rng)?,
         };
         reject_unknown_values(&definition, &supplied)?;
         let existing = self.profile(&name)?;
@@ -156,7 +172,7 @@ impl Service {
             }
             apply_collected_bindings(&definition, &collected, &mut profile)?;
             profile.collected = collected;
-            profile.updated_at = super::now().as_unix_millis();
+            profile.updated_at = self.clock()?.now.as_unix_millis();
             let mut stack = super::lock(&self.stack)?;
             let before = stack.snapshot()?;
             put_profile(&mut stack, &profile)?;
@@ -172,6 +188,15 @@ impl Service {
             });
         }
 
+        // Scope deterministic generation to the resolved identity, independently
+        // of creation order. Length prefixes keep the principal/name unambiguous.
+        let entropy = format!(
+            "simile-profile-v1:{seed}:{}:{}:{}:{name}",
+            definition.principal.len(),
+            definition.principal,
+            name.len(),
+        );
+        rng = rand::rngs::StdRng::from_seed(Sha256::digest(entropy.as_bytes()).into());
         let operation = self
             .artifact()
             .operation_by_id(&definition.operation_id)
@@ -212,11 +237,11 @@ impl Service {
             },
             ExecutionOptions {
                 response_status: successful_response_status(operation),
-                response_seed: Some(rand::random()),
+                response_seed: Some(rng.random()),
                 ..ExecutionOptions::default()
             },
         )?;
-        let mut profile = build_profile(self, &name, &definition, collected, &execution)?;
+        let mut profile = build_profile(self, &name, &definition, collected, &execution, &mut rng)?;
         let collected = profile.collected.clone();
         apply_collected_bindings(&definition, &collected, &mut profile)?;
 
@@ -253,13 +278,14 @@ impl Service {
         })
     }
 
-    fn available_profile_name(&self) -> Result<String> {
+    fn available_profile_name(&self, rng: &mut impl rand::Rng) -> Result<String> {
         let existing = self
             .profile_records()?
             .into_iter()
             .map(|profile| profile.name)
             .collect::<BTreeSet<_>>();
-        crate::profile_name::generate(&existing).ok_or(Error::ProfileNameSpaceExhausted)
+        crate::profile_name::generate_with_rng(rng, &existing)
+            .ok_or(Error::ProfileNameSpaceExhausted)
     }
 
     pub(super) fn profile_records(&self) -> Result<Vec<ServiceProfile>> {
@@ -278,6 +304,13 @@ impl Service {
     pub fn profile(&self, name: &str) -> Result<Option<ServiceProfile>> {
         validate_profile_name(name)?;
         let mut stack = super::lock(&self.stack)?;
+        profile(&mut stack, name)
+    }
+
+    /// Read credentials without adding query commands to the live journal.
+    pub fn profile_snapshot(&self, name: &str) -> Result<Option<ServiceProfile>> {
+        validate_profile_name(name)?;
+        let mut stack = Stack::from_snapshot(super::lock(&self.stack)?.snapshot()?);
         profile(&mut stack, name)
     }
 
@@ -390,6 +423,7 @@ fn build_profile(
     definition: &PrincipalSetup,
     collected: BTreeMap<String, Value>,
     execution: &OperationExecution,
+    rng: &mut impl rand::Rng,
 ) -> Result<ServiceProfile> {
     let response = execution.response().value();
     let mut issued = BTreeMap::new();
@@ -404,7 +438,9 @@ fn build_profile(
                     issue: issue.name.clone(),
                     pointer: pointer.clone(),
                 })?,
-            SetupIssueSource::Token { prefix } => Value::String(token(prefix)),
+            SetupIssueSource::Token { prefix } => {
+                Value::String(format!("{prefix}{}", random_hex(rng, 24)))
+            }
         };
         if let Some(credential) = &issue.credential {
             let Some(secret) = value.as_str() else {
@@ -430,10 +466,10 @@ fn build_profile(
             },
         );
     }
-    let now = super::now().as_unix_millis();
+    let now = service.clock()?.now.as_unix_millis();
     let revision = service.artifact().summary().payload_sha256;
     Ok(ServiceProfile {
-        id: format!("profile_{}", random_hex(12)),
+        id: format!("profile_{}", random_hex(rng, 12)),
         name: name.to_owned(),
         principal: definition.principal.clone(),
         status: ProfileStatus::Active,
@@ -569,13 +605,9 @@ fn set_pointer(root: &mut Value, pointer: &str, value: Value) -> Result<()> {
     Ok(())
 }
 
-fn token(prefix: &str) -> String {
-    format!("{prefix}{}", random_hex(24))
-}
-
-fn random_hex(length: usize) -> String {
+fn random_hex(rng: &mut impl rand::Rng, length: usize) -> String {
     let mut bytes = vec![0_u8; length];
-    rand::rng().fill(bytes.as_mut_slice());
+    rng.fill(bytes.as_mut_slice());
     bytes.iter().fold(
         String::with_capacity(bytes.len() * 2),
         |mut output, byte| {

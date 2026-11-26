@@ -1,0 +1,454 @@
+import { useEffect, useState } from "react"
+import { PlayIcon, WandSparklesIcon, DownloadIcon } from "lucide-react"
+import { Button } from "../components/ui/button"
+import { FieldGroup } from "../components/ui/field"
+import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert"
+import { Editor } from "../components/editor"
+import {
+  EmptyResult,
+  PanelHeader,
+  NoArtifact,
+  Choice,
+  TextField,
+  Output,
+} from "../components/shared"
+import type { Playground, State } from "../model/controller"
+import type { ReportView, Methods } from "../worker/client"
+import { bundleArchive, download, importBundles } from "../model/archive"
+import { hasRequestBody, withoutRequestBody } from "../model/request-document"
+export function Runner({
+  model,
+  state,
+  operation,
+  onOperation,
+}: {
+  model: Playground
+  state: State
+  operation: string
+  onOperation: (value: string) => void
+}) {
+  const [seed, setSeed] = useState("7"),
+    [outcome, setOutcome] = useState(""),
+    [scenario, setScenario] = useState("")
+  const artifact = state.candidate
+  const op =
+    artifact?.routes.find((route) => route.key === operation) ??
+    artifact?.routes[0]
+  const [drafts, setDrafts] = useState<
+    Record<string, { text: string; fixture: string }>
+  >((): Record<string, { text: string; fixture: string }> => {
+    const fixture = "requests/create-order.json"
+    return state.project.files[fixture]
+      ? { "POST /orders": { text: state.project.files[fixture], fixture } }
+      : {}
+  })
+  const [result, setResult] = useState<ReportView>(),
+    [resultRevision, setResultRevision] = useState<string>(),
+    [resultOperation, setResultOperation] = useState<string>(),
+    [name, setName] = useState("create-order")
+  const draft = op ? drafts[op.key] : undefined
+  const request = draft?.text ?? ""
+  const setRequest = (text: string, fixture = draft?.fixture ?? "") => {
+    if (op)
+      setDrafts((current) => ({ ...current, [op.key]: { text, fixture } }))
+  }
+  const key = op?.key
+  useEffect(() => {
+    if (!key || draft || !artifact) return
+    let current = true
+    void model
+      .candidateCall("synthesizeRequest", { selector: { key }, seed: "7" })
+      .then((generated) => {
+        if (current)
+          setDrafts((drafts) =>
+            drafts[key]
+              ? drafts
+              : {
+                  ...drafts,
+                  [key]: { text: generated.requestDocJson, fixture: "" },
+                }
+          )
+      })
+      .catch((error) => {
+        if (current) model.reportError(error)
+      })
+    return () => {
+      current = false
+    }
+  }, [model, key, draft, artifact])
+  if (!artifact) return <NoArtifact />
+  if (!op)
+    return (
+      <EmptyResult>
+        Add an operation to your contract to run it here.
+      </EmptyResult>
+    )
+  const description = artifact.catalogue.operations.find(
+    (item) => item.key === op?.key
+  )
+  const bodyMismatch = op.acceptsBody === false && hasRequestBody(request)
+  return (
+    <>
+      <FieldGroup className="run-command">
+        <Choice
+          label="Baseline operation"
+          value={op?.key ?? ""}
+          onChange={onOperation}
+          options={artifact.routes.map((route) => ({
+            value: route.key,
+            label: `${route.key} · ${route.operationId ?? ""}`,
+          }))}
+        />
+        <Button
+          disabled={state.busy || !op || !draft || bodyMismatch}
+          onClick={() =>
+            void model.act(async () => {
+              const response = await model.candidateCall("runOperation", {
+                selector: { key: op.key },
+                seed: seed || undefined,
+                requestDocJson: request,
+                outcome: outcome || undefined,
+                scenario: scenario || undefined,
+                bundleName: name || undefined,
+              })
+              setResult(response)
+              setResultRevision(artifact.revision)
+              setResultOperation(op.key)
+              if (response.seed) setSeed(response.seed)
+            })
+          }
+        >
+          <PlayIcon data-icon="inline-start" />
+          Run baseline
+        </Button>
+      </FieldGroup>
+      <details className="compact-details">
+        <summary>
+          Run settings <span>Seed {seed || "auto"}</span>
+        </summary>
+        <FieldGroup className="runner-controls">
+          <TextField
+            label="Baseline seed"
+            value={seed}
+            onChange={setSeed}
+            hint="Unsigned 64-bit decimal. Leave empty to generate."
+          />
+          <Choice
+            label="Outcome override"
+            value={outcome}
+            onChange={setOutcome}
+            options={[
+              { value: "", label: "Default" },
+              ...(description?.outcomes ?? []).map((item) => ({
+                value: item.name,
+                label: item.name,
+              })),
+            ]}
+          />
+          <Choice
+            label="Scenario override"
+            value={scenario}
+            onChange={setScenario}
+            options={[
+              { value: "", label: "Default" },
+              ...artifact.catalogue.scenarios.map((item) => ({
+                value: item.name,
+                label: item.name,
+              })),
+            ]}
+          />
+        </FieldGroup>
+      </details>
+      <div className="split-panels">
+        <section>
+          <div className="request-heading">
+            <h2>Request document</h2>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={state.busy || !op}
+              onClick={() =>
+                void model.act(async () => {
+                  const generated = await model.candidateCall(
+                    "synthesizeRequest",
+                    { selector: { key: op.key }, seed: seed || undefined }
+                  )
+                  setRequest(generated.requestDocJson, "")
+                  setSeed(generated.seed)
+                })
+              }
+            >
+              <WandSparklesIcon data-icon="inline-start" />
+              Synthesize request
+            </Button>
+          </div>
+          <FieldGroup>
+            <Choice
+              label="Load request fixture"
+              value={
+                draft?.fixture && draft.fixture in state.project.files
+                  ? draft.fixture
+                  : ""
+              }
+              onChange={(path) => {
+                if (path) setRequest(state.project.files[path], path)
+              }}
+              options={[
+                { value: "", label: "Choose a workspace request" },
+                ...Object.keys(state.project.files)
+                  .filter(
+                    (path) =>
+                      path.startsWith("requests/") && path.endsWith(".json")
+                  )
+                  .map((path) => ({
+                    value: path,
+                    disabled:
+                      op.acceptsBody === false &&
+                      hasRequestBody(state.project.files[path]),
+                    label:
+                      path +
+                      (op.acceptsBody === false &&
+                      hasRequestBody(state.project.files[path])
+                        ? ` (contains a body; unavailable for ${op.key})`
+                        : "") +
+                      (draft?.fixture === path &&
+                      draft.text !== state.project.files[path]
+                        ? " (modified)"
+                        : ""),
+                  })),
+              ]}
+            />
+          </FieldGroup>
+          <p className="quiet-message mt-2">
+            {op.acceptsBody
+              ? `${op.key} declares a request body. Choose a fixture that matches its schema.`
+              : `${op.key} declares no request body. Omit the body field; an empty request document ({}) is valid.`}
+          </p>
+          {bodyMismatch && (
+            <Alert className="mt-3" variant="destructive">
+              <AlertTitle>
+                Request body does not match this operation
+              </AlertTitle>
+              <AlertDescription className="flex flex-col items-start gap-2">
+                <div>
+                  The contract for {op.key} declares no request body, but this
+                  document contains one. Remove it, select an operation that
+                  accepts it, or add requestBody to the contract.
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setRequest(withoutRequestBody(request), "")
+                    if (
+                      state.error?.includes(
+                        `operation \`${op.key}\` does not declare a request body`
+                      )
+                    )
+                      model.clearError()
+                  }}
+                >
+                  Remove request body
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          <div className="editor-panel mt-3">
+            <Editor
+              path="baseline-request.json"
+              value={request}
+              onChange={(text) => setRequest(text)}
+              onError={(error) => model.reportError(error)}
+            />
+          </div>
+          <details className="compact-details capture-details">
+            <summary>Capture reproduction</summary>
+            <FieldGroup className="mt-4">
+              <TextField
+                label="Reproduction case name"
+                value={name}
+                onChange={setName}
+              />
+            </FieldGroup>
+            <div className="flex flex-wrap gap-2 py-4">
+              <Button
+                variant="outline"
+                disabled={!result?.bundle}
+                onClick={() =>
+                  void model.act(async () => {
+                    if (result?.bundle) model.addBundle(result.bundle)
+                  })
+                }
+              >
+                Save reproduction
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={!result?.bundle}
+                onClick={() =>
+                  result?.bundle &&
+                  download(
+                    `${result.bundle.name}.zip`,
+                    bundleArchive([result.bundle])
+                  )
+                }
+              >
+                <DownloadIcon data-icon="inline-start" />
+                Download bundle
+              </Button>
+            </div>
+          </details>
+        </section>
+        <section>
+          {result && resultOperation === op?.key ? (
+            <>
+              {resultRevision !== artifact.revision && (
+                <p className="quiet-message">
+                  Result from revision {resultRevision?.slice(0, 8)}. Run again
+                  to use the current definition.
+                </p>
+              )}
+              <Output title={`Response body · seed ${result.seed}`}>
+                {result.bodyJson ?? "(no JSON body)"}
+              </Output>
+              <details className="compact-details">
+                <summary>Execution report</summary>
+                <Output title="Validated request, outcome, provenance, and planned webhooks">
+                  {result.reportJson}
+                </Output>
+              </details>
+            </>
+          ) : (
+            <EmptyResult>
+              Run a baseline to see its response and execution report.
+            </EmptyResult>
+          )}
+        </section>
+      </div>
+    </>
+  )
+}
+export function Reproduction({
+  model,
+  state,
+}: {
+  model: Playground
+  state: State
+}) {
+  const [report, setReport] = useState<string>(),
+    [results, setResults] = useState<Methods["runConformance"]["output"]>()
+  return (
+    <>
+      <PanelHeader
+        eyebrow="Portable evidence"
+        title="Reproduction & conformance"
+        description="Response bundles are native-compatible cases. They are separate from stateful service checkpoints."
+      >
+        <Button
+          variant="outline"
+          onClick={() => download("suite.zip", bundleArchive(state.bundles))}
+          disabled={!state.bundles.length}
+        >
+          Export suite
+        </Button>
+        <Button
+          disabled={state.busy || !state.bundles.length}
+          onClick={() =>
+            void model.act(async () => {
+              const result = await model.call("runConformance", state.bundles)
+              setResults(result)
+              setReport(result.reportJson)
+            })
+          }
+        >
+          Run suite
+        </Button>
+      </PanelHeader>
+      <FieldGroup>
+        <div>
+          <label className="file-picker">
+            Import bundle or suite ZIP
+            <input
+              aria-label="Import bundle or suite ZIP"
+              type="file"
+              accept=".zip"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file)
+                  void model.act(async () => {
+                    for (const bundle of importBundles(
+                      new Uint8Array(await file.arrayBuffer())
+                    ))
+                      model.addBundle(bundle)
+                  })
+                event.target.value = ""
+              }}
+            />
+          </label>
+        </div>
+      </FieldGroup>
+      <div className="case-list">
+        {state.bundles.map((bundle) => (
+          <div key={bundle.name} className="case-row">
+            <div>
+              <h2>{bundle.name}</h2>
+              <p>
+                {Object.keys(bundle.files).length} exact files · artifact,
+                request, and seed retained
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              disabled={state.busy}
+              onClick={() =>
+                void model.act(async () => {
+                  const result = await model.call("replayBundle", bundle)
+                  setReport(result.reportJson)
+                })
+              }
+            >
+              Replay
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                download(`${bundle.name}.zip`, bundleArchive([bundle]))
+              }
+            >
+              Download
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => model.removeBundle(bundle.name)}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+      </div>
+      {!state.bundles.length && (
+        <EmptyResult>
+          Capture a baseline reproduction or import a bundle to build a suite.
+        </EmptyResult>
+      )}
+      {results && (
+        <>
+          <h2>
+            {results.passed} passed · {results.failed} failed · {results.total}{" "}
+            cases
+          </h2>
+          {results.cases.map((item) => (
+            <div className="case-row" key={item.bundle}>
+              <strong>{item.passed ? "PASS" : "FAIL"}</strong>
+              <span>
+                {item.bundle} · {item.operation}
+              </span>
+              <span>{item.message}</span>
+            </div>
+          ))}
+        </>
+      )}
+      {report && <Output title="Replay / conformance report">{report}</Output>}
+    </>
+  )
+}
