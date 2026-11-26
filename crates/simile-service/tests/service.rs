@@ -461,9 +461,18 @@ fn commits_declared_effects_and_does_not_repeat_them_on_replay() {
     let key = key
         .and_then(serde_json::Value::as_str)
         .unwrap_or_else(|| panic!("generated response should contain an id"));
-    service
-        .execute_with_options(call, options)
-        .unwrap_or_else(|error| panic!("{error}"));
+    for identity in [" checkout-1", "checkout-1 ", "\tcheckout-1\n"] {
+        let repeated = service
+            .execute_with_options(
+                call,
+                ExecutionOptions {
+                    replay: Some(ReplayIdentity::IdempotencyKey(identity)),
+                    ..options
+                },
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(repeated.response().value(), first.response().value());
+    }
 
     let mut stack =
         Stack::from_snapshot(service.snapshot().unwrap_or_else(|error| panic!("{error}")));
@@ -492,6 +501,86 @@ fn commits_declared_effects_and_does_not_repeat_them_on_replay() {
         first.response().value(),
         "stored value should be the committed response"
     );
+}
+
+#[test]
+fn replay_normalization_is_shared_by_byte_and_value_calls() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = service_with_contract(
+        r#"
+openapi: 3.1.0
+info: { title: Replay normalization, version: 1.0.0 }
+paths:
+  /sample:
+    get:
+      responses:
+        '200':
+          description: Generated value
+          content:
+            application/json:
+              schema: { type: string, minLength: 12 }
+    post:
+      responses:
+        '200':
+          description: Generated value
+          content:
+            application/json:
+              schema: { type: string, minLength: 12 }
+"#,
+        "",
+    );
+    let service = Service::memory_with_clock(
+        source.artifact().clone(),
+        simile_stack::ClockSnapshot {
+            mode: simile_stack::ClockMode::Manual,
+            now: LogicalTime::UNIX_EPOCH,
+        },
+    )?;
+    for operation in ["POST /sample", "GET /sample"] {
+        let options = |key, seed| ExecutionOptions {
+            replay: Some(if operation.starts_with("POST") {
+                ReplayIdentity::IdempotencyKey(key)
+            } else {
+                ReplayIdentity::Resource(key)
+            }),
+            response_seed: Some(seed),
+            ..Default::default()
+        };
+        let bytes = OperationCall {
+            operation,
+            content_type: None,
+            body: &[],
+        };
+        let value = OperationValueCall {
+            operation,
+            content_type: None,
+            body: None,
+        };
+        let first = service.execute_with_options(bytes, options("key", 1))?;
+        for key in [" key", "key ", "\tkey\n", "\u{2003}key\u{2003}"] {
+            let repeated = service.execute_with_options(bytes, options(key, 2))?;
+            assert_eq!(repeated.response().value(), first.response().value());
+            let repeated = service.execute_value_with_options(value, options(key, 3))?;
+            assert_eq!(repeated.response().value(), first.response().value());
+        }
+        for key in ["", " ", "\t\r\n", "\u{2003}"] {
+            let before = service.snapshot()?;
+            assert!(matches!(
+                service.execute_with_options(bytes, options(key, 1)),
+                Err(simile_service::Error::Runtime(
+                    simile_runtime::Error::EmptyReplayIdentity
+                ))
+            ));
+            assert!(matches!(
+                service.execute_value_with_options(value, options(key, 1)),
+                Err(simile_service::Error::Runtime(
+                    simile_runtime::Error::EmptyReplayIdentity
+                ))
+            ));
+            assert_eq!(service.snapshot()?, before);
+        }
+    }
+    Ok(())
 }
 
 #[test]

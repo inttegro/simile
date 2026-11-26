@@ -152,6 +152,12 @@ impl ArtifactHandle {
         }
         let mut document =
             serde_json::Map::from_iter([("headers".to_owned(), serde_json::json!(headers))]);
+        if !report.request.parameters.is_empty() {
+            document.insert(
+                "parameters".to_owned(),
+                serde_json::json!(&report.request.parameters),
+            );
+        }
         if let Some(body) = &report.request.body {
             document.insert("body".to_owned(), body.clone());
         }

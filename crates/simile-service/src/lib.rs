@@ -514,6 +514,7 @@ fn scoped_replay_key(
     profile: Option<&ServiceProfile>,
 ) -> Option<String> {
     let (ReplayIdentity::IdempotencyKey(key) | ReplayIdentity::Resource(key)) = identity?;
+    let key = key.trim();
     // Preserve empty-key validation. Scope anonymous calls too, so their keys
     // cannot collide with a profile namespace or differ between byte/value APIs.
     if key.is_empty() {

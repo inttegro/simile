@@ -38,6 +38,37 @@ fn session(location: &str) -> Result<ServiceSession, Box<dyn std::error::Error>>
 }
 
 #[test]
+fn seeded_profiles_are_distinct_and_reproducible_by_name() -> Result<(), Box<dyn std::error::Error>>
+{
+    let first = session("header")?;
+    let second = session("header")?;
+    let create = |session: &ServiceSession, name, seed| {
+        session.setup_profile(
+            Some("application"),
+            Some(name),
+            BTreeMap::from([("name".into(), serde_json::json!("integration"))]),
+            false,
+            seed,
+        )
+    };
+    let alpha = create(&first, "alpha", 7)?.profile;
+    let beta = create(&first, "beta", 7)?.profile;
+    assert_ne!(alpha.id, beta.id);
+    assert!(
+        alpha.credentials != beta.credentials,
+        "generated credentials must be distinct"
+    );
+    // Creation order must not change deterministic identities or issued values.
+    assert!(create(&second, "beta", 7)?.profile == beta);
+    assert!(create(&second, "alpha", 7)?.profile == alpha);
+    let updated = create(&first, "alpha", 99)?;
+    assert!(!updated.created);
+    assert_eq!(updated.profile.id, alpha.id);
+    assert!(updated.profile.credentials == alpha.credentials);
+    Ok(())
+}
+
+#[test]
 fn replay_outcomes_are_isolated_between_profiles() -> Result<(), Box<dyn std::error::Error>> {
     let session = session("header")?;
     session.setup_profile(
@@ -45,7 +76,7 @@ fn replay_outcomes_are_isolated_between_profiles() -> Result<(), Box<dyn std::er
         Some("second"),
         BTreeMap::from([("name".into(), serde_json::json!("second"))]),
         true,
-        8,
+        7,
     )?;
     let create = |profile: &str, seed| -> Result<_, Box<dyn std::error::Error>> {
         let mut request = http::Request::builder()

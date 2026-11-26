@@ -157,6 +157,36 @@ async function main() {
   check(synthesized.body instanceof Uint8Array && synthesized.seed === "18446744073709551615" && synthesized.contentType === "application/json", "request synthesis changed bytes or seed");
   const synthesizedRun = await client.call("runOperation", { revision: httpArtifact.revision, options: { selector: { id: "createItem" }, requestDocJson: synthesized.requestDocJson, seed: "0" } });
   check(synthesizedRun.reportJson.includes('"status":201'), "synthesized request cannot be executed");
+  const parameterContract = {
+    openapi: "3.1.0", info: { title: "Reusable requests", version: "1.0.0" },
+    paths: { "/parameters/{id}": { post: {
+      operationId: "parameters",
+      parameters: [
+        { name: "id", in: "path", required: true, schema: { type: "integer" } },
+        { name: "tag", in: "query", required: true, style: "form", explode: true, schema: { type: "array", minItems: 2, items: { type: "string" } } },
+        { name: "x-role", in: "header", required: true, schema: { type: "array", minItems: 2, items: { type: "string" } } },
+        { name: "locale", in: "cookie", required: true, schema: { type: "string" } },
+      ],
+      requestBody: { required: false, content: { "application/json": { schema: { type: ["object", "null"], additionalProperties: true } } } },
+      responses: { "200": { description: "Generated response", content: { "application/json": { schema: { type: "string" } } } } },
+    } } },
+  };
+  const parameterArtifact = await client.call("compileWorkspace", { files: { "parameters.json": JSON.stringify(parameterContract) }, contractEntry: "parameters.json" });
+  const suppliedParameters = { path: { id: ["18446744073709551615"] }, query: { tag: ["chosen", "repeated"] }, headers: { "x-role": ["reader", "writer"] }, cookies: { locale: ["chosen-locale"] } };
+  for (const withNullBody of [false, true]) {
+    const document = { parameters: suppliedParameters, headers: { "content-type": "application/json", "x-extra": "preserve" }, ...(withNullBody ? { body: null } : {}) };
+    const run = requestDocJson => client.call("runOperation", { revision: parameterArtifact.revision, options: { selector: { id: "parameters" }, seed: "7", requestDocJson } });
+    const first = await run(JSON.stringify(document));
+    const returned = JSON.parse(first.requestDocJson);
+    for (const location of ["path", "query", "headers", "cookies"])
+      check(JSON.stringify(returned.parameters?.[location]) === JSON.stringify(suppliedParameters[location]), `${location} parameters were not retained in the reusable request`);
+    check(Object.hasOwn(returned, "body") === withNullBody && (!withNullBody || returned.body === null), "parameter preservation changed absent/null body semantics");
+    const repeated = await run(first.requestDocJson);
+    check(repeated.requestDocJson === first.requestDocJson, "reusing parameter inputs changed the request document");
+    check(JSON.stringify(JSON.parse(repeated.reportJson).request) === JSON.stringify(JSON.parse(first.reportJson).request), "reusing parameter inputs executed a different request");
+    check(repeated.bodyJson === first.bodyJson, "reusing parameter inputs changed the seeded response");
+  }
+  await client.call("releaseArtifact", { revision: parameterArtifact.revision });
   await client.call("startSession", { revision: httpArtifact.revision });
   const repeated = await client.call("handleRequest", { method: "GET", uri: "/items/7?tag=one&tag=two", headers: [["x-role", encode("reader")], ["x-role", encode("writer")]], responseSeed: "0" });
   check(repeated.status === 200 && repeated.headers.every(pair => pair[1] instanceof Uint8Array), "repeated headers or byte header values were lost");
@@ -173,6 +203,14 @@ async function main() {
   const profile = await client.call("setupProfile", { principal: "merchant", name: "fixture", valuesJson: '{"product":"fixture","quantity":18446744073709551615}', select: true, seed: "0" });
   check(profile.createdAt === "-9223372036854775808" && profile.profileJson.includes("18446744073709551615"), "profile timestamp or collected JSON lost precision");
   check((await client.call("listProfiles", {}))[0].createdAt === "-9223372036854775808", "profile metadata exposed a numeric timestamp");
+  const another = await client.call("setupProfile", { principal: "merchant", name: "other", valuesJson: '{"product":"fixture","quantity":18446744073709551615}', select: false, seed: "0" });
+  check(profile.id !== another.id, "same seeded setup reused a profile identity across names");
+  check(JSON.stringify(JSON.parse(profile.profileJson).issued) !== JSON.stringify(JSON.parse(another.profileJson).issued), "same seeded setup reused token-issued values across names");
+  await client.call("resetState", {});
+  const reproduced = await client.call("setupProfile", { principal: "merchant", name: "other", valuesJson: '{"product":"fixture","quantity":18446744073709551615}', select: false, seed: "0" });
+  check(reproduced.profileJson === another.profileJson, "seeded profile changed with creation order");
+  const reproducedFirst = await client.call("setupProfile", { principal: "merchant", name: "fixture", valuesJson: '{"product":"fixture","quantity":18446744073709551615}', select: true, seed: "0" });
+  check(reproducedFirst.profileJson === profile.profileJson, "seeded profile was not reproducible after reset");
   const state = await client.call("inspectState", { includeValues: true, afterSequence: "0" });
   check(state.events.length > 0 && state.events.every(event => typeof event.sequence === "string" && typeof event.commandId === "string" && typeof event.at === "string"), "journal identifiers must be decimal strings");
   check(state.reportJson.includes("18446744073709551615"), "state payload JSON lost precision");

@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 use rand::{Rng as _, SeedableRng as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use simile_artifact::ArtifactOperation;
 use simile_runtime::{
     ExecutionOptions, OperationExecution, OperationValueCall, SynthesisRequest,
@@ -133,7 +134,9 @@ impl Service {
         self.setup_profile_with_seed(principal, name, supplied, select, rand::random())
     }
 
-    /// Reproduce setup values, credentials, and profile identifiers for a fixture.
+    /// Reproduce setup values, credentials, and identifiers for a principal/name/seed.
+    /// Distinct names have independent entropy; reconfiguring an existing profile
+    /// preserves its identity and credentials.
     pub fn setup_profile_with_seed(
         &self,
         principal: Option<&str>,
@@ -185,6 +188,15 @@ impl Service {
             });
         }
 
+        // Scope deterministic generation to the resolved identity, independently
+        // of creation order. Length prefixes keep the principal/name unambiguous.
+        let entropy = format!(
+            "simile-profile-v1:{seed}:{}:{}:{}:{name}",
+            definition.principal.len(),
+            definition.principal,
+            name.len(),
+        );
+        rng = rand::rngs::StdRng::from_seed(Sha256::digest(entropy.as_bytes()).into());
         let operation = self
             .artifact()
             .operation_by_id(&definition.operation_id)

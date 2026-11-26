@@ -63,6 +63,12 @@ header bytes. The HTTP adapter normalizes names and groups values for each name.
 Maps are plain objects; absent optional fields are omitted, while explicit metadata
 nulls remain null. No payload passes through JavaScript JSON parsing.
 
+`runOperation` returns a reusable `requestDocJson` containing the executed headers,
+path/query/header/cookie parameters, and body when present. Reuse it with the same
+seed to preserve the complete request. Seeded profile setup also includes the
+resolved principal and profile name in its entropy, so different named callers
+remain independent and the same named fixture is reproducible.
+
 Compilation and loading create candidates. Only `startSession` replaces the active
 session. Failed compilation, loading, construction, or checkpoint validation leaves
 it usable. Baseline `runOperation` calls use fresh runtimes and never modify it.
