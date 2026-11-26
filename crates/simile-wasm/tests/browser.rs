@@ -123,3 +123,30 @@ fn smithy_source_has_an_actionable_diagnostic() {
         })
     ));
 }
+
+#[wasm_bindgen_test]
+fn restores_clocks_without_rewinding_or_advancing_manual_time()
+-> Result<(), Box<dyn std::error::Error>> {
+    let before = js_sys::Date::now() as i64;
+    let restored = Clock::from_snapshot(ClockSnapshot {
+        mode: ClockMode::Realtime,
+        now: LogicalTime::UNIX_EPOCH,
+    });
+    assert!(restored.now()?.as_unix_millis() >= before);
+
+    let future = before + 60_000;
+    let restored = Clock::from_snapshot(ClockSnapshot {
+        mode: ClockMode::Realtime,
+        now: LogicalTime::from_unix_millis(future),
+    });
+    assert!(restored.now()?.as_unix_millis() >= future);
+
+    for saved in [i64::MIN, 42, i64::MAX] {
+        let restored = Clock::from_snapshot(ClockSnapshot {
+            mode: ClockMode::Manual,
+            now: LogicalTime::from_unix_millis(saved),
+        });
+        assert_eq!(restored.now()?.as_unix_millis(), saved);
+    }
+    Ok(())
+}

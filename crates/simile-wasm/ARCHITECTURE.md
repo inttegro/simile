@@ -159,6 +159,8 @@ Reset retains the compiled artifact and original clock configuration. Restore
 checks checkpoint version, exact artifact digest and format, service identity,
 Stack protocol, clock consistency, resource set, and snapshot validity before
 replacement. It restores Stack resources, profiles, outbox, journal, and clock.
+Manual time resumes exactly at its saved instant. Realtime clocks catch up to the
+host clock after a restart, while preserving a saved clock that is already ahead.
 HTTP replay caches and fault RNG progress restart in the new service. A checkpoint
 is therefore a state restore, not a suspended WASM process. Export only captures
 bytes; storage durability belongs to the host.

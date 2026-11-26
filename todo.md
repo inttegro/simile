@@ -159,7 +159,43 @@ The implementation and playground PRs are merged into `wasm`.
 - [x] Pass playground typecheck, lint, 21 unit tests, the release build, all 13
   Chromium end-to-end tests, and native CLI handoff of downloaded files.
 
+## Upstream integration — 26 November 2026
+
+- [x] Fetch both remotes and advance local `master` to upstream `2268b98` (0.5.1,
+  six commits). Save both old tips as `backup/*-before-upstream-20261126`.
+- [x] Run pristine upstream's 363 native tests before rebasing. Preserve all 21
+  fork commits and four merge commits in an isolated worktree.
+- [x] Resolve version and clock imports while preserving the updated console,
+  contract snapshots, response fidelity, and realtime restore behavior. Native
+  clocks retain `std::time`; browser clocks use `web_time`, including SystemTime.
+- [x] Prove the clock regression in Chromium: restoring with native SystemTime
+  fails with "time not implemented on this platform". The browser adapter passes
+  catch-up, future-clock, and exact manual-clock checks. Worker checkpoint restore
+  also advances the generation and preserves clocks already ahead of host time.
+- [x] Compare pristine and rebased CLIs with `scripts/check-upstream-compat.py`.
+  All 32 cases match: stdout/stderr/exit codes, seeded requests, three source formats,
+  artifact and reproduction bytes, audit, replay, conformance, and registrations
+  readable in both directions. Only generated registry revision IDs are normalized.
+- [x] Pass all five repository checks, WASM Clippy, portable dependency exclusions,
+  377 native tests, six Chromium Rust tests, and 152 Worker assertions.
+- [x] Pass playground typecheck/lint, 21 unit tests, the release build, 13 Chromium
+  end-to-end tests, and native registration/setup/create/read/replay of its exports.
+- [x] Enable the existing CI workflow on `wasm` pushes for Linux/macOS/Windows,
+  portable browser, quality, and dependency audit coverage of future rebases.
+
+Reproduce the CLI comparison after building both revisions with Rust 1.85.0:
+`python3 scripts/check-upstream-compat.py /path/to/upstream-simile /path/to/fork-simile`.
+Both binaries must have the same version; all comparison writes use a temporary home.
+
 ## Decisions and tradeoffs
+
+- Preserve upstream's realtime catch-up semantics in both hosts. Manual time remains
+  exact, while realtime restore uses the later of saved time and host time. A
+  browser-specific SystemTime import avoids a runtime panic without changing native
+  behavior. Run a syntax check before the Worker harness to surface module errors
+  immediately instead of waiting for its browser timeout.
+- Run the existing CI matrix on the long-lived `wasm` branch; this gives rebases
+  platform coverage without reopening merged PRs or changing release automation.
 
 - Keep durable exchange history and report submission in the native listener. The
   shared HTTP layer returns execution evidence and the exact logical timestamp;
@@ -249,8 +285,9 @@ The implementation and playground PRs are merged into `wasm`.
 
 ## What was achieved
 
-- Upstream integration: the merged browser work now builds on upstream 0.5.0,
-  including its console, durable history, and logical-time execution.
+- Upstream integration: the merged browser work now builds on upstream 0.5.1,
+  including its expanded console, immutable contract snapshots, state fidelity,
+  and realtime clock restoration. The native comparison harness is reusable.
 
 - Phase 1: portable feature boundaries, browser entropy and clocks, and a real
   Chromium harness are implemented. Native checks pass under Rust 1.85.
@@ -305,3 +342,7 @@ The implementation and playground PRs are merged into `wasm`.
 - Upstream integration: passed locally on the rebased branch. All repository,
   portable, Worker, playground, and native handoff checks above pass. The browser
   graph still excludes Axum, Tokio, redb, fs2, ureq, and Tree-sitter.
+
+- Upstream 0.5.1 integration: all local gates above pass, including 32 comparisons
+  against pristine upstream and the browser clock regression. No core regression
+  was observed in those checks; the existing cross-platform CI runs on `wasm` pushes.

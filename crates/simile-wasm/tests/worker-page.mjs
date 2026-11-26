@@ -215,6 +215,19 @@ async function main() {
   check((await client.call("status", {})).clockMode === "realtime", "Worker realtime clock did not initialize");
   check(Math.abs(Number((await client.call("status", {})).clockMilliseconds) - Date.now()) < 10_000, "realtime session did not start at browser wall time");
   await rejects(() => client.call("advanceClock", { milliseconds: "1" }), "operation_failed");
+  const realtimeCheckpoint = await client.call("exportCheckpoint", {});
+  const realtimeGeneration = (await client.call("status", {})).generation;
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const realtimeRestoreStarted = Date.now();
+  await client.call("restoreCheckpoint", { bytes: realtimeCheckpoint.bytes });
+  const restoredRealtime = await client.call("status", {});
+  check(Number(restoredRealtime.clockMilliseconds) >= realtimeRestoreStarted, "realtime restore did not catch up to the host clock");
+  check(restoredRealtime.generation !== realtimeGeneration, "realtime restore did not replace the runtime");
+  const future = String(Date.now() + 60_000);
+  await client.call("startSession", { revision, options: { clockMode: "realtime", startMilliseconds: future } });
+  const futureCheckpoint = await client.call("exportCheckpoint", {});
+  await client.call("restoreCheckpoint", { bytes: futureCheckpoint.bytes });
+  check(BigInt((await client.call("status", {})).clockMilliseconds) >= BigInt(future), "realtime restore rewound a future clock");
   return assertions;
 }
 main().then(count => { globalThis.simileTestResult = { ok: true, assertions: count }; })
