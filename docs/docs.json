@@ -14,6 +14,12 @@
 		"light": "#22C55E",
 		"dark": "#15803D"
 	},
+	"navbar": {
+		"primary": {
+			"type": "github",
+			"href": "https://github.com/inttegro/simile"
+		}
+	},
 	"navigation": {
 		"groups": [
 			{
