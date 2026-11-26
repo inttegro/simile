@@ -6,9 +6,11 @@ if (!serviceData) {
 }
 
 const localServiceUrl = window.SIMILE_CONSOLE_RUNTIME ?? `http://${serviceData.service.listen}`;
+const consoleToken = window.SIMILE_CONSOLE_TOKEN ?? null;
 const serviceName = serviceData.service.name;
 const serviceSlug = serviceName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'service';
-const activeProfileName = serviceData.profiles.find((profile) => profile.status === 'active')?.name
+const activeProfiles = serviceData.profiles.filter((profile) => profile.status === 'active');
+const activeProfileName = activeProfiles[0]?.name
   ?? serviceData.profiles[0]?.name
   ?? 'No active profile';
 const configurationFiles = serviceData.configuration?.files ?? [];
@@ -24,6 +26,7 @@ const navItems = [
   ['scenarios', 'Scenarios'],
   ['faults', 'Faults'],
   ['fidelity', 'Fidelity'],
+  ['sessions', 'Sessions'],
   ['settings', 'Settings'],
 ];
 
@@ -160,6 +163,9 @@ const state = {
   generatedExchangeReport: null,
   timelineOrder: 'ascending',
   environment: 'local',
+  workbenchDrafts: {},
+  workbenchResult: null,
+  replayResults: {},
   sidebarCollapsed: false,
   theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
 };
@@ -174,6 +180,10 @@ const runtime = {
   error: null,
   signature: '',
   observationsReady: false,
+  control: null,
+  sessions: [],
+  controlEvents: [],
+  controlCursor: 0,
 };
 
 function runtimeExchangeRows() {
@@ -359,6 +369,7 @@ async function inspectorJson(path, options = {}) {
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(consoleToken ? { Authorization: `Bearer ${consoleToken}` } : {}),
       ...options.headers,
     },
   });
@@ -530,6 +541,7 @@ const icons = {
   scenarios: '<path d="M5 4h14v6H5zM5 14h14v6H5zM9 7h6M9 17h6"/>',
   faults: '<path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/>',
   fidelity: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="m9.5 12 1.6 1.7 3.7-4"/>',
+  sessions: '<path d="M4 5h16v14H4zM8 3v4M16 3v4M4 9h16"/><path d="m9 14 2 2 4-4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   docs: '<path d="M5 3h11a3 3 0 0 1 3 3v15H8a3 3 0 0 1-3-3V3Z"/><path d="M8 17h11M9 7h6M9 11h6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
@@ -749,6 +761,7 @@ function renderPage(current) {
     scenarios: scenariosPage,
     faults: faultsPage,
     fidelity: fidelityPage,
+    sessions: sessionsPage,
     settings: settingsPage,
     docs: docsPage,
   };
@@ -995,6 +1008,81 @@ function fidelityFindingRows(limit = serviceData.findings.length) {
   }).join('');
 }
 
+function sessionsPage() {
+  const writable = Boolean(runtime.control?.writable);
+  const sessions = runtime.sessions ?? [];
+  const events = [...(runtime.controlEvents ?? [])].reverse();
+  return `<div class="page sessions-page">
+    ${header('Test sessions', 'Name a known service state, restore it later, and keep every control action visible.', `<button class="button button--primary" type="button" data-action="create-session" ${writable ? '' : 'disabled'}>${icon('check')}Save checkpoint</button>`)}
+    <section class="session-command-bar">
+      <label><span>Checkpoint name</span><input data-session-name placeholder="checkout-ready" autocomplete="off" spellcheck="false"></label>
+      <div><label><span>Advance manual clock</span><input data-clock-advance value="1000" inputmode="numeric"><small>milliseconds</small></label><button class="button" type="button" data-action="advance-clock" ${writable ? '' : 'disabled'}>Advance</button></div>
+      <span class="protocol-status">${badge(runtime.control ? `PROTOCOL v${runtime.control.version}` : 'OFFLINE', runtime.control ? 'success' : 'warning')} ${writable ? 'Mutations are authorized for this console.' : 'Attach through simile console to enable controls.'}</span>
+    </section>
+    <div class="session-layout">
+      <section class="table-panel session-checkpoints"><div class="panel-heading panel-heading--table"><div><h2>Checkpoints</h2><p>Each checkpoint contains the complete Stack, clock, replay identities, and causal journal.</p></div><span class="panel-stat">${sessions.length}</span></div>${sessions.length ? `<table class="data-table">${tableHead(['Name','Captured','Logical time','Exchanges','Actions'])}<tbody>${sessions.map((session) => `<tr><td><code>${escapeHtml(session.name)}</code></td><td>${new Date(session.createdAtMs).toLocaleString()}</td><td><code>${new Date(session.logicalTimeMilliseconds).toISOString()}</code></td><td>${session.exchangeCount}</td><td><span class="session-actions"><button class="button button--compact" data-restore-session="${escapeHtml(session.name)}">Restore</button><button class="button button--compact button--quiet-danger" data-delete-session="${escapeHtml(session.name)}">Delete</button></span></td></tr>`).join('')}</tbody></table>` : `<section class="empty-state">${icon('state')}<h2>No checkpoints yet</h2><p>Save the current state before a test, then restore it for the next run.</p></section>`}</section>
+      <section class="control-events"><header><div><h2>Control history</h2><p>Workbench, replay, state, and clock actions from this runtime.</p></div>${badge(`${events.length} EVENTS`)}</header>${events.length ? `<ol>${events.map((event) => `<li><span class="event-kind">${escapeHtml(event.kind)}</span><div><strong>${escapeHtml(event.summary)}</strong><small>${new Date(event.atMs).toLocaleTimeString()}</small></div><code>#${event.sequence}</code></li>`).join('')}</ol>` : `<div class="workbench-empty">${icon('exchanges')}<strong>No control actions yet</strong><span>Actions appear here in sequence.</span></div>`}</section>
+    </div>
+  </div>`;
+}
+
+async function createSession() {
+  const name = document.querySelector('[data-session-name]')?.value.trim();
+  try {
+    const session = await inspectorJson('/.simile/console/v1/sessions', {
+      method: 'POST',
+      body: JSON.stringify(name ? { name } : {}),
+    });
+    await refreshRuntime(true);
+    showToast(`Saved checkpoint ${session.name}`, 'success');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
+}
+
+async function restoreSession(name) {
+  if (!window.confirm(`Restore ${name}? The current service state will be replaced.`)) return;
+  try {
+    await inspectorJson(`/.simile/console/v1/sessions/${encodeURIComponent(name)}/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    });
+    await refreshRuntime(true);
+    showToast(`Restored checkpoint ${name}`, 'success');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
+}
+
+async function deleteSession(name) {
+  if (!window.confirm(`Delete checkpoint ${name}?`)) return;
+  try {
+    await inspectorJson(`/.simile/console/v1/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await refreshRuntime(true);
+    showToast(`Deleted checkpoint ${name}`, 'success');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
+}
+
+async function advanceSessionClock() {
+  const milliseconds = Number(document.querySelector('[data-clock-advance]')?.value);
+  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) {
+    showToast('Enter a positive number of milliseconds', 'warning');
+    return;
+  }
+  try {
+    const result = await inspectorJson('/.simile/console/v1/clock/advance', {
+      method: 'POST',
+      body: JSON.stringify({ milliseconds }),
+    });
+    await refreshRuntime(true);
+    showToast(`Clock advanced to ${new Date(result.now).toISOString()}`, 'success');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
+}
+
 function operationsPage() {
   return `<div class="page">${header('Operations', `${serviceData.metrics.operations} callable operations compiled from the active contract`, `<button class="button" data-action="download-contract">${icon('download')}Export contract</button>`)}${toolbar({ search: 'Search paths, operation IDs, or domains', count: `${serviceData.metrics.operations} operations`, actions: `<button class="button button--compact" data-action="filter-operations">${icon('filter')}Filter</button>` })}<section class="table-panel"><table class="data-table operations-table">${tableHead(['Method', 'Path', 'Operation ID', 'Success', 'Outcomes', 'Behavior'])}<tbody>${operationRows.map(([method,path,id,success,outcomes,behavior]) => `<tr class="clickable-row" data-operation="${id}" tabindex="0"><td>${methodBadge(method)}</td><td><code>${path}</code></td><td><code>${id}</code></td><td><span class="status-code status-code--good">${success}</span></td><td>${outcomes}</td><td>${behavior}</td></tr>`).join('')}</tbody></table><footer class="table-footer"><span data-list-result-count>Showing all ${serviceData.metrics.operations} compiled operations</span></footer></section></div>`;
 }
@@ -1011,7 +1099,8 @@ function preparedOperationRequest(operationId) {
   const resolvedPath = path.replace(/\{([^}]+)\}/g, (_, key) => encodeURIComponent(pathParameters[key]));
   const requestFields = Object.fromEntries(Object.entries(example).filter(([key]) => !pathKeys.includes(key)));
   const query = ['GET', 'HEAD'].includes(method) ? requestFields : {};
-  const body = ['GET', 'HEAD'].includes(method) || Object.keys(requestFields).length === 0 ? null : requestFields;
+  const hasRequestBody = detail.requestSchema && detail.requestSchema !== 'No request body';
+  const body = ['GET', 'HEAD'].includes(method) || !hasRequestBody ? null : requestFields;
   const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, typeof value === 'string' ? value : JSON.stringify(value)])).toString();
   const url = `${localServiceUrl}${resolvedPath}${search ? `?${search}` : ''}`;
   return { operationId, method, resolvedPath, url, query, body };
@@ -1103,14 +1192,209 @@ function operationDetail(operationId) {
   const detail = operationCatalog[operationId];
   if (!row || !detail) return `<div class="page">${header('Operation not found', 'The requested operation is not present in this compiled contract.')}<a class="button" href="/operations">Back to operations</a></div>`;
   const [method, path, , success, outcomes, behavior] = row;
-  const tabs = [['contract', 'Contract'], ['exchanges', 'Recent exchanges'], ['scenarios', 'Scenarios']];
+  const tabs = [['contract', 'Contract'], ['try', 'Try it'], ['exchanges', 'Recent exchanges'], ['scenarios', 'Scenarios']];
   return `<div class="page operation-page"><a class="back-link" href="/operations">‹ Back to Operations</a><div class="operation-heading"><div><div class="title-line">${methodBadge(method)}<h1>${operationId}</h1></div><p>${detail.summary}</p></div><div class="request-copy-control"><button class="button button--primary request-copy-action" type="button" data-action="copy-request">${icon('copy')}<span>${requestFormats[state.requestCopyFormat].label}</span></button><button class="button button--primary request-copy-menu-button" type="button" data-menu="copy-request" aria-label="Choose request copy format" aria-haspopup="menu" aria-expanded="false"><span class="down-caret" aria-hidden="true"></span></button></div></div><dl class="operation-summary"><div><dt>Path</dt><dd><code>${path}</code></dd></div><div><dt>Success</dt><dd><span class="status-code status-code--good">${success}</span></dd></div><div><dt>Behavior</dt><dd>${behavior}</dd></div><div><dt>Outcomes</dt><dd>${outcomes}</dd></div><div><dt>Request schema</dt><dd>${detail.requestSchema}</dd></div><div><dt>Response schema</dt><dd>${detail.responseSchema}</dd></div></dl>${localTabs(tabs, state.operationTab, 'operation-tab', 'Operation views', 'operation-tab-panel')}<div id="operation-tab-panel" class="local-tab-panel" role="tabpanel" aria-labelledby="operation-tab-${state.operationTab}-tab">${operationTabPanel(operationId, detail)}</div></div>`;
 }
 
 function operationTabPanel(operationId, detail) {
+  if (state.operationTab === 'try') return operationWorkbenchPanel(operationId);
   if (state.operationTab === 'exchanges') return operationExchangesPanel(operationId);
   if (state.operationTab === 'scenarios') return operationScenariosPanel(operationId);
   return `<section class="operation-grid">${codePanel('Representative request', detail.request, {copy:`${operationId} request`,className:'code-panel--large'})}${codePanel('Representative response', detail.response, {copy:`${operationId} response`,className:'code-panel--large'})}</section>${operationOutcomesPanel(operationId, detail.outcomes)}`;
+}
+
+function workbenchDraft(operationId) {
+  if (state.workbenchDrafts[operationId]) {
+    const draft = state.workbenchDrafts[operationId];
+    draft.query = normalizeWorkbenchPairs(draft.query);
+    draft.headers = normalizeWorkbenchPairs(draft.headers);
+    return draft;
+  }
+  const prepared = preparedOperationRequest(operationId);
+  const draft = {
+    path: prepared?.resolvedPath ?? '/',
+    query: normalizeWorkbenchPairs(prepared?.query),
+    headers: [],
+    body: prepared?.body == null ? '' : JSON.stringify(prepared.body, null, 2),
+    scenario: '',
+    faultProfile: '',
+    profile: activeProfiles[0]?.name ?? '',
+    seed: '42',
+  };
+  state.workbenchDrafts[operationId] = draft;
+  return draft;
+}
+
+function normalizeWorkbenchPairs(value) {
+  if (Array.isArray(value)) return value.map((pair) => ({ key: String(pair.key ?? ''), value: String(pair.value ?? '') }));
+  if (typeof value === 'string') {
+    try { return normalizeWorkbenchPairs(JSON.parse(value || '{}')); } catch { return []; }
+  }
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, item]) => (Array.isArray(item) ? item : [item]).map((entry) => ({ key, value: String(entry) })));
+}
+
+function workbenchPairEditor(label, kind, pairs) {
+  const rows = pairs.length ? pairs : [{ key: '', value: '' }];
+  return `<fieldset class="key-value-editor">
+    <legend>${label}</legend>
+    <div class="key-value-list">
+      ${rows.map((pair, index) => `<div class="key-value-row" data-pair-row="${kind}">
+        <input data-pair-key aria-label="${label} name" placeholder="Name" autocomplete="off" spellcheck="false" value="${escapeHtml(pair.key)}">
+        <input data-pair-value aria-label="${label} value" placeholder="Value" autocomplete="off" spellcheck="false" value="${escapeHtml(pair.value)}">
+        <button type="button" data-remove-pair="${kind}" data-pair-index="${index}" aria-label="Remove ${label.toLowerCase()} row">${icon('trash')}</button>
+      </div>`).join('')}
+    </div>
+    <button class="key-value-add" type="button" data-add-pair="${kind}">+ Add ${kind === 'query' ? 'parameter' : 'header'}</button>
+  </fieldset>`;
+}
+
+function operationWorkbenchPanel(operationId) {
+  const operation = serviceData.operations.find((candidate) => candidate.id === operationId);
+  const draft = workbenchDraft(operationId);
+  const result = state.workbenchResult?.operationId === operationId ? state.workbenchResult : null;
+  const writable = Boolean(runtime.control?.writable);
+  const scenarioOptions = serviceData.scenarios.map((scenario) => `<option value="${escapeHtml(scenario.name)}" ${draft.scenario === scenario.name ? 'selected' : ''}>${escapeHtml(scenario.name)}</option>`).join('');
+  const faultOptions = serviceData.faultProfiles.map((profile) => `<option value="${escapeHtml(profile.name)}" ${draft.faultProfile === profile.name ? 'selected' : ''}>${escapeHtml(profile.name)}</option>`).join('');
+  const profileOptions = activeProfiles.map((profile) => `<option value="${escapeHtml(profile.name)}" ${draft.profile === profile.name ? 'selected' : ''}>${escapeHtml(profile.name)} · ${escapeHtml(profile.principal)}</option>`).join('');
+  const response = result ? JSON.stringify(result.response.body ?? null, null, 2) : '';
+  const proof = result?.exchange?.proof;
+  return `<section class="workbench">
+    <header class="workbench__header"><div><h2>Request workbench</h2><p>Run the compiled operation through the same listener, validation, state, and effect pipeline as an integration client.</p></div>${badge(writable ? 'CONTROL READY' : 'READ ONLY', writable ? 'success' : 'warning')}</header>
+    <div class="workbench__grid">
+      <form class="request-composer" data-workbench-form>
+        <div class="request-line"><span>${methodBadge(operation.method)}</span><input name="path" value="${escapeHtml(draft.path)}" aria-label="Request path"></div>
+        <div class="composer-fields">
+          ${workbenchPairEditor('Headers', 'headers', draft.headers)}
+          ${workbenchPairEditor('Query parameters', 'query', draft.query)}
+          <label class="composer-body"><span>JSON body <small>Tab inserts two spaces</small></span><textarea class="json-editor" name="body" data-code-editor spellcheck="false" autocapitalize="off" autocomplete="off">${escapeHtml(draft.body)}</textarea></label>
+        </div>
+        <div class="composer-controls">
+          <label><span>Profile</span><select name="profile"><option value="">Request headers</option>${profileOptions}</select></label>
+          <label><span>Scenario</span><select name="scenario"><option value="">Default</option>${scenarioOptions}</select></label>
+          <label><span>Fault profile</span><select name="faultProfile"><option value="">None</option>${faultOptions}</select></label>
+          <label><span>Seed</span><input name="seed" inputmode="numeric" value="${escapeHtml(draft.seed)}"></label>
+          <button class="button button--primary" type="button" data-action="run-operation" ${writable ? '' : 'disabled'}>${icon('terminal')}Run request</button>
+        </div>
+      </form>
+      <section class="workbench-response ${result ? 'has-result' : ''}">
+        <header><div><h3>Response</h3><p>${result ? `Captured as ${result.exchange?.id ?? 'an unrecorded response'}` : 'Run the request to inspect its actual response and proof.'}</p></div>${result ? `<span class="status-code ${Number(result.response.status) < 400 ? 'status-code--good' : 'status-code--warn'}">${result.response.status}</span>` : ''}</header>
+        ${result ? `<dl class="payload-facts"><div><dt>Status</dt><dd><code>${result.response.status}</code></dd></div><div><dt>Content type</dt><dd><code>${escapeHtml(result.response.contentType || '—')}</code></dd></div><div><dt>Outcome</dt><dd><code>${escapeHtml(result.exchange?.outcome || '—')}</code></dd></div><div><dt>Duration</dt><dd><code>${result.exchange ? formatDuration(result.exchange.durationMicros) : '—'}</code></dd></div></dl>${codePanel('Response body', response, {copy:'workbench response',className:'code-panel--large'})}${proof ? executionProofPanel(proof, true) : ''}` : `<div class="workbench-empty">${icon('operations')}<strong>No request has run yet</strong><span>The result will remain tied to this operation while you inspect it.</span></div>`}
+      </section>
+    </div>
+  </section>`;
+}
+
+function readWorkbenchPairs(form, kind) {
+  return [...form.querySelectorAll(`[data-pair-row="${kind}"]`)].map((row) => ({
+    key: row.querySelector('[data-pair-key]')?.value.trim() ?? '',
+    value: row.querySelector('[data-pair-value]')?.value ?? '',
+  }));
+}
+
+function collectWorkbenchDraft(operation, form) {
+  const values = new FormData(form);
+  return {
+    path: String(values.get('path') || operation.path),
+    query: readWorkbenchPairs(form, 'query'),
+    headers: readWorkbenchPairs(form, 'headers'),
+    body: String(values.get('body') || ''),
+    scenario: String(values.get('scenario') || ''),
+    faultProfile: String(values.get('faultProfile') || ''),
+    profile: String(values.get('profile') || ''),
+    seed: String(values.get('seed') || ''),
+  };
+}
+
+function repeatedWorkbenchValues(pairs) {
+  return pairs.reduce((values, pair) => {
+    if (!pair.key) return values;
+    (values[pair.key] ??= []).push(pair.value);
+    return values;
+  }, {});
+}
+
+function updateWorkbenchPairs(kind, index = null) {
+  const operationId = route().detail;
+  const operation = serviceData.operations.find((candidate) => candidate.id === operationId);
+  const form = document.querySelector('[data-workbench-form]');
+  if (!operation || !form) return;
+  const draft = collectWorkbenchDraft(operation, form);
+  if (index == null) draft[kind].push({ key: '', value: '' });
+  else draft[kind].splice(index, 1);
+  state.workbenchDrafts[operationId] = draft;
+  renderShell();
+  const rows = document.querySelectorAll(`[data-pair-row="${kind}"]`);
+  rows[Math.min(index ?? rows.length - 1, rows.length - 1)]?.querySelector('[data-pair-key]')?.focus({ preventScroll: true });
+}
+
+function handleCodeEditorKeydown(event) {
+  if (event.key !== 'Tab') return;
+  event.preventDefault();
+  const editor = event.currentTarget;
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  if (start === end) {
+    if (event.shiftKey) {
+      const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
+      const removable = editor.value.slice(lineStart, start).match(/^ {1,2}/)?.[0].length ?? 0;
+      if (removable) editor.setRangeText('', lineStart, lineStart + removable, 'end');
+      return;
+    }
+    editor.setRangeText('  ', start, end, 'end');
+    return;
+  }
+  const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd = editor.value.indexOf('\n', end);
+  const blockEnd = lineEnd === -1 ? editor.value.length : lineEnd;
+  const block = editor.value.slice(lineStart, blockEnd);
+  const indented = event.shiftKey ? block.replace(/^ {1,2}/gm, '') : block.replace(/^/gm, '  ');
+  editor.setRangeText(indented, lineStart, blockEnd, 'select');
+}
+
+async function runOperationWorkbench() {
+  const operationId = route().detail;
+  const operation = serviceData.operations.find((candidate) => candidate.id === operationId);
+  const form = document.querySelector('[data-workbench-form]');
+  if (!operation || !form) return;
+  const draft = collectWorkbenchDraft(operation, form);
+  state.workbenchDrafts[operationId] = draft;
+  let body;
+  try {
+    body = draft.body.trim() ? JSON.parse(draft.body) : null;
+  } catch (error) {
+    showToast(`JSON body is invalid: ${error.message}`, 'warning');
+    return;
+  }
+  const unnamed = [...draft.query, ...draft.headers].find((pair) => !pair.key && pair.value);
+  if (unnamed) {
+    showToast('Every parameter and header value needs a name', 'warning');
+    return;
+  }
+  showToast(`Running ${operationId}…`);
+  try {
+    const result = await inspectorJson('/.simile/console/v1/execute', {
+      method: 'POST',
+      body: JSON.stringify({
+        method: operation.method,
+        path: draft.path,
+        query: repeatedWorkbenchValues(draft.query),
+        headers: repeatedWorkbenchValues(draft.headers),
+        ...(body == null ? {} : { body, contentType: 'application/json' }),
+        ...(draft.scenario ? { scenario: draft.scenario } : {}),
+        ...(draft.faultProfile ? { faultProfile: draft.faultProfile } : {}),
+        ...(draft.profile ? { profile: draft.profile } : {}),
+        ...(draft.seed ? { responseSeed: Number(draft.seed) } : {}),
+      }),
+    });
+    state.workbenchResult = { operationId, ...result };
+    await refreshRuntime(true);
+    state.operationTab = 'try';
+    renderShell();
+    showToast(`${operationId} returned ${result.response.status}`, Number(result.response.status) < 400 ? 'success' : 'warning');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
 }
 
 function operationOutcomesPanel(operationId, outcomes) {
@@ -1433,8 +1717,8 @@ function liveExchangeDetail(exchange) {
   const started = new Date(exchange.startedAtMs);
   const ended = new Date(exchange.startedAtMs + exchange.durationMicros / 1000);
   const responseBody = messageBody(exchange.response);
-  const tabs = [['timeline','Timeline'],['request','Request'],['response','Response'],['state','State']];
-  return `<div class="page exchange-page"><a class="back-link" href="/exchanges">‹ Back to Exchanges</a><div class="exchange-heading"><div><div class="title-line">${badge(Number(exchange.status) < 400 ? 'DELIVERED' : 'ISSUE',Number(exchange.status) < 400 ? 'success' : 'warning')}${badge('LIVE','success')}<h1><a class="operation-link" href="/operations/${operationId}">${operationId}</a><span aria-hidden="true">·</span><code>${exchange.id}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>${started.toLocaleString()}</dd></div><div><dt>Request ID</dt><dd><code>${exchange.id}</code></dd></div><div><dt>Response</dt><dd><code>${exchange.status} · ${new TextEncoder().encode(responseBody).length} bytes</code></dd></div><div><dt>Ended</dt><dd>${ended.toLocaleString()}</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="/operations/${operationId}"><code>${exchange.operation}</code></a></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div><div><dt>Duration</dt><dd><code>${duration}</code></dd></div><div><dt>Profile</dt><dd><code>${exchange.profile || 'default'}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" disabled>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabs, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${liveExchangeTabPanel(exchange)}</div></div>`;
+  const tabs = [['timeline','Timeline'],['request','Request'],['response','Response'],['proof','Why this happened'],['state','State']];
+  return `<div class="page exchange-page"><a class="back-link" href="/exchanges">‹ Back to Exchanges</a><div class="exchange-heading"><div><div class="title-line">${badge(Number(exchange.status) < 400 ? 'DELIVERED' : 'ISSUE',Number(exchange.status) < 400 ? 'success' : 'warning')}${badge('LIVE','success')}<h1><a class="operation-link" href="/operations/${operationId}">${operationId}</a><span aria-hidden="true">·</span><code>${exchange.id}</code></h1></div><dl class="exchange-summary"><div><dt>Started</dt><dd>${started.toLocaleString()}</dd></div><div><dt>Request ID</dt><dd><code>${exchange.id}</code></dd></div><div><dt>Response</dt><dd><code>${exchange.status} · ${new TextEncoder().encode(responseBody).length} bytes</code></dd></div><div><dt>Ended</dt><dd>${ended.toLocaleString()}</dd></div><div><dt>Operation</dt><dd><a class="operation-link" href="/operations/${operationId}"><code>${exchange.operation}</code></a></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div><div><dt>Duration</dt><dd><code>${duration}</code></dd></div><div><dt>Profile</dt><dd><code>${exchange.profile || 'default'}</code></dd></div><div><dt>Contract</dt><dd><span class="source-chip">OAS</span>${serviceData.service.version}</dd></div></dl></div><div class="page-actions"><button class="button" data-action="replay" ${runtime.control?.writable ? '' : 'disabled'}>${icon('replay')}Replay</button><button class="button exchange-actions-button" data-menu="exchange-actions"><span>More actions</span><span class="down-caret"></span></button></div></div><div class="exchange-tabs">${localTabs(tabs, state.exchangeTab, 'exchange-tab', 'Exchange views', 'exchange-tab-panel')}</div><div id="exchange-tab-panel" class="exchange-panel local-tab-panel" role="tabpanel" aria-labelledby="exchange-tab-${state.exchangeTab}-tab">${liveExchangeTabPanel(exchange)}</div></div>`;
 }
 
 function liveExchangeTabPanel(exchange) {
@@ -1444,9 +1728,43 @@ function liveExchangeTabPanel(exchange) {
     timeline: () => `<section class="payload-view"><header><div><h2>Runtime exchange</h2><p>The service captured this request and response directly from its loopback listener.</p></div>${badge(formatDuration(exchange.durationMicros),'success')}</header><dl class="payload-facts"><div><dt>Method</dt><dd><code>${exchange.method}</code></dd></div><div><dt>Path</dt><dd><code>${exchange.path}</code></dd></div><div><dt>Status</dt><dd><code>${exchange.status}</code></dd></div><div><dt>Outcome</dt><dd><code>${exchange.outcome || '—'}</code></dd></div></dl><div class="runtime-exchange-flow"><span>Request received</span><i></i><span>Contract executed</span><i></i><span>Response ${exchange.status}</span></div></section>`,
     request: () => payloadPanel('Request', 'Sanitized request payload captured by the local runtime.', [['Method',exchange.method],['Path',`<code>${exchange.path}</code>`],['Content type',exchange.request.contentType || '—'],['Capture',exchange.request.truncated ? 'Body omitted' : 'Complete']], requestBody),
     response: () => payloadPanel('Response', 'Response payload produced by the running service.', [['Status',String(exchange.status)],['Content type',exchange.response.contentType || '—'],['Outcome',exchange.outcome || '—'],['Duration',formatDuration(exchange.durationMicros)]], responseBody),
+    proof: () => exchange.proof ? executionProofPanel(exchange.proof, false, state.replayResults[exchange.id]) : `<section class="empty-state">${icon('warning')}<h2>Execution proof unavailable</h2><p>This exchange predates the versioned console protocol.</p></section>`,
     state: () => `<section class="payload-view"><header><div><h2>State after exchange</h2><p>Inspect the current Stack and its payload-free causal journal.</p></div><a class="button button--compact" href="/state">Open live state</a></header></section>`,
   };
   return (panels[state.exchangeTab] || panels.timeline)();
+}
+
+function executionProofPanel(proof, compact = false, replay = null) {
+  const actions = [
+    ...(proof.effects?.synchronous ?? []).map((action) => `${action.resource} · ${action.command}`),
+    ...(proof.effects?.asynchronous ?? []).map((operation) => `async · ${operation.name}`),
+    ...(proof.effects?.webhooks ?? []).map((name) => `webhook · ${name}`),
+  ];
+  const replayPanel = replay ? `<section class="replay-result ${replay.matches ? 'is-match' : 'has-diff'}"><header><div>${icon(replay.matches ? 'check' : 'warning')}<span><strong>${replay.matches ? 'Deterministic replay matched' : `${replay.differences.length} semantic difference${replay.differences.length === 1 ? '' : 's'}`}</strong><small>The replay ran without mutating service state.</small></span></div>${badge(replay.matches ? 'MATCH' : 'DIFF', replay.matches ? 'success' : 'warning')}</header>${replay.differences.length ? `<table class="data-table">${tableHead(['Path','Change','Expected','Actual'])}<tbody>${replay.differences.map((difference) => `<tr><td><code>${escapeHtml(difference.path)}</code></td><td>${escapeHtml(difference.kind)}</td><td><code>${escapeHtml(JSON.stringify(difference.expected))}</code></td><td><code>${escapeHtml(JSON.stringify(difference.actual))}</code></td></tr>`).join('')}</tbody></table>` : ''}</section>` : '';
+  return `<section class="execution-proof ${compact ? 'execution-proof--compact' : ''}">
+    <header><div><span class="eyebrow">Execution proof v${proof.version}</span><h2>Why this response happened</h2><p>${escapeHtml(proof.selection.reason)}</p></div>${badge('PROVEN', 'success')}</header>
+    ${replayPanel}
+    <div class="proof-grid">
+      <section><h3>Selection</h3><dl class="detail-facts"><div><dt>Outcome</dt><dd><code>${escapeHtml(proof.selection.outcome || 'default')}</code></dd></div><div><dt>Source</dt><dd><code>${escapeHtml(proof.selection.source)}</code></dd></div><div><dt>Scenario</dt><dd><code>${escapeHtml(proof.controls.scenario || 'none')}</code></dd></div><div><dt>Response seed</dt><dd><code>${proof.controls.responseSeed}</code></dd></div></dl></section>
+      <section><h3>Proof checks</h3><div class="check-list proof-checks">${proof.validation.map((check) => `<div>${icon('check')}<span><strong>${escapeHtml(check.name)}</strong><small>${escapeHtml(check.detail)}</small></span>${badge(check.result.toUpperCase(),'success')}</div>`).join('')}</div></section>
+      <section><h3>Consequences</h3>${actions.length ? `<ul class="proof-actions">${actions.map((action) => `<li>${icon('check')}<code>${escapeHtml(action)}</code></li>`).join('')}</ul>` : '<p class="subtle">No state, asynchronous, or webhook effect was planned.</p>'}${proof.fault ? `<div class="proof-fault">${badge('FAULT','warning')}<code>${escapeHtml(proof.fault.name)}</code><span>${escapeHtml(proof.fault.source)}</span></div>` : ''}</section>
+    </div>
+  </section>`;
+}
+
+async function replayCurrentExchange() {
+  const exchange = currentExchange();
+  if (!runtime.exchanges.some((candidate) => candidate.id === exchange.id)) return;
+  showToast(`Replaying ${exchange.id} without changing state…`);
+  try {
+    const result = await inspectorJson(`/.simile/console/v1/exchanges/${encodeURIComponent(exchange.id)}/replay`, { method: 'POST' });
+    state.replayResults[exchange.id] = result;
+    state.exchangeTab = 'proof';
+    renderShell();
+    showToast(result.matches ? 'Replay matched the captured result' : `Replay found ${result.differences.length} differences`, result.matches ? 'success' : 'warning');
+  } catch (error) {
+    showToast(error.message, 'warning');
+  }
 }
 
 function exchangeTabPanel() {
@@ -1580,6 +1898,11 @@ function bindInteractions() {
   document.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', async () => { const label = button.dataset.copy; const panel = button.closest('.code-panel, .command-panel, .resource-detail'); const content = panel?.querySelector('code')?.innerText || label; try { await navigator.clipboard.writeText(content); showToast(`Copied ${label}`, 'success'); } catch { showToast('Clipboard access is unavailable', 'warning'); } }));
   document.querySelectorAll('[data-menu]').forEach((button) => button.addEventListener('click', () => openMenu(button)));
   document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button.dataset.action)));
+  document.querySelectorAll('[data-add-pair]').forEach((button) => button.addEventListener('click', () => updateWorkbenchPairs(button.dataset.addPair)));
+  document.querySelectorAll('[data-remove-pair]').forEach((button) => button.addEventListener('click', () => updateWorkbenchPairs(button.dataset.removePair, Number(button.dataset.pairIndex))));
+  document.querySelectorAll('[data-code-editor]').forEach((editor) => editor.addEventListener('keydown', handleCodeEditorKeydown));
+  document.querySelectorAll('[data-restore-session]').forEach((button) => button.addEventListener('click', () => restoreSession(button.dataset.restoreSession)));
+  document.querySelectorAll('[data-delete-session]').forEach((button) => button.addEventListener('click', () => deleteSession(button.dataset.deleteSession)));
   document.querySelector('[data-log-search]')?.addEventListener('input', (event) => {
     state.logQuery = event.currentTarget.value;
     filterLogRows();
@@ -1726,7 +2049,10 @@ function handleAction(action) {
       renderShell();
       showToast(`${state.theme === 'light' ? 'Light' : 'Dark'} mode enabled`);
     },
-    replay: () => showToast('Replay is not exposed by the read-only inspector', 'warning'),
+    replay: replayCurrentExchange,
+    'run-operation': runOperationWorkbench,
+    'create-session': createSession,
+    'advance-clock': advanceSessionClock,
     'auto-refresh': () => { state.autoRefresh = !state.autoRefresh; renderShell(); },
     'toggle-log-dock': () => {
       state.logDock = state.logDock === 'collapsed' ? 'partial' : 'collapsed';
@@ -1834,10 +2160,13 @@ async function refreshRuntime(forceRender = false) {
     const statusResponse = await fetch(`${localServiceUrl}/.simile/inspection`, { cache: 'no-store' });
     if (!statusResponse.ok) throw new Error(`inspection returned ${statusResponse.status}`);
     const status = await statusResponse.json();
-    const [exchangeResponse, stateResponse, deferredResponse] = await Promise.all([
+    const [exchangeResponse, stateResponse, deferredResponse, control, sessions, controlEvents] = await Promise.all([
       fetch(`${localServiceUrl}/.simile/exchanges`, { cache: 'no-store' }),
       fetch(`${localServiceUrl}/.simile/state`, { cache: 'no-store' }),
       fetch(`${localServiceUrl}/.simile/deferred`, { cache: 'no-store' }),
+      inspectorJson('/.simile/console/v1'),
+      inspectorJson('/.simile/console/v1/sessions'),
+      inspectorJson(`/.simile/console/v1/events?after=${runtime.controlCursor}`),
     ]);
     if (!exchangeResponse.ok || !stateResponse.ok || !deferredResponse.ok) throw new Error('runtime inspection is incomplete');
     const [{ exchanges }, inspectionState, deferred] = await Promise.all([exchangeResponse.json(), stateResponse.json(), deferredResponse.json()]);
@@ -1845,13 +2174,18 @@ async function refreshRuntime(forceRender = false) {
     const newIssue = runtime.observationsReady && runtime.connected
       ? exchanges.find((exchange) => Number(exchange.status) >= 400 && !knownExchangeIds.has(exchange.id))
       : null;
-    const signature = `${status.exchanges}:${status.events}:${exchanges[0]?.id || ''}:${deferred.pending}:${deferred.leased}:${deferred.deadLetters}`;
+    const signature = `${status.exchanges}:${status.events}:${exchanges[0]?.id || ''}:${deferred.pending}:${deferred.leased}:${deferred.deadLetters}:${sessions.sessions.length}:${controlEvents.cursor}`;
     const changed = forceRender || !runtime.connected || signature !== runtime.signature;
     runtime.connected = true;
     runtime.status = status;
     runtime.exchanges = exchanges;
     runtime.inspectionState = inspectionState;
     runtime.deferred = deferred;
+    runtime.control = control;
+    runtime.sessions = sessions.sessions;
+    if (controlEvents.events.length) runtime.controlEvents.push(...controlEvents.events);
+    runtime.controlEvents = runtime.controlEvents.slice(-256);
+    runtime.controlCursor = controlEvents.cursor;
     runtime.error = null;
     runtime.signature = signature;
     runtime.observationsReady = true;
@@ -1868,6 +2202,8 @@ async function refreshRuntime(forceRender = false) {
     runtime.exchanges = [];
     runtime.inspectionState = null;
     runtime.deferred = null;
+    runtime.control = null;
+    runtime.sessions = [];
     runtime.error = error.message;
     runtime.signature = '';
     runtime.observationsReady = true;

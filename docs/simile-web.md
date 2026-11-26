@@ -106,6 +106,20 @@ outcomes, representative payloads, and fidelity evidence.
 Representative payloads explain the compiled contract. Calls made by your application appear under
 **Exchanges**.
 
+### Run an operation
+
+Open an operation and select **Try it**. The request workbench sends the call through the running
+service, including its normal routing, authentication, validation, state, effects, and exchange
+recording.
+
+The workbench starts with the operation's representative request. You can change the path, query
+parameters, headers, or JSON body, then select any active profile, scenario, fault profile, and
+deterministic seed. Profile credentials remain inside the service process.
+
+The response includes an execution proof. It records the selected outcome, request controls,
+validation layers, committed effects, deferred work, webhooks, and delivery fault. Use this proof
+to answer why a particular response occurred.
+
 ### Exchanges and state
 
 **Exchanges** records calls handled by the local emulator and restores them when the service starts
@@ -134,10 +148,33 @@ state database while the service owns it.
   alt="The State workspace showing Stack resources and journal activity"
 />
 
+### Replay and compare
+
+Open a retained exchange and select **Replay**. Simile runs the captured request with its original
+seed and outcome selection, without committing another state transition. The console compares the
+new result with the retained response and lists semantic differences by JSON path.
+
+Replay requires safely retained request evidence. Exchanges with opaque or truncated bodies explain
+why replay is unavailable.
+
+### Save a test session
+
+Open **Sessions** to checkpoint the complete Stack before a test sequence. A checkpoint includes
+resources, deferred work, causal journal, counters, and logical clock. Restoring it returns the
+running service to that exact point.
+
+Checkpoints live for the lifetime of the running service process. Give them intent-revealing names
+such as `empty-cart`, `payment-ready`, or `after-first-retry`. The same view can advance a manually
+controlled logical clock when the service uses one.
+
 ## Local security boundary
 
 Runtime inspection is exposed only by services listening on a loopback address. Browser requests
 must also originate from a loopback origin.
+
+A console that starts the service receives a short-lived bearer capability for workbench, replay,
+session, and clock mutations. The capability stays in the temporary loopback console page. A
+console attached to an independently running service remains read-only.
 
 The inspector redacts sensitive JSON fields, headers, cookies, path parameters, and query
 parameters. Opaque bodies are omitted, and bodies above 256 KiB are marked as truncated. Sanitized
