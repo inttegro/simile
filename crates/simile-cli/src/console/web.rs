@@ -121,11 +121,15 @@ async fn service_data(State(state): State<WebState>) -> Response {
         Ok(runtime) => runtime,
         Err(error) => return json_error(error),
     };
+    let console_token = match serde_json::to_string(&session.console_token()) {
+        Ok(token) => token,
+        Err(error) => return json_error(error),
+    };
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         format!(
-            "window.SIMILE_CONSOLE_SERVICES = Object.freeze({services});\nwindow.SIMILE_CONSOLE_RUNTIME = {runtime};\nwindow.SIMILE_SERVICE_DATA = Object.freeze({selected});\n"
+            "window.SIMILE_CONSOLE_SERVICES = Object.freeze({services});\nwindow.SIMILE_CONSOLE_RUNTIME = {runtime};\nwindow.SIMILE_CONSOLE_TOKEN = {console_token};\nwindow.SIMILE_SERVICE_DATA = Object.freeze({selected});\n"
         ),
     )
         .into_response()

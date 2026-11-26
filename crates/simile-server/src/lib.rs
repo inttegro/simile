@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod access_log;
+mod control;
 mod delivery;
 mod exchange_store;
 mod inspection;
@@ -13,6 +14,7 @@ pub use process::CommandResult;
 pub use proxy::{ProxyOptions, ProxyServer};
 
 use access_log::access_log;
+use control::{ConsoleControl, ExecutionProof, execution_proof};
 use futures_util::stream;
 use inspection::{
     inspection_request_body, inspection_response, inspection_response_body, redact_json,
@@ -43,6 +45,7 @@ use tokio::sync::{mpsc, oneshot};
 
 const INSPECTION_BODY_LIMIT: usize = 256 * 1024;
 const INSPECTION_PREFIX: &str = "/.simile/";
+const DEFAULT_BODY_LIMIT: usize = simile_http::DEFAULT_BODY_LIMIT;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -189,6 +192,7 @@ pub struct Server {
     address: SocketAddr,
     fault_seed: Option<u64>,
     service: Arc<Service>,
+    console_token: Option<String>,
 }
 
 struct ServerState {
@@ -201,11 +205,13 @@ struct ServerState {
     scenario: Option<String>,
     fault_profile: Option<String>,
     reporting_sender: Option<mpsc::Sender<RuntimeReportCommand>>,
+    console_token: Option<String>,
 }
 
 struct Inspector {
     next_exchange: AtomicU64,
     exchanges: exchange_store::ExchangeStore,
+    control: ConsoleControl,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -231,6 +237,10 @@ struct InspectionExchange {
     profile: Option<String>,
     request: InspectionMessage,
     response: InspectionMessage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proof: Option<ExecutionProof>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    control_request_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -405,6 +415,10 @@ impl Server {
             })
             .transpose()?;
         let service = Arc::new(service);
+        let console_token = address
+            .ip()
+            .is_loopback()
+            .then(|| format!("{:032x}", rand::random::<u128>()));
         let inspector = if address.ip().is_loopback() {
             Some(Arc::new(match inspection_storage {
                 InspectionStorage::Memory => Inspector::memory(),
@@ -423,6 +437,7 @@ impl Server {
             scenario: options.scenario,
             fault_profile: options.fault_profile,
             reporting_sender: options.reporting_sender,
+            console_token: console_token.clone(),
         });
         let router = Router::new()
             .fallback(handle)
@@ -434,6 +449,7 @@ impl Server {
             address,
             fault_seed,
             service,
+            console_token,
         })
     }
 
@@ -445,6 +461,12 @@ impl Server {
     #[must_use]
     pub const fn fault_seed(&self) -> Option<u64> {
         self.fault_seed
+    }
+
+    /// Return the bearer token accepted by the loopback console control protocol.
+    #[must_use]
+    pub fn console_token(&self) -> Option<&str> {
+        self.console_token.as_deref()
     }
 
     pub async fn run(self) -> Result<()> {
@@ -475,26 +497,69 @@ impl Server {
 }
 
 async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -> Response {
-    let method = request.method().clone();
-    let uri = request.uri().clone();
-    if uri.path().starts_with(INSPECTION_PREFIX) {
+    if request.uri().path().starts_with(INSPECTION_PREFIX) {
         return inspection_response(&state, request).await;
     }
-    let started = Instant::now();
-    let started_at_ms = unix_time_millis();
-    let (parts, body) = request.into_parts();
+    if request
+        .headers()
+        .keys()
+        .any(|name| name.as_str().starts_with("x-simile-console-"))
+    {
+        return response::error_response(
+            axum::http::StatusCode::UNAUTHORIZED,
+            "console_profile_unauthorized",
+            "service profiles can only be selected through the authenticated local console",
+        );
+    }
     let options = simile_http::HttpOptions {
         body_limit: state.body_limit,
         scenario: state.scenario.clone(),
         fault_profile: state.fault_profile.clone(),
+        profile: None,
         response_seed: state.response_seed,
     };
+    handle_public(state, request, options, None).await
+}
+
+async fn handle_public(
+    state: Arc<ServerState>,
+    request: Request<Body>,
+    options: simile_http::HttpOptions,
+    control_request_id: Option<String>,
+) -> Response {
+    if let Some(name) = options
+        .scenario
+        .as_deref()
+        .filter(|name| !state.service.artifact().has_scenario(name))
+    {
+        return response::error_response(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown_scenario",
+            &format!("compiled service has no scenario named `{name}`"),
+        );
+    }
+    if let Some(name) = options
+        .fault_profile
+        .as_deref()
+        .filter(|name| !state.service.artifact().has_fault_profile(name))
+    {
+        return response::error_response(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown_fault_profile",
+            &format!("compiled service has no fault profile named `{name}`"),
+        );
+    }
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let started = Instant::now();
+    let started_at_ms = unix_time_millis();
+    let (parts, body) = request.into_parts();
     let prepared =
         match simile_http::prepare_request_head(&state.service, &state.routes, &parts, &options) {
             Ok(prepared) => prepared,
             Err(exchange) => return send_exchange(*exchange).await,
         };
-    let body = match to_bytes(body, state.body_limit).await {
+    let body = match to_bytes(body, options.body_limit).await {
         Ok(bytes) => simile_http::RequestBody::Bytes(bytes.to_vec()),
         Err(_) => simile_http::RequestBody::TooLarge,
     };
@@ -516,6 +581,21 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
     let operation = exchange.operation.clone();
     let profile = exchange.profile.clone();
     let response_seed = exchange.seed;
+    let proof = capture.as_ref().and_then(|capture| {
+        capture.execution.as_ref().map(|execution| {
+            execution_proof(
+                exchange.operation.as_deref().unwrap_or_default(),
+                method.as_str(),
+                uri.path(),
+                options.scenario.as_deref(),
+                options.fault_profile.as_deref(),
+                profile.as_deref(),
+                response_seed,
+                capture.logical_time_milliseconds,
+                execution,
+            )
+        })
+    });
     let exchange_identity = capture.as_ref().and_then(|_| {
         state
             .inspector
@@ -548,8 +628,8 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
                     body,
                     parameters: sanitize_parameters(capture.parameters),
                     outcome: capture.outcome.clone(),
-                    scenario: state.scenario.clone(),
-                    fault_profile: state.fault_profile.clone(),
+                    scenario: options.scenario.clone(),
+                    fault_profile: options.fault_profile.clone(),
                     expected: RuntimeExpectedResponse {
                         status: capture.status,
                         content_type: capture.response_content_type,
@@ -586,6 +666,8 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
                         profile,
                         request: request_message,
                         response: response_message,
+                        proof,
+                        control_request_id,
                     },
                     report_capture,
                     report: None,

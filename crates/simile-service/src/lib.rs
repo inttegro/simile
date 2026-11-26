@@ -29,7 +29,7 @@ use simile_runtime::{
 use simile_spec::ResourceKind;
 use simile_stack::{
     CommandMetadata, LogicalTime, MemoryStateStore, QueueCommand, ResourceAddress, ResourceError,
-    Stack, StackCommand, StackSnapshot, StateStore, StateStoreError,
+    Stack, StackCommand, StateStore, StateStoreError,
 };
 #[cfg(feature = "persistence")]
 use simile_stack::{RedbStateStore, StateIdentity};
@@ -44,6 +44,7 @@ pub use profile::{
     validate_profile_name,
 };
 pub use simile_spec::ProfileStatus;
+pub use simile_stack::{AdvanceReport, StackSnapshot};
 use work::{DEAD_LETTERS, OUTBOX, WORK_STATE};
 pub use work::{DeadLetter, DeferredCommand, DeferredWork, WorkLease};
 
@@ -355,6 +356,34 @@ impl Service {
         Ok(lock(&self.stack)?.snapshot()?)
     }
 
+    /// Replace the running Stack with an explicit, previously captured checkpoint.
+    ///
+    /// The durable store is updated before the in-process Stack advances. A failed save therefore
+    /// leaves the running service untouched instead of producing a partially restored session.
+    pub fn restore_snapshot(&self, snapshot: StackSnapshot) -> Result<()> {
+        self.store.save(&snapshot)?;
+        *lock(&self.stack)? = Stack::from_snapshot(snapshot);
+        Ok(())
+    }
+
+    /// Advance a manually controlled service clock and checkpoint every resulting expiry or task.
+    ///
+    /// Realtime services reject this operation through the Stack clock contract. Test sessions can
+    /// surface that boundary directly instead of silently changing the meaning of wall-clock time.
+    pub fn advance_clock(&self, milliseconds: u64) -> Result<AdvanceReport> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let report = match stack.advance(milliseconds) {
+            Ok(report) => report,
+            Err(error) => {
+                *stack = Stack::from_snapshot(before);
+                return Err(error.into());
+            }
+        };
+        self.checkpoint(&mut stack, before)?;
+        Ok(report)
+    }
+
     /// Reset every resource and journal entry, then checkpoint the empty Stack.
     pub fn reset_state(&self) -> Result<()> {
         let mut stack = lock(&self.stack)?;
@@ -614,6 +643,8 @@ pub enum Error {
     ProfileNameSpaceExhausted,
     #[error("profile `{profile}` does not exist")]
     ProfileNotFound { profile: String },
+    #[error("profile `{profile}` is {status} and cannot authorize a console request")]
+    ProfileInactive { profile: String, status: String },
     #[error(
         "profile `{profile}` belongs to principal `{expected}` and cannot be reconfigured as `{actual}`"
     )]

@@ -9,8 +9,8 @@ pub use profile::{ProfileRequestError, apply_profile};
 use serde_json::json;
 use simile_artifact::Artifact;
 use simile_runtime::{
-    ExecutionOptions, IncomingParameters, OperationCall, ReplayIdentity, Runtime, TransportPlan,
-    ValidatedParameters, validate_parameters,
+    ExecutionOptions, IncomingParameters, OperationCall, OperationExecution, ReplayIdentity,
+    Runtime, TransportPlan, ValidatedParameters, validate_parameters,
 };
 use simile_service::Service;
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,6 +32,8 @@ pub struct HttpOptions {
     pub body_limit: usize,
     pub scenario: Option<String>,
     pub fault_profile: Option<String>,
+    /// Select a service-owned profile without exposing its credentials to the caller.
+    pub profile: Option<String>,
     pub response_seed: Option<u64>,
 }
 impl Default for HttpOptions {
@@ -40,6 +42,7 @@ impl Default for HttpOptions {
             body_limit: DEFAULT_BODY_LIMIT,
             scenario: None,
             fault_profile: None,
+            profile: None,
             response_seed: None,
         }
     }
@@ -59,6 +62,7 @@ pub struct HttpExchange {
 /// Execution evidence for host inspection and replay. Hosts must sanitize this
 /// request and response before persisting or publishing it.
 pub struct ExecutionCapture {
+    pub execution: Option<OperationExecution>,
     pub logical_time_milliseconds: i64,
     pub content_type: Option<String>,
     pub body: Vec<u8>,
@@ -122,7 +126,7 @@ pub fn prepare_request_head<'a>(
         incident: None,
         capture: None,
     };
-    match validate_head(service, routes, parts, &mut exchange) {
+    match validate_head(service, routes, parts, options, &mut exchange) {
         Ok(head) => Ok(PreparedRequest {
             service,
             options,
@@ -163,6 +167,7 @@ fn validate_head(
     service: &Service,
     routes: &RouteTable,
     parts: &http::request::Parts,
+    options: &HttpOptions,
     exchange: &mut HttpExchange,
 ) -> Result<RequestHead, Box<Response>> {
     let method = parts.method.clone();
@@ -179,7 +184,11 @@ fn validate_head(
     };
     exchange.operation = Some(operation.clone());
     let incoming = incoming_parameters(parts, path_parameters);
-    let authentication = match service.authenticate(&operation, &incoming) {
+    let authentication = match options.profile.as_deref() {
+        Some(profile) => service.console_profile(&operation, profile),
+        None => service.authenticate(&operation, &incoming),
+    };
+    let authentication = match authentication {
         Ok(authentication) => authentication,
         Err(simile_service::Error::Runtime(error)) => {
             return Err(Box::new(operation_error(
@@ -188,6 +197,16 @@ fn validate_head(
                 error,
                 method == Method::HEAD,
                 exchange.seed,
+            )));
+        }
+        Err(
+            error @ (simile_service::Error::ProfileNotFound { .. }
+            | simile_service::Error::ProfileInactive { .. }),
+        ) => {
+            return Err(Box::new(error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "console_profile_unavailable",
+                &error.to_string(),
             )));
         }
         Err(_) => {
@@ -286,11 +305,13 @@ fn dispatch(
         exchange.profile.as_deref(),
     ) {
         Ok(execution) => {
+            let captured_execution = execution.clone();
             exchange.transport = execution.transport().clone();
             exchange.fault = execution.fault().cloned();
             let (status, response_content_type, response_bytes, response_body) =
                 execution.response().clone().into_parts();
             exchange.capture = Some(ExecutionCapture {
+                execution: Some(captured_execution),
                 logical_time_milliseconds,
                 content_type,
                 body,
@@ -341,6 +362,7 @@ fn dispatch(
                 "the operation completed but its declared effects could not be committed",
             );
             exchange.capture = Some(ExecutionCapture {
+                execution: None,
                 logical_time_milliseconds,
                 content_type,
                 body,

@@ -1,6 +1,6 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use simile_artifact::{Artifact, ArtifactCredential, ArtifactProfile};
+use simile_artifact::{Artifact, ArtifactCredential, ArtifactProfile, ArtifactSecurityRequirement};
 use simile_spec::{ParameterLocation, Profile, ProfileCredential, ProfileStatus, SecurityScheme};
 
 use crate::{Error, IncomingParameters, Result};
@@ -160,6 +160,56 @@ pub fn authenticate_with_profiles(
             operation: operation.key().to_owned(),
         })
     }
+}
+
+/// Authorize an explicitly selected local profile for one operation.
+///
+/// Local consoles already possess the profile through Simile's private state, so they do not
+/// need to copy its credential values into browser memory. This applies the same operation,
+/// principal, credential-scheme, and scope checks without pretending those values were presented
+/// over HTTP.
+pub fn authorize_profile(
+    artifact: &Artifact,
+    operation: &str,
+    profile: &Profile,
+) -> Result<AuthenticatedProfile> {
+    let operation = artifact
+        .operation(operation)
+        .ok_or_else(|| Error::UnknownOperation {
+            operation: operation.to_owned(),
+        })?;
+    let principal = artifact.principal(&profile.principal).ok_or_else(|| {
+        Error::AuthenticationConfiguration {
+            message: format!(
+                "profile `{}` references unknown principal `{}`",
+                profile.name, profile.principal
+            ),
+        }
+    })?;
+    let requirements = operation.security_requirements().collect::<Vec<_>>();
+    let public = requirements.is_empty()
+        || requirements
+            .iter()
+            .any(ArtifactSecurityRequirement::is_empty);
+    let authorized = requirements.iter().any(|requirement| {
+        !requirement.is_empty()
+            && requirement.schemes().all(|(scheme, scopes)| {
+                profile.credentials.contains_key(scheme)
+                    && scopes
+                        .into_iter()
+                        .all(|scope| principal.grants(scheme, scope))
+            })
+    });
+    if public || authorized {
+        return Ok(AuthenticatedProfile {
+            name: profile.name.clone(),
+            principal: profile.principal.clone(),
+            dynamic: true,
+        });
+    }
+    Err(Error::PermissionDenied {
+        operation: operation.key().to_owned(),
+    })
 }
 
 fn dynamic_profile_matches(

@@ -19,7 +19,7 @@ use simile_artifact::Artifact;
 use simile_schema::{SynthesisError, ValidationIssue};
 use thiserror::Error;
 
-pub use auth::{AuthenticatedProfile, authenticate, authenticate_with_profiles};
+pub use auth::{AuthenticatedProfile, authenticate, authenticate_with_profiles, authorize_profile};
 pub use codec::sanitize_multipart_for_replay;
 pub use effect::{EffectPlan, PlannedAction, PlannedAsyncOperation, PlannedWebhook};
 pub use execution::{

@@ -154,7 +154,7 @@ impl ExchangeStore {
         }
     }
 
-    fn recorded(&self, exchange_id: &str) -> Result<Option<RecordedExchange>> {
+    pub(super) fn recorded(&self, exchange_id: &str) -> Result<Option<RecordedExchange>> {
         match self {
             Self::Memory(exchanges) => Ok(exchanges
                 .lock()

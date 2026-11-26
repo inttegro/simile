@@ -89,6 +89,7 @@ impl BrowserSession {
         let options = HttpOptions {
             scenario: options.scenario,
             fault_profile: options.fault_profile,
+            profile: None,
             response_seed: options.response_seed.as_deref().map(unsigned).transpose()?,
             body_limit: options
                 .body_limit

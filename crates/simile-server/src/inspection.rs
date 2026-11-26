@@ -1,6 +1,7 @@
 //! Loopback-only runtime inspection, exchange capture, and report preparation.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,6 +31,7 @@ impl Inspector {
         Self {
             next_exchange: 0.into(),
             exchanges: crate::exchange_store::ExchangeStore::memory(),
+            control: crate::control::ConsoleControl::new(),
         }
     }
 
@@ -40,6 +42,7 @@ impl Inspector {
         Ok(Self {
             next_exchange: latest_sequence.into(),
             exchanges,
+            control: crate::control::ConsoleControl::new(),
         })
     }
 
@@ -54,12 +57,30 @@ impl Inspector {
         }
     }
 
-    fn snapshot(&self) -> crate::exchange_store::Result<Vec<InspectionExchange>> {
+    pub(super) fn snapshot(&self) -> crate::exchange_store::Result<Vec<InspectionExchange>> {
         self.exchanges.snapshot().map(|exchanges| {
             exchanges
                 .into_iter()
                 .map(|recorded| recorded.exchange)
                 .collect()
+        })
+    }
+
+    pub(super) fn recorded(
+        &self,
+        exchange_id: &str,
+    ) -> crate::exchange_store::Result<Option<RecordedExchange>> {
+        self.exchanges.recorded(exchange_id)
+    }
+
+    pub(super) fn recorded_for_control(
+        &self,
+        control_request_id: &str,
+    ) -> crate::exchange_store::Result<Option<RecordedExchange>> {
+        self.exchanges.snapshot().map(|exchanges| {
+            exchanges.into_iter().find(|recorded| {
+                recorded.exchange.control_request_id.as_deref() == Some(control_request_id)
+            })
         })
     }
 
@@ -94,7 +115,10 @@ impl Inspector {
     }
 }
 
-pub(super) async fn inspection_response(state: &ServerState, request: Request<Body>) -> Response {
+pub(super) async fn inspection_response(
+    state: &Arc<ServerState>,
+    request: Request<Body>,
+) -> Response {
     let Some(inspector) = state.inspector.as_ref() else {
         return error_response(StatusCode::NOT_FOUND, "not_found", "route not found");
     };
@@ -111,6 +135,22 @@ pub(super) async fn inspection_response(state: &ServerState, request: Request<Bo
     }
     if request.method() == Method::OPTIONS {
         return with_inspection_cors(StatusCode::NO_CONTENT.into_response(), origin.as_deref());
+    }
+    if request
+        .uri()
+        .path()
+        .starts_with(crate::control::CONTROL_PREFIX)
+    {
+        let response = crate::control::response(state, inspector, request)
+            .await
+            .unwrap_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "console route not found",
+                )
+            });
+        return with_inspection_cors(response, origin.as_deref());
     }
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
@@ -316,7 +356,9 @@ async fn submit_exchange_report_response(
     }
 }
 
-async fn decode_inspection_json<T>(request: Request<Body>) -> std::result::Result<T, Response>
+pub(super) async fn decode_inspection_json<T>(
+    request: Request<Body>,
+) -> std::result::Result<T, Response>
 where
     T: DeserializeOwned + Default,
 {
@@ -406,7 +448,7 @@ fn with_inspection_cors(mut response: Response, origin: Option<&str>) -> Respons
         );
         response.headers_mut().insert(
             ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Content-Type"),
+            HeaderValue::from_static("Authorization, Content-Type"),
         );
         response.headers_mut().insert(
             HeaderName::from_static("access-control-allow-private-network"),

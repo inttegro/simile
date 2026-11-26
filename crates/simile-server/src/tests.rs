@@ -220,15 +220,28 @@ components:
       type: apiKey
       in: header
       name: X-Merchant-Key
+    viewerKey:
+      type: apiKey
+      in: header
+      name: X-Viewer-Key
 "#,
         r#"
 principal "merchant" {
   credential "merchantKey" {}
 }
 
+principal "viewer" {
+  credential "viewerKey" {}
+}
+
 profile "merchant" {
   principal = principal.merchant
   credential "merchantKey" { value = "sim_test_merchant" }
+}
+
+profile "viewer" {
+  principal = principal.viewer
+  credential "viewerKey" { value = "sim_test_viewer" }
 }
 "#,
     )
@@ -493,6 +506,164 @@ async fn serves_a_request_through_the_operation_runtime() {
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.contains("content-type: application/json"));
     assert!(response.contains(r#""id":"#));
+}
+
+#[tokio::test]
+async fn console_protocol_executes_proves_replays_and_checkpoints() {
+    let server = Server::bind(SocketAddr::from(([127, 0, 0, 1], 0)), artifact())
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let token = server
+        .console_token()
+        .unwrap_or_else(|| panic!("loopback server should expose a console token"))
+        .to_owned();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+
+    let request_body = json!({
+        "method": "POST",
+        "path": "/orders",
+        "body": {
+            "customer": { "email": "ada@example.test" },
+            "items": [{ "quantity": 1 }]
+        },
+        "contentType": "application/json",
+        "responseSeed": 7
+    })
+    .to_string();
+    let request = format!(
+        "POST /.simile/console/v1/execute HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{request_body}",
+        request_body.len()
+    );
+    let response = send_raw(address, request.as_bytes()).await;
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    let (_, body) = response
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("control response should have a body"));
+    let value =
+        serde_json::from_str::<serde_json::Value>(body).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(value["response"]["status"], 201);
+    assert_eq!(value["exchange"]["proof"]["version"], 1);
+    assert_eq!(
+        value["exchange"]["proof"]["validation"][1]["name"],
+        "relations"
+    );
+    let exchange_id = value["exchange"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("control execution should record an exchange"));
+
+    let replay = format!(
+        "POST /.simile/console/v1/exchanges/{exchange_id}/replay HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let replay = send_raw(address, replay.as_bytes()).await;
+    assert!(replay.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(replay.contains(r#""matches":true"#));
+
+    let checkpoint_body = r#"{"name":"ready"}"#;
+    let checkpoint = format!(
+        "POST /.simile/console/v1/sessions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{checkpoint_body}",
+        checkpoint_body.len()
+    );
+    let checkpoint = send_raw(address, checkpoint.as_bytes()).await;
+    assert!(checkpoint.starts_with("HTTP/1.1 201 Created\r\n"));
+    assert!(checkpoint.contains(r#""name":"ready""#));
+
+    let restore_without_confirmation = format!(
+        "POST /.simile/console/v1/sessions/ready/restore HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
+    let restore_without_confirmation =
+        send_raw(address, restore_without_confirmation.as_bytes()).await;
+    assert!(restore_without_confirmation.starts_with("HTTP/1.1 422 Unprocessable Entity\r\n"));
+    assert!(restore_without_confirmation.contains("restore_confirmation_required"));
+
+    let restore_body = r#"{"confirm":true}"#;
+    let restore = format!(
+        "POST /.simile/console/v1/sessions/ready/restore HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{restore_body}",
+        restore_body.len()
+    );
+    let restore = send_raw(address, restore.as_bytes()).await;
+    assert!(restore.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(restore.contains(r#""restored":"ready""#));
+
+    let unauthorized = send_raw(
+        address,
+        b"POST /.simile/console/v1/execute HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+    )
+    .await;
+    assert!(unauthorized.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[tokio::test]
+async fn console_profiles_authorize_without_exposing_credentials() {
+    let server = Server::bind(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        artifact_with_authentication(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    let address = server.local_addr();
+    let token = server
+        .console_token()
+        .unwrap_or_else(|| panic!("loopback server should expose a console token"))
+        .to_owned();
+    let (shutdown, signal) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.run_until(async {
+        drop(signal.await);
+    }));
+
+    let request_body = json!({
+        "method": "GET",
+        "path": "/private",
+        "profile": "merchant",
+        "responseSeed": 7
+    })
+    .to_string();
+    let request = format!(
+        "POST /.simile/console/v1/execute HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{request_body}",
+        request_body.len()
+    );
+    let response = send_raw(address, request.as_bytes()).await;
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains(r#""status":200"#));
+    assert!(response.contains(r#""profile":"merchant""#));
+    assert!(!response.contains("sim_test_merchant"));
+
+    let denied_body = json!({
+        "method": "GET",
+        "path": "/private",
+        "profile": "viewer",
+        "responseSeed": 7
+    })
+    .to_string();
+    let denied = format!(
+        "POST /.simile/console/v1/execute HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{denied_body}",
+        denied_body.len()
+    );
+    let denied = send_raw(address, denied.as_bytes()).await;
+    assert!(denied.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(denied.contains(r#""status":403"#));
+    assert!(denied.contains("permission_denied"));
+
+    let spoofed = send_raw(
+        address,
+        b"GET /private HTTP/1.1\r\nHost: localhost\r\nX-Simile-Console-Profile: merchant\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(spoofed.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+    assert!(spoofed.contains("console_profile_unauthorized"));
+
+    let _ = shutdown.send(());
+    task.await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[tokio::test]

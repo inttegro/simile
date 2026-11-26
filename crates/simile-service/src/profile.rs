@@ -7,7 +7,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use simile_artifact::ArtifactOperation;
 use simile_runtime::{
-    ExecutionOptions, OperationExecution, OperationValueCall, SynthesisRequest,
+    ExecutionOptions, OperationExecution, OperationValueCall, SynthesisRequest, authorize_profile,
     synthesize_minimal_request_value,
 };
 use simile_spec::{
@@ -19,7 +19,7 @@ use simile_stack::{
     WriteCondition,
 };
 
-use crate::{Error, Result, Service};
+use crate::{Error, Result, Service, ServiceAuthentication};
 
 pub(crate) const PROFILE_STATE: &str = "__simile_profiles";
 const PROFILES: &str = "profiles";
@@ -276,6 +276,72 @@ impl Service {
                 .map(|profile| ServiceProfileSummary::from_profile(profile, current.as_deref()))
                 .collect()
         })
+    }
+
+    /// Resolve one active profile into an execution context for the local console.
+    ///
+    /// Credentials remain private. The result carries enough identity for the console to exercise
+    /// authenticated operations without copying issued secrets into browser memory.
+    pub fn console_profile(&self, operation: &str, name: &str) -> Result<ServiceAuthentication> {
+        if let Some(profile) = self.profile(name)? {
+            if profile.status != ProfileStatus::Active {
+                return Err(Error::ProfileInactive {
+                    profile: name.to_owned(),
+                    status: format!("{:?}", profile.status).to_lowercase(),
+                });
+            }
+            return authorize_profile(self.artifact(), operation, &profile.credential_profile())
+                .map(|profile| super::service_authentication(Some(profile)))
+                .map_err(Into::into);
+        }
+        let Some(profile) = self
+            .artifact()
+            .profiles()
+            .find(|profile| profile.name() == name)
+        else {
+            return Err(Error::ProfileNotFound {
+                profile: name.to_owned(),
+            });
+        };
+        if profile.status() != ProfileStatus::Active {
+            return Err(Error::ProfileInactive {
+                profile: name.to_owned(),
+                status: format!("{:?}", profile.status()).to_lowercase(),
+            });
+        }
+        let credentials = profile
+            .credential_schemes()
+            .filter_map(|scheme| {
+                profile.credential(scheme).map(|credential| {
+                    let credential = match credential {
+                        simile_artifact::ArtifactCredential::Secret(value) => {
+                            ProfileCredential::Secret {
+                                value: value.to_owned(),
+                            }
+                        }
+                        simile_artifact::ArtifactCredential::Basic { username, password } => {
+                            ProfileCredential::Basic {
+                                username: username.to_owned(),
+                                password: password.to_owned(),
+                            }
+                        }
+                    };
+                    (scheme.to_owned(), credential)
+                })
+            })
+            .collect();
+        authorize_profile(
+            self.artifact(),
+            operation,
+            &simile_spec::Profile {
+                name: profile.name().to_owned(),
+                principal: profile.principal().to_owned(),
+                status: profile.status(),
+                credentials,
+            },
+        )
+        .map(|profile| super::service_authentication(Some(profile)))
+        .map_err(Into::into)
     }
 
     fn available_profile_name(&self, rng: &mut impl rand::Rng) -> Result<String> {

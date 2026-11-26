@@ -23,6 +23,7 @@ pub(crate) struct ConsoleSession {
 struct SelectedRuntime {
     service: String,
     address: SocketAddr,
+    console_token: Option<String>,
     ownership: RuntimeOwnership,
 }
 
@@ -97,6 +98,12 @@ impl ConsoleSession {
             .is_some_and(|runtime| matches!(runtime.ownership, RuntimeOwnership::Owned { .. }))
     }
 
+    pub(crate) fn console_token(&self) -> Option<&str> {
+        self.runtime
+            .as_ref()
+            .and_then(|runtime| runtime.console_token.as_deref())
+    }
+
     pub(crate) async fn select(&mut self, service: &str) -> Result<()> {
         if self
             .catalog
@@ -131,9 +138,15 @@ impl ConsoleSession {
     }
 
     pub(crate) async fn inspect(&self, path: &str) -> Option<Value> {
-        let response = raw_request(self.runtime_address(), "GET", path, None)
-            .await
-            .ok()?;
+        let response = raw_request(
+            self.runtime_address(),
+            "GET",
+            path,
+            None,
+            self.console_token(),
+        )
+        .await
+        .ok()?;
         if response.status != 200 {
             return None;
         }
@@ -150,9 +163,15 @@ impl ConsoleSession {
             .map(serde_json::to_vec)
             .transpose()
             .map_err(Error::Serialize)?;
-        let response = raw_request(self.runtime_address(), method, path, encoded.as_deref())
-            .await
-            .map_err(Error::ConsoleRequest)?;
+        let response = raw_request(
+            self.runtime_address(),
+            method,
+            path,
+            encoded.as_deref(),
+            self.console_token(),
+        )
+        .await
+        .map_err(Error::ConsoleRequest)?;
         let decoded = serde_json::from_slice::<Value>(&response.body).map_err(Error::Serialize)?;
         if (200..300).contains(&response.status) {
             return Ok(decoded);
@@ -207,6 +226,7 @@ impl ConsoleSession {
                 )
                 .await?;
                 let address = server.local_addr();
+                let console_token = server.console_token().map(str::to_owned);
                 let (shutdown, signal) = oneshot::channel::<()>();
                 let task = tokio::spawn(async move {
                     let result = server
@@ -220,6 +240,7 @@ impl ConsoleSession {
                 self.runtime = Some(SelectedRuntime {
                     service: service.to_owned(),
                     address,
+                    console_token,
                     ownership: RuntimeOwnership::Owned { shutdown, task },
                 });
                 return Ok(());
@@ -228,6 +249,7 @@ impl ConsoleSession {
         self.runtime = Some(SelectedRuntime {
             service: service.to_owned(),
             address,
+            console_token: None,
             ownership,
         });
         Ok(())
@@ -274,7 +296,7 @@ struct RawResponse {
 async fn probe(address: SocketAddr) -> Probe {
     let response = tokio::time::timeout(
         Duration::from_millis(350),
-        raw_request(address, "GET", "/.simile/inspection", None),
+        raw_request(address, "GET", "/.simile/inspection", None, None),
     )
     .await;
     match response {
@@ -291,11 +313,15 @@ async fn raw_request(
     method: &str,
     path: &str,
     body: Option<&[u8]>,
+    console_token: Option<&str>,
 ) -> std::io::Result<RawResponse> {
     let mut stream = tokio::net::TcpStream::connect(address).await?;
     let body = body.unwrap_or_default();
+    let authorization = console_token.map_or_else(String::new, |token| {
+        format!("Authorization: Bearer {token}\r\n")
+    });
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(request.as_bytes()).await?;
