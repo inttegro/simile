@@ -77,6 +77,37 @@ impl Compiler {
         })
     }
 
+    /// Compose a resolved Simfile and its external sources through one compiler.
+    /// Hosts resolve source locations; source coordination stays here.
+    pub fn compile_service(
+        &self,
+        document: &simile_hcl::ServiceDocument,
+        contract: ContractSource<'_>,
+        mut modules: Vec<simile_hcl::Module>,
+        heuristic_policy: Policy,
+    ) -> Result<CompiledService> {
+        modules.insert(0, document.inline_module.clone());
+        let mut compiled = self.compile_source_parsed(ParsedSourceCompileRequest {
+            contract,
+            modules,
+            heuristic_policy,
+        })?;
+        compiled.principal_setups = simile_hcl::compile_principal_setups(
+            document.principal_setups.clone(),
+            &compiled.contract,
+            &compiled.principals,
+        )?;
+        if let Some(description) = &document.service.description {
+            compiled.descriptions.insert(simile_spec::DescriptionEntry {
+                kind: simile_spec::DescriptionKind::Service,
+                parent: None,
+                name: document.service.name.clone(),
+                text: description.clone(),
+            });
+        }
+        Ok(compiled)
+    }
+
     pub fn compile_source(&self, request: SourceCompileRequest<'_>) -> Result<CompiledService> {
         let modules = request
             .modules
@@ -165,12 +196,18 @@ fn parse_contract(source: ContractSource<'_>) -> Result<simile_spec::ApiContract
                 source: error,
             })
         }
+        #[cfg(feature = "smithy")]
         ContractSource::Smithy(source) => {
             simile_smithy::parse(source.contents).map_err(|error| Error::Smithy {
                 name: source.name.to_owned(),
                 source: error,
             })
         }
+        #[cfg(not(feature = "smithy"))]
+        ContractSource::Smithy(source) => Err(Error::UnsupportedSource {
+            name: source.name.to_owned(),
+            format: "Smithy",
+        }),
         ContractSource::TypeScript(sources) => {
             let sources = sources
                 .iter()
@@ -374,6 +411,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error(
+        "{format} compilation is unavailable in this build for `{name}`; compile it with the native CLI and load the .similec artifact"
+    )]
+    UnsupportedSource { name: String, format: &'static str },
+
     #[error("could not compile OpenAPI source `{name}`: {source}")]
     OpenApi {
         name: String,
@@ -381,6 +423,7 @@ pub enum Error {
         source: simile_openapi::Error,
     },
 
+    #[cfg(feature = "smithy")]
     #[error("could not compile Smithy source `{name}`: {source}")]
     Smithy {
         name: String,

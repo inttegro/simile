@@ -1,4 +1,7 @@
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
@@ -77,7 +80,7 @@ pub struct ClockSnapshot {
 pub struct Clock {
     mode: ClockMode,
     base: LogicalTime,
-    anchor: Instant,
+    anchor: Option<Instant>,
 }
 
 impl Clock {
@@ -86,7 +89,7 @@ impl Clock {
         Self {
             mode: ClockMode::Manual,
             base: start,
-            anchor: Instant::now(),
+            anchor: None,
         }
     }
 
@@ -95,7 +98,7 @@ impl Clock {
         Self {
             mode: ClockMode::Realtime,
             base: start,
-            anchor: Instant::now(),
+            anchor: Some(Instant::now()),
         }
     }
 
@@ -108,8 +111,12 @@ impl Clock {
         match self.mode {
             ClockMode::Manual => Ok(self.base),
             ClockMode::Realtime => {
-                let elapsed = u64::try_from(self.anchor.elapsed().as_millis())
-                    .map_err(|_| ClockError::Overflow)?;
+                let elapsed = u64::try_from(
+                    self.anchor
+                        .as_ref()
+                        .map_or(0, |anchor| anchor.elapsed().as_millis()),
+                )
+                .map_err(|_| ClockError::Overflow)?;
                 self.base.checked_add(elapsed)
             }
         }
@@ -125,7 +132,7 @@ impl Clock {
 
     pub fn set(&mut self, now: LogicalTime) {
         self.base = now;
-        self.anchor = Instant::now();
+        self.anchor = (self.mode == ClockMode::Realtime).then(Instant::now);
     }
 
     pub fn snapshot(&self) -> std::result::Result<ClockSnapshot, ClockError> {

@@ -9,6 +9,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("invalid session checkpoint: {0}")]
+    Checkpoint(String),
+
+    #[error("work handle is unknown, expired, or belongs to an earlier session generation")]
+    WorkHandle,
+
+    #[error("invalid virtual workspace: {0}")]
+    Workspace(String),
+
     #[error("could not determine the current directory")]
     CurrentDirectory(#[source] io::Error),
 
@@ -110,12 +119,14 @@ pub enum Error {
     #[error("request contains duplicate case-insensitive `{name}` headers")]
     DuplicateRequestHeader { name: String },
 
+    #[cfg(feature = "native")]
     #[error("could not read remote service source: {source}")]
     FetchSource {
         #[source]
         source: ureq::Error,
     },
 
+    #[cfg(feature = "native")]
     #[error("could not fetch service configuration `{url}`: {source}")]
     FetchConfig {
         url: String,
@@ -259,6 +270,7 @@ pub enum Error {
         reproduced: String,
     },
 
+    #[cfg(feature = "native")]
     #[error("report preflight failed at `{endpoint}`: {source}")]
     ReportPreflight {
         endpoint: String,
@@ -266,6 +278,7 @@ pub enum Error {
         source: ureq::Error,
     },
 
+    #[cfg(feature = "native")]
     #[error("report submission failed at `{endpoint}`: {source}")]
     ReportSubmission {
         endpoint: String,

@@ -10,6 +10,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+simile-http.workspace = true
 axum.workspace = true
 ciborium.workspace = true
 fs2.workspace = true
@@ -24,7 +25,7 @@ sha2.workspace = true
 simile-artifact.workspace = true
 simile-learning.workspace = true
 simile-runtime.workspace = true
-simile-service.workspace = true
+simile-service = { workspace = true, features = ["persistence"] }
 simile-spec.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -32,6 +33,7 @@ tracing.workspace = true
 ureq.workspace = true
 
 [dev-dependencies]
+simile-stack.workspace = true
 simile-compiler.workspace = true
 simile-heuristics.workspace = true
 

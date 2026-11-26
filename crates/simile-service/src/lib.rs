@@ -13,23 +13,31 @@ mod profile_name;
 mod state;
 mod work;
 
+#[cfg(feature = "persistence")]
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use simile_artifact::Artifact;
 use simile_runtime::{
     AuthenticatedProfile, ExecutionOptions, IncomingParameters, OperationCall, OperationExecution,
-    OperationValueCall, Runtime, authenticate_with_profiles,
+    OperationValueCall, ReplayIdentity, Runtime, authenticate_with_profiles,
 };
 use simile_spec::ResourceKind;
 use simile_stack::{
-    CommandMetadata, LogicalTime, MemoryStateStore, QueueCommand, RedbStateStore, ResourceAddress,
-    ResourceError, Stack, StackCommand, StackSnapshot, StateIdentity, StateStore, StateStoreError,
+    CommandMetadata, LogicalTime, MemoryStateStore, QueueCommand, ResourceAddress, ResourceError,
+    Stack, StackCommand, StackSnapshot, StateStore, StateStoreError,
 };
+#[cfg(feature = "persistence")]
+use simile_stack::{RedbStateStore, StateIdentity};
 use thiserror::Error;
 
-pub use deferred::{DeferredWorkInspection, DependencyReadiness, InspectedDeferredWork};
+pub use deferred::{
+    DeferredWorkInspection, DependencyReadiness, InspectedDeferredWork, WorkInspection,
+};
 pub use inspection::{InspectedResource, ServiceStateInspection};
 pub use profile::{
     ProfileFieldSummary, ProfileValue, ServiceProfile, ServiceProfileSummary, SetupProfileResult,
@@ -73,7 +81,17 @@ impl Service {
         Self::with_store(artifact, Arc::new(MemoryStateStore::default()))
     }
 
+    /// Build an isolated service with an explicit clock, including a manual clock
+    /// that never reads the host's wall or monotonic time.
+    pub fn memory_with_clock(
+        artifact: Artifact,
+        clock: simile_stack::ClockSnapshot,
+    ) -> Result<Self> {
+        Self::with_store_and_clock(artifact, Arc::new(MemoryStateStore::default()), clock)
+    }
+
     /// Build a service whose complete Stack survives process restarts.
+    #[cfg(feature = "persistence")]
     pub fn durable(artifact: Artifact, path: impl AsRef<Path>) -> Result<Self> {
         let summary = artifact.summary();
         let identity = StateIdentity::new(summary.service, summary.payload_sha256);
@@ -86,6 +104,22 @@ impl Service {
     /// A durable caller normally supplies `RedbStateStore`; tests and one-shot
     /// tools can use `MemoryStateStore` without changing execution semantics.
     pub fn with_store(artifact: Artifact, store: Arc<dyn StateStore>) -> Result<Self> {
+        Self::with_store_and_clock(
+            artifact,
+            store,
+            simile_stack::ClockSnapshot {
+                mode: simile_stack::ClockMode::Realtime,
+                now: now(),
+            },
+        )
+    }
+
+    /// Restore an existing store or initialize it using the supplied clock.
+    pub fn with_store_and_clock(
+        artifact: Artifact,
+        store: Arc<dyn StateStore>,
+        clock: simile_stack::ClockSnapshot,
+    ) -> Result<Self> {
         let mut resources = artifact
             .resources()
             .map(|resource| ResourceAddress::new(resource.kind(), resource.name()))
@@ -97,7 +131,11 @@ impl Service {
             ResourceKind::Db,
             profile::PROFILE_STATE,
         )?);
-        let initial = Stack::realtime(now()).resources(resources)?.build()?;
+        let builder = match clock.mode {
+            simile_stack::ClockMode::Manual => simile_stack::StackBuilder::manual(clock.now),
+            simile_stack::ClockMode::Realtime => Stack::realtime(clock.now),
+        };
+        let initial = builder.resources(resources)?.build()?;
         let stack = match store.load()? {
             Some(snapshot) => {
                 let mut restored = Stack::from_snapshot(snapshot);
@@ -171,6 +209,7 @@ impl Service {
             .map(|name| self.profile(name))
             .transpose()?
             .flatten();
+        let replay_key = scoped_replay_key(options.replay, profile.as_ref());
         // Why: POST-based public lookup/page routes carry their selector in JSON rather than in
         // path parameters, so state resolution needs the request value before runtime synthesis.
         let request_body = call
@@ -231,6 +270,7 @@ impl Service {
                     .as_ref()
                     .or(options.response_request_body),
                 logical_time_milliseconds: Some(request_received_at),
+                replay: scoped_replay(options.replay, &replay_key),
                 ..options
             },
         )?;
@@ -251,6 +291,7 @@ impl Service {
             .logical_time_milliseconds
             .map_or_else(|| self.logical_time_milliseconds(), Ok)?;
         let response_request = state::response_request_body(self, call.operation, call.body, None)?;
+        let replay_key = scoped_replay_key(options.replay, None);
         let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
         let mutation = if matches!(state, state::StateResolution::None) {
             state::mutation_baseline(self, call.operation, call.body, None)?
@@ -286,6 +327,7 @@ impl Service {
                     .as_ref()
                     .or(options.response_request_body),
                 logical_time_milliseconds: Some(request_received_at),
+                replay: scoped_replay(options.replay, &replay_key),
                 ..options
             },
         )?;
@@ -319,6 +361,20 @@ impl Service {
         let before = stack.snapshot()?;
         stack.reset();
         self.checkpoint(&mut stack, before)
+    }
+
+    /// Advance a manual service clock and persist the resulting resource changes.
+    pub fn advance(&self, milliseconds: u64) -> Result<simile_stack::AdvanceReport> {
+        let mut stack = lock(&self.stack)?;
+        let before = stack.snapshot()?;
+        let report = stack.advance(milliseconds)?;
+        self.checkpoint(&mut stack, before)?;
+        Ok(report)
+    }
+
+    /// Read the service timeline without mutating state or leasing work.
+    pub fn clock(&self) -> Result<simile_stack::ClockSnapshot> {
+        Ok(self.snapshot()?.clock())
     }
 
     fn commit(
@@ -453,6 +509,33 @@ impl Service {
     }
 }
 
+fn scoped_replay_key(
+    identity: Option<ReplayIdentity<'_>>,
+    profile: Option<&ServiceProfile>,
+) -> Option<String> {
+    let (ReplayIdentity::IdempotencyKey(key) | ReplayIdentity::Resource(key)) = identity?;
+    // Preserve empty-key validation. Scope anonymous calls too, so their keys
+    // cannot collide with a profile namespace or differ between byte/value APIs.
+    if key.is_empty() {
+        return None;
+    }
+    let scope = profile.map_or("", |profile| profile.id.as_str());
+    Some(format!("{}:{scope}:{key}", scope.len()))
+}
+
+fn scoped_replay<'a>(
+    identity: Option<ReplayIdentity<'a>>,
+    key: &'a Option<String>,
+) -> Option<ReplayIdentity<'a>> {
+    match (identity, key.as_deref()) {
+        (Some(ReplayIdentity::IdempotencyKey(_)), Some(key)) => {
+            Some(ReplayIdentity::IdempotencyKey(key))
+        }
+        (Some(ReplayIdentity::Resource(_)), Some(key)) => Some(ReplayIdentity::Resource(key)),
+        _ => identity,
+    }
+}
+
 fn service_authentication(authenticated: Option<AuthenticatedProfile>) -> ServiceAuthentication {
     let profile = authenticated
         .as_ref()
@@ -487,6 +570,8 @@ pub enum Error {
     StateUnavailable,
     #[error("deferred work is invalid: {0}")]
     InvalidWork(String),
+    #[error("work lease is expired or no longer current")]
+    StaleWorkLease,
     #[error("state-backed response cannot be represented by the operation contract")]
     StateResponseUnavailable,
     #[error("state read returned an unexpected result for {0}")]

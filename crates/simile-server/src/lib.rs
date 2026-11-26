@@ -7,48 +7,40 @@ mod inspection;
 mod process;
 mod proxy;
 mod response;
-mod routing;
 
 pub use exchange_store::Error as ExchangeHistoryError;
 pub use process::CommandResult;
 pub use proxy::{ProxyOptions, ProxyServer};
 
 use access_log::access_log;
+use futures_util::stream;
 use inspection::{
-    emit_incident, inspection_request_body, inspection_response, inspection_response_body,
-    redact_json, sanitize_body, sanitize_parameters, unix_time_millis,
+    inspection_request_body, inspection_response, inspection_response_body, redact_json,
+    sanitize_body, sanitize_parameters, unix_time_millis,
 };
-use response::{
-    error_response, header, method_not_allowed, operation_error, operation_execution_response,
-};
-use routing::{Match, RouteTable};
+use simile_http::RouteTable;
+use simile_runtime::{IncomingParameters, TransportPlan};
 
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::body::{Body, to_bytes};
+use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::State;
-use axum::http::header::{CONTENT_TYPE, COOKIE};
-use axum::http::{Method, Request, StatusCode};
+use axum::http::Request;
 use axum::middleware;
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use simile_artifact::Artifact;
-use simile_runtime::{
-    ExecutionOptions, IncomingParameters, OperationCall, ReplayIdentity, validate_parameters,
-};
 use simile_service::Service;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
-const DEFAULT_BODY_LIMIT: usize = 8 * 1024 * 1024;
 const INSPECTION_BODY_LIMIT: usize = 256 * 1024;
 const INSPECTION_PREFIX: &str = "/.simile/";
 
@@ -114,21 +106,7 @@ pub struct ServerOptions {
     pub reporting_sender: Option<mpsc::Sender<RuntimeReportCommand>>,
 }
 
-/// Sanitized evidence for one internal runtime failure that may become an automatic report.
-#[derive(Clone, Debug)]
-pub struct RuntimeIncident {
-    pub profile: Option<String>,
-    pub operation: String,
-    pub seed: u64,
-    pub content_type: Option<String>,
-    pub body: Vec<u8>,
-    pub parameters: IncomingParameters,
-    pub scenario: Option<String>,
-    pub fault_profile: Option<String>,
-    pub code: String,
-    pub message: String,
-    pub issues: Vec<serde_json::Value>,
-}
+pub use simile_http::RuntimeIncident;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeExchangeReport {
@@ -217,6 +195,8 @@ struct ServerState {
     service: Arc<Service>,
     routes: RouteTable,
     body_limit: usize,
+    response_seed: Option<u64>,
+    incident_sender: Option<mpsc::Sender<RuntimeIncident>>,
     inspector: Option<Arc<Inspector>>,
     scenario: Option<String>,
     fault_profile: Option<String>,
@@ -348,6 +328,53 @@ impl Server {
         options: ServerOptions,
         inspection_storage: InspectionStorage,
     ) -> Result<Self> {
+        let http_options = simile_http::HttpOptions {
+            scenario: options.scenario.clone(),
+            fault_profile: options.fault_profile.clone(),
+            ..Default::default()
+        };
+        Self::bind_service_http(
+            address,
+            service,
+            options,
+            inspection_storage,
+            http_options,
+            None,
+        )
+        .await
+    }
+
+    /// Bind with explicit HTTP controls for reproducible embeddings and parity fixtures.
+    pub async fn bind_service_with_http_options(
+        address: SocketAddr,
+        service: Service,
+        options: simile_http::HttpOptions,
+        incident_sender: Option<mpsc::Sender<RuntimeIncident>>,
+    ) -> Result<Self> {
+        let server_options = ServerOptions {
+            scenario: options.scenario.clone(),
+            fault_profile: options.fault_profile.clone(),
+            reporting_sender: None,
+        };
+        Self::bind_service_http(
+            address,
+            service,
+            server_options,
+            InspectionStorage::Memory,
+            options,
+            incident_sender,
+        )
+        .await
+    }
+
+    async fn bind_service_http(
+        address: SocketAddr,
+        service: Service,
+        options: ServerOptions,
+        inspection_storage: InspectionStorage,
+        http_options: simile_http::HttpOptions,
+        incident_sender: Option<mpsc::Sender<RuntimeIncident>>,
+    ) -> Result<Self> {
         let artifact = service.artifact();
         if let Some(name) = options.scenario.as_deref() {
             if !artifact.has_scenario(name) {
@@ -389,7 +416,9 @@ impl Server {
         let state = Arc::new(ServerState {
             service: Arc::clone(&service),
             routes,
-            body_limit: DEFAULT_BODY_LIMIT,
+            body_limit: http_options.body_limit,
+            response_seed: http_options.response_seed,
+            incident_sender,
             inspector,
             scenario: options.scenario,
             fault_profile: options.fault_profile,
@@ -453,264 +482,139 @@ async fn handle(State(state): State<Arc<ServerState>>, request: Request<Body>) -
     }
     let started = Instant::now();
     let started_at_ms = unix_time_millis();
-    let (operation, path_parameters) = match state.routes.find(&method, uri.path()) {
-        Match::Operation { operation, path } => (operation.to_owned(), path),
-        Match::MethodNotAllowed(methods) => return method_not_allowed(methods),
-        Match::NotFound => {
-            return error_response(StatusCode::NOT_FOUND, "not_found", "route not found");
+    let (parts, body) = request.into_parts();
+    let options = simile_http::HttpOptions {
+        body_limit: state.body_limit,
+        scenario: state.scenario.clone(),
+        fault_profile: state.fault_profile.clone(),
+        response_seed: state.response_seed,
+    };
+    let prepared =
+        match simile_http::prepare_request_head(&state.service, &state.routes, &parts, &options) {
+            Ok(prepared) => prepared,
+            Err(exchange) => return send_exchange(*exchange).await,
+        };
+    let body = match to_bytes(body, state.body_limit).await {
+        Ok(bytes) => simile_http::RequestBody::Bytes(bytes.to_vec()),
+        Err(_) => simile_http::RequestBody::TooLarge,
+    };
+    let mut exchange = prepared.handle_body(body);
+    if let Some(incident) = exchange.incident.take() {
+        if let Some(sender) = &state.incident_sender {
+            let _ = sender.try_send(incident.clone());
         }
-    };
-    let incoming = incoming_parameters(&request, path_parameters);
-    let authentication = match state.service.authenticate(&operation, &incoming) {
-        Ok(authentication) => authentication,
-        Err(simile_service::Error::Runtime(error)) => {
-            return operation_error(
-                state.service.runtime(),
-                &operation,
-                error,
-                method == Method::HEAD,
-            );
-        }
-        Err(error) => {
-            tracing::error!(target: "simile::auth", %operation, %error, "could not read service profiles");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "profile_state_unavailable",
-                "service profile state is unavailable",
-            );
-        }
-    };
-    let parameters = match validate_parameters(state.service.artifact(), &operation, &incoming) {
-        Ok(parameters) => parameters,
-        Err(error) => {
-            return operation_error(
-                state.service.runtime(),
-                &operation,
-                error,
-                method == Method::HEAD,
-            );
-        }
-    };
-    let content_type = match header(request.headers(), CONTENT_TYPE.as_str()) {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let idempotency_key = match header(request.headers(), "idempotency-key") {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let resource_identity = uri.to_string();
-    let body = match to_bytes(request.into_body(), state.body_limit).await {
-        Ok(body) => body,
-        Err(_) => {
-            return error_response(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "request_too_large",
-                "request body exceeds the configured limit",
-            );
-        }
-    };
-    let replay = idempotency_key
-        .as_deref()
-        .map(ReplayIdentity::IdempotencyKey)
-        .or_else(|| {
-            (method == Method::GET).then_some(ReplayIdentity::Resource(&resource_identity))
-        });
-    let response_seed = rand::random::<u64>();
-    let profile = authentication.profile().map(str::to_owned);
-    let exchange_identity = state
-        .inspector
-        .as_ref()
-        .map(|inspector| inspector.next_id(started_at_ms));
-    let logical_time_milliseconds = match state.service.logical_time_milliseconds() {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(target: "simile::service", %operation, %error, "service clock is unavailable");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "service_unavailable",
-                "the service clock is unavailable",
-            );
-        }
-    };
-    let outcome = state.service.execute_for_profile_with_options(
-        OperationCall {
-            operation: &operation,
-            content_type: content_type.as_deref(),
-            body: &body,
-        },
-        ExecutionOptions {
-            parameters: Some(&parameters),
-            replay,
-            scenario: state.scenario.as_deref(),
-            fault_profile: state.fault_profile.as_deref(),
-            response_seed: Some(response_seed),
-            logical_time_milliseconds: Some(logical_time_milliseconds),
-            ..ExecutionOptions::default()
-        },
-        profile.as_deref(),
-    );
-    match outcome {
-        Ok(execution) => {
-            let status = execution.response().status();
-            let selected_outcome = execution.selected_outcome().map(str::to_owned);
-            let response_content_type = execution.response().media_type().map(str::to_owned);
-            let mut expected_body = execution.response().value().cloned();
-            if let Some(body) = expected_body.as_mut() {
-                redact_json(body);
+        if let Some(sender) = &state.reporting_sender {
+            if let Err(error) = sender.try_send(RuntimeReportCommand::Automatic(incident)) {
+                tracing::debug!(target: "simile::reporting", %error, "automatic report skipped because the reporting queue is unavailable");
             }
-            let response_body = inspection_response_body(
-                response_content_type.as_deref(),
-                execution.response().bytes(),
-            );
-            let request_message = inspection_request_body(content_type.as_deref(), &body);
-            let response = operation_execution_response(execution, method == Method::HEAD).await;
-            if let (Some(inspector), Some((exchange_id, exchange_sequence))) =
-                (state.inspector.as_ref(), exchange_identity)
-            {
-                let report_capture = sanitize_body(content_type.as_deref(), &body).map(|body| {
-                    RuntimeExchangeReport {
-                        exchange_id: exchange_id.clone(),
-                        profile: profile.clone(),
-                        operation: operation.clone(),
-                        response_seed,
-                        logical_time_milliseconds: Some(logical_time_milliseconds),
-                        content_type: content_type.clone(),
-                        body,
-                        parameters: sanitize_parameters(incoming.clone()),
-                        outcome: selected_outcome.clone(),
-                        scenario: state.scenario.clone(),
-                        fault_profile: state.fault_profile.clone(),
-                        expected: RuntimeExpectedResponse {
-                            status,
-                            content_type: response_content_type.clone(),
-                            body: expected_body,
-                        },
-                    }
-                });
-                inspector.record(
-                    exchange_sequence,
-                    RecordedExchange {
-                        exchange: InspectionExchange {
-                            id: exchange_id,
-                            operation,
-                            method: method.to_string(),
-                            path: uri.path().to_owned(),
-                            started_at_ms,
-                            duration_micros: started
-                                .elapsed()
-                                .as_micros()
-                                .try_into()
-                                .unwrap_or(u64::MAX),
-                            status,
-                            outcome: selected_outcome,
-                            profile,
-                            request: request_message,
-                            response: response_body,
-                        },
-                        report_capture,
-                        report: None,
-                    },
-                );
-            }
-            response
         }
-        Err(simile_service::Error::Runtime(error)) => {
-            emit_incident(
-                &state,
-                profile,
-                &operation,
-                response_seed,
-                content_type,
-                &body,
-                incoming,
-                &error,
-            );
-            operation_error(
-                state.service.runtime(),
-                &operation,
-                error,
-                method == Method::HEAD,
-            )
+    }
+    if let Some(fault) = &exchange.fault {
+        tracing::info!(target: "simile::fault", operation = exchange.operation, fault = fault.name(), source = ?fault.source(), phase = ?fault.phase(), "activated environmental fault");
+    }
+    let capture = exchange.capture.take();
+    let operation = exchange.operation.clone();
+    let profile = exchange.profile.clone();
+    let response_seed = exchange.seed;
+    let exchange_identity = capture.as_ref().and_then(|_| {
+        state
+            .inspector
+            .as_ref()
+            .map(|inspector| inspector.next_id(started_at_ms))
+    });
+    let response = send_exchange(exchange).await;
+    if let (Some(capture), Some(operation)) = (capture, operation) {
+        let request_message =
+            inspection_request_body(capture.content_type.as_deref(), &capture.body);
+        let response_message = inspection_response_body(
+            capture.response_content_type.as_deref(),
+            &capture.response_bytes,
+        );
+        let mut expected_body = capture.response_body;
+        if let Some(body) = expected_body.as_mut() {
+            redact_json(body);
         }
-        Err(error) => {
-            tracing::error!(target: "simile::effect", %operation, %error, "could not apply operation effects");
-            let message = "the operation completed but its declared effects could not be committed";
-            let error_body = serde_json::json!({
-                "error": {
-                    "code": "effect_failed",
-                    "message": message,
-                }
-            });
-            let report_capture =
-                sanitize_body(content_type.as_deref(), &body).map(|body| RuntimeExchangeReport {
+        let report_capture =
+            sanitize_body(capture.content_type.as_deref(), &capture.body).map(|body| {
+                RuntimeExchangeReport {
                     exchange_id: exchange_identity
                         .as_ref()
-                        .map_or_else(String::new, |(exchange_id, _)| exchange_id.clone()),
+                        .map_or_else(String::new, |(id, _)| id.clone()),
                     profile: profile.clone(),
                     operation: operation.clone(),
                     response_seed,
-                    logical_time_milliseconds: Some(logical_time_milliseconds),
-                    content_type: content_type.clone(),
+                    logical_time_milliseconds: Some(capture.logical_time_milliseconds),
+                    content_type: capture.content_type,
                     body,
-                    parameters: sanitize_parameters(incoming.clone()),
-                    outcome: None,
+                    parameters: sanitize_parameters(capture.parameters),
+                    outcome: capture.outcome.clone(),
                     scenario: state.scenario.clone(),
                     fault_profile: state.fault_profile.clone(),
                     expected: RuntimeExpectedResponse {
-                        status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                        content_type: Some("application/json".to_owned()),
-                        body: Some(error_body.clone()),
+                        status: capture.status,
+                        content_type: capture.response_content_type,
+                        body: expected_body,
                     },
-                });
-            if let (Some(sender), Some(capture)) =
-                (state.reporting_sender.as_ref(), report_capture.as_ref())
-            {
+                }
+            });
+        if capture.effect_failed {
+            if let (Some(sender), Some(report)) = (&state.reporting_sender, &report_capture) {
                 if let Err(error) =
-                    sender.try_send(RuntimeReportCommand::AutomaticExchange(capture.clone()))
+                    sender.try_send(RuntimeReportCommand::AutomaticExchange(report.clone()))
                 {
-                    tracing::debug!(
-                        target: "simile::reporting",
-                        %error,
-                        "automatic effect report skipped because the reporting queue is unavailable"
-                    );
+                    tracing::debug!(target: "simile::reporting", %error, "automatic effect report skipped because the reporting queue is unavailable");
                 }
             }
-            if let (Some(inspector), Some((exchange_id, exchange_sequence))) =
-                (state.inspector.as_ref(), exchange_identity)
-            {
-                inspector.record(
-                    exchange_sequence,
-                    RecordedExchange {
-                        exchange: InspectionExchange {
-                            id: exchange_id,
-                            operation,
-                            method: method.to_string(),
-                            path: uri.path().to_owned(),
-                            started_at_ms,
-                            duration_micros: started
-                                .elapsed()
-                                .as_micros()
-                                .try_into()
-                                .unwrap_or(u64::MAX),
-                            status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                            outcome: None,
-                            profile,
-                            request: inspection_request_body(content_type.as_deref(), &body),
-                            response: InspectionMessage {
-                                content_type: Some("application/json".to_owned()),
-                                body: Some(error_body),
-                                truncated: false,
-                            },
-                        },
-                        report_capture,
-                        report: None,
+        }
+        if let (Some(inspector), Some((id, sequence))) = (&state.inspector, exchange_identity) {
+            inspector.record(
+                sequence,
+                RecordedExchange {
+                    exchange: InspectionExchange {
+                        id,
+                        operation,
+                        method: method.to_string(),
+                        path: uri.path().to_owned(),
+                        started_at_ms,
+                        duration_micros: started
+                            .elapsed()
+                            .as_micros()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                        status: capture.status,
+                        outcome: capture.outcome,
+                        profile,
+                        request: request_message,
+                        response: response_message,
                     },
-                );
-            }
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "effect_failed", message)
+                    report_capture,
+                    report: None,
+                },
+            );
         }
     }
+    response
+}
+
+async fn send_exchange(exchange: simile_http::HttpExchange) -> Response {
+    let (parts, bytes) = exchange.response.into_parts();
+    let body = match exchange.transport {
+        TransportPlan::Respond => Body::from(bytes),
+        TransportPlan::RespondAfter { milliseconds } => {
+            tokio::time::sleep(Duration::from_millis(milliseconds)).await;
+            Body::from(bytes)
+        }
+        TransportPlan::DisconnectAfterCommit => {
+            let error = std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "simile injected a disconnect after commit",
+            );
+            Body::from_stream(stream::once(
+                async move { Err::<Bytes, std::io::Error>(error) },
+            ))
+        }
+    };
+    Response::from_parts(parts, body)
 }
 
 enum InspectionStorage {
@@ -722,55 +626,6 @@ enum InspectionStorage {
 #[must_use]
 pub fn exchange_history_path(service_state_path: impl AsRef<Path>) -> PathBuf {
     service_state_path.as_ref().with_extension("exchanges.redb")
-}
-
-fn incoming_parameters(
-    request: &Request<Body>,
-    path: BTreeMap<String, Vec<String>>,
-) -> IncomingParameters {
-    let mut query = BTreeMap::<String, Vec<String>>::new();
-    if let Some(raw) = request.uri().query() {
-        for (name, value) in form_urlencoded::parse(raw.as_bytes()) {
-            query
-                .entry(name.into_owned())
-                .or_default()
-                .push(value.into_owned());
-        }
-    }
-    let mut headers = BTreeMap::<String, Vec<String>>::new();
-    for name in request.headers().keys() {
-        let values = request
-            .headers()
-            .get_all(name)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        if !values.is_empty() {
-            headers.insert(name.as_str().to_ascii_lowercase(), values);
-        }
-    }
-    let mut cookies = BTreeMap::<String, Vec<String>>::new();
-    for value in request.headers().get_all(COOKIE).iter() {
-        let Ok(value) = value.to_str() else {
-            continue;
-        };
-        for pair in value.split(';') {
-            let Some((name, value)) = pair.trim().split_once('=') else {
-                continue;
-            };
-            cookies
-                .entry(name.trim().to_owned())
-                .or_default()
-                .push(value.trim().to_owned());
-        }
-    }
-    IncomingParameters {
-        path,
-        query,
-        headers,
-        cookies,
-    }
 }
 
 #[cfg(test)]
