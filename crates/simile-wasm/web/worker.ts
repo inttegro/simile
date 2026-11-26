@@ -32,6 +32,13 @@ function dispatch(message: Request): unknown {
   switch (message.method) {
     case "compileWorkspace": return candidate(compileWorkspace(message.input));
     case "loadArtifact": return candidate(loadArtifact(message.input.bytes));
+    case "releaseArtifact": {
+      const handle = artifacts.get(message.input.revision);
+      if (!handle) return { released: false };
+      artifacts.delete(message.input.revision);
+      handle.free();
+      return { released: true };
+    }
     case "synthesizeRequest": return artifact(message.input.revision).synthesizeRequest(message.input.options);
     case "runOperation": return artifact(message.input.revision).runOperation(message.input.options);
     case "replayBundle": return replayBundle(message.input);

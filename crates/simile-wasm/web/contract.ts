@@ -96,6 +96,7 @@ export interface Methods {
   redeliverDeadLetter: { input: Record<string, never>; output: { redelivered: boolean; status: SessionStatus } };
   compileWorkspace: { input: Workspace; output: ArtifactResult };
   loadArtifact: { input: { bytes: Uint8Array }; output: ArtifactResult };
+  releaseArtifact: { input: { revision: string }; output: { released: boolean } };
   synthesizeRequest: { input: { revision: string; options: { selector: Selector; seed?: Decimal; contentType?: string } }; output: { seed: Decimal; requestDocJson: string; contentType?: string; body?: Uint8Array } };
   runOperation: { input: { revision: string; options: RunOptions }; output: ReportView };
   replayBundle: { input: BundleFiles; output: ReportView };
@@ -143,7 +144,7 @@ export function validateRequest(value: unknown): asserts value is Request {
   const requiredStrings: Partial<Record<keyof Methods, string[]>> = {
     advanceClock: ["milliseconds"], prepareWebhook: ["handle", "timestamp"],
     executeWork: ["handle"], acknowledgeWork: ["handle"], retryWork: ["handle", "delay"],
-    startSession: ["revision"], synthesizeRequest: ["revision"], runOperation: ["revision"],
+    startSession: ["revision"], synthesizeRequest: ["revision"], runOperation: ["revision"], releaseArtifact: ["revision"],
   };
   for (const key of requiredStrings[message.method as keyof Methods] ?? []) if (typeof input[key] !== "string" || !input[key]) fail(`${key} must be a nonempty string`);
   if (message.method === "compileWorkspace") {
@@ -160,4 +161,4 @@ export function validateRequest(value: unknown): asserts value is Request {
     (message.input as unknown[]).forEach(bundle);
   }
 }
-const methods = new Set<string>(["inspectWork", "redeliverDeadLetter","compileWorkspace", "loadArtifact", "synthesizeRequest", "runOperation", "replayBundle", "runConformance", "startSession", "status", "handleRequest", "setupProfile", "listProfiles", "inspectState", "advanceClock", "resetState", "exportCheckpoint", "restoreCheckpoint", "stepWork", "prepareWebhook", "executeWork", "acknowledgeWork", "retryWork"]);
+const methods = new Set<string>(["inspectWork", "redeliverDeadLetter","compileWorkspace", "loadArtifact", "releaseArtifact", "synthesizeRequest", "runOperation", "replayBundle", "runConformance", "startSession", "status", "handleRequest", "setupProfile", "listProfiles", "inspectState", "advanceClock", "resetState", "exportCheckpoint", "restoreCheckpoint", "stepWork", "prepareWebhook", "executeWork", "acknowledgeWork", "retryWork"]);

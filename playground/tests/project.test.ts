@@ -5,7 +5,9 @@ import {
   importBundles,
   runnableProject,
   unpack,
+  workspaceArchive,
 } from "../src/model/archive"
+import type { ArtifactResult } from "../src/worker/client"
 import { setupValues } from "../src/model/setup"
 import { zipSync } from "fflate"
 import originalPetstore from "../src/templates/petstore/swagger.json?raw"
@@ -50,6 +52,38 @@ test("quick exports include an explicit runnable composition", () => {
   expect(result.configPath).toBe("Simfile")
   expect(result.files.Simfile).toContain("./api.yaml")
   expect(runnableProject(result)).toEqual(result)
+})
+const artifact = {
+  revision: "compiled",
+  service: "orders",
+  bytes: new Uint8Array([0, 255, 1]),
+  catalogue: { principalSetups: [] },
+} as unknown as ArtifactResult
+test.each([
+  "NOTES.md",
+  "HANDOFF.sh",
+  "service.similec",
+  "NOTES.md/source.txt",
+  "notes.md",
+  "handoff.sh",
+])("workspace export refuses to overwrite source at %s", (path) => {
+  const project = starter()
+  project.files[path] = "Keep this source exactly."
+  const before = structuredClone(project)
+  expect(() => workspaceArchive(project, artifact)).toThrow(path)
+  expect(project).toEqual(before)
+})
+test("workspace export preserves every source and generated file", () => {
+  const project = starter()
+  const files = unpack(workspaceArchive(project, artifact))
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+  for (const [path, source] of Object.entries(project.files))
+    expect(decode(files[path])).toBe(source)
+  expect(decode(files["NOTES.md"])).toBe(project.notes)
+  expect(decode(files["HANDOFF.sh"])).toContain(
+    "simile inspect ./service.similec"
+  )
+  expect(files["service.similec"]).toEqual(artifact.bytes)
 })
 test("native bundle archives preserve bytes and ordered named cases", () => {
   const bundles = [

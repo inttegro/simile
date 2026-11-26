@@ -24,7 +24,7 @@ use web_time::{SystemTime, UNIX_EPOCH};
 use simile_artifact::Artifact;
 use simile_runtime::{
     AuthenticatedProfile, ExecutionOptions, IncomingParameters, OperationCall, OperationExecution,
-    OperationValueCall, Runtime, authenticate_with_profiles,
+    OperationValueCall, ReplayIdentity, Runtime, authenticate_with_profiles,
 };
 use simile_spec::ResourceKind;
 use simile_stack::{
@@ -209,6 +209,7 @@ impl Service {
             .map(|name| self.profile(name))
             .transpose()?
             .flatten();
+        let replay_key = scoped_replay_key(options.replay, profile.as_ref());
         // Why: POST-based public lookup/page routes carry their selector in JSON rather than in
         // path parameters, so state resolution needs the request value before runtime synthesis.
         let request_body = call
@@ -269,6 +270,7 @@ impl Service {
                     .as_ref()
                     .or(options.response_request_body),
                 logical_time_milliseconds: Some(request_received_at),
+                replay: scoped_replay(options.replay, &replay_key),
                 ..options
             },
         )?;
@@ -289,6 +291,7 @@ impl Service {
             .logical_time_milliseconds
             .map_or_else(|| self.logical_time_milliseconds(), Ok)?;
         let response_request = state::response_request_body(self, call.operation, call.body, None)?;
+        let replay_key = scoped_replay_key(options.replay, None);
         let state = state::resolve(self, call.operation, options.parameters, call.body, None)?;
         let mutation = if matches!(state, state::StateResolution::None) {
             state::mutation_baseline(self, call.operation, call.body, None)?
@@ -324,6 +327,7 @@ impl Service {
                     .as_ref()
                     .or(options.response_request_body),
                 logical_time_milliseconds: Some(request_received_at),
+                replay: scoped_replay(options.replay, &replay_key),
                 ..options
             },
         )?;
@@ -502,6 +506,33 @@ impl Service {
             return Err(error.into());
         }
         Ok(())
+    }
+}
+
+fn scoped_replay_key(
+    identity: Option<ReplayIdentity<'_>>,
+    profile: Option<&ServiceProfile>,
+) -> Option<String> {
+    let (ReplayIdentity::IdempotencyKey(key) | ReplayIdentity::Resource(key)) = identity?;
+    // Preserve empty-key validation. Scope anonymous calls too, so their keys
+    // cannot collide with a profile namespace or differ between byte/value APIs.
+    if key.is_empty() {
+        return None;
+    }
+    let scope = profile.map_or("", |profile| profile.id.as_str());
+    Some(format!("{}:{scope}:{key}", scope.len()))
+}
+
+fn scoped_replay<'a>(
+    identity: Option<ReplayIdentity<'a>>,
+    key: &'a Option<String>,
+) -> Option<ReplayIdentity<'a>> {
+    match (identity, key.as_deref()) {
+        (Some(ReplayIdentity::IdempotencyKey(_)), Some(key)) => {
+            Some(ReplayIdentity::IdempotencyKey(key))
+        }
+        (Some(ReplayIdentity::Resource(_)), Some(key)) => Some(ReplayIdentity::Resource(key)),
+        _ => identity,
     }
 }
 

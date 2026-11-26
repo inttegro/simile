@@ -106,10 +106,15 @@ or session construction leaves the active session available. `runOperation`
 uses a fresh runtime for its selected artifact, independent of the active session;
 replay and conformance likewise use shared application operations.
 
-The Worker retains candidates until termination; inserting the same digest frees
-the previous handle for that digest. There is no eviction API. Inputs are cloned
-so callers can reuse artifact and checkpoint buffers. Only response-owned buffers
-are transferred; returning artifact bytes first copies them out of Rust.
+The host calls `releaseArtifact` when it finishes using a candidate. This removes
+the digest from the registry and frees its Rust handle; repeating release returns
+`released: false`. Inserting the same digest also frees the previous handle.
+Sessions own independently decoded artifacts and bytes, so release does not
+affect HTTP requests, reset, or checkpoint restore. Artifact operations on a
+released digest return `unknown_revision` until the host reloads its bytes.
+Inputs are cloned so callers can reuse artifact and checkpoint buffers. Only
+response-owned buffers are transferred; returning artifact bytes first copies
+them out of Rust.
 
 Three counters serve different purposes:
 

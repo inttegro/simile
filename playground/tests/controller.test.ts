@@ -4,10 +4,11 @@ const mock = vi.hoisted(() => ({
   engines: [] as { isClosed: boolean; call: ReturnType<typeof vi.fn> }[],
   write: vi.fn(),
   read: vi.fn(),
+  initialCall: vi.fn(),
 }))
 vi.mock("../src/worker/client", () => ({
   Engine: class {
-    call = vi.fn()
+    call = vi.fn((...args) => mock.initialCall(...args))
     isClosed = false
     constructor() {
       mock.calls.push(this.call)
@@ -44,6 +45,7 @@ beforeEach(() => {
   mock.engines.length = 0
   mock.write.mockReset()
   mock.read.mockReset()
+  mock.initialCall.mockReset()
   vi.useFakeTimers()
 })
 test("a failed compiler is replaced without touching the active service", async () => {
@@ -106,7 +108,7 @@ test("stale compile results never replace the newer edit revision or active serv
   const model = new Playground()
   model.state.active = artifact
   let finish!: (value: ArtifactResult) => void
-  mock.calls[0].mockImplementation(
+  mock.calls[0].mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve
@@ -118,6 +120,9 @@ test("stale compile results never replace the newer edit revision or active serv
   await pending
   expect(model.state.candidate).toBeUndefined()
   expect(model.state.active).toBe(artifact)
+  expect(mock.calls[0]).toHaveBeenLastCalledWith("releaseArtifact", {
+    revision: artifact.revision,
+  })
   model.cancelCompile()
   vi.clearAllTimers()
 })
@@ -175,7 +180,7 @@ test("edits made while a saved artifact loads take precedence over restoration",
     bundles: [],
   })
   let finish!: (value: ArtifactResult) => void
-  mock.calls[0].mockImplementation(
+  mock.calls[0].mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve
@@ -189,7 +194,93 @@ test("edits made while a saved artifact loads take precedence over restoration",
   await initializing
   expect(model.state.project).toBe(edited)
   expect(model.state.candidate).toBeUndefined()
+  expect(mock.calls[0]).toHaveBeenLastCalledWith("releaseArtifact", {
+    revision: artifact.revision,
+  })
   vi.clearAllTimers()
+})
+
+test("compiler results keep copied bytes after their Worker handles are released", async () => {
+  const model = new Playground()
+  mock.calls[0].mockResolvedValue(artifact)
+  await model.compile()
+  expect(model.state.candidate).toBe(artifact)
+  expect(mock.calls[0]).toHaveBeenLastCalledWith("releaseArtifact", {
+    revision: artifact.revision,
+  })
+  vi.clearAllTimers()
+})
+
+test("overlapping baseline calls release each revision after use, including failures", async () => {
+  const model = new Playground()
+  model.state.candidate = artifact
+  const retained = new Set<string>()
+  let finish!: () => void
+  mock.calls[1].mockImplementation(async (method, input) => {
+    if (method === "loadArtifact") {
+      expect(retained.size).toBe(0)
+      retained.add(artifact.revision)
+    } else if (method === "runOperation") {
+      expect(retained.has(input.revision)).toBe(true)
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      expect(retained.has(input.revision)).toBe(true)
+    } else if (method === "synthesizeRequest") {
+      expect(retained.has(input.revision)).toBe(true)
+      throw new Error("Invalid selector")
+    } else if (method === "releaseArtifact") {
+      expect(retained.delete(input.revision)).toBe(true)
+    }
+  })
+  const first = model.candidateCall("runOperation", { selector: { id: "one" } })
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"))
+  const second = model.candidateCall("synthesizeRequest", {
+    selector: { id: "missing" },
+  })
+  const failure = expect(second).rejects.toThrow("Invalid selector")
+  await Promise.resolve()
+  expect(mock.calls[1].mock.calls.map(([method]) => method)).toEqual([
+    "loadArtifact",
+    "runOperation",
+  ])
+  finish()
+  await first
+  await failure
+  expect(retained.size).toBe(0)
+  expect(mock.calls[1].mock.calls.map(([method]) => method)).toEqual([
+    "loadArtifact",
+    "runOperation",
+    "releaseArtifact",
+    "loadArtifact",
+    "synthesizeRequest",
+    "releaseArtifact",
+  ])
+})
+
+test("starting and restoring sessions release temporary artifact handles", async () => {
+  const model = new Playground()
+  model.state.candidate = artifact
+  mock.calls[1].mockResolvedValue(status)
+  await model.start({ clockMode: "manual" })
+  expect(model.state.active).toBe(artifact)
+  expect(mock.calls[1]).toHaveBeenLastCalledWith("releaseArtifact", {
+    revision: artifact.revision,
+  })
+  mock.read.mockResolvedValue({
+    artifact: artifact.bytes,
+    checkpoint: new Uint8Array([2]),
+    options: {},
+  })
+  mock.initialCall.mockImplementation((method) =>
+    method === "loadArtifact" ? artifact : status
+  )
+  await model.restoreSaved()
+  expect(mock.calls[2]).toHaveBeenLastCalledWith("releaseArtifact", {
+    revision: artifact.revision,
+  })
+  expect(model.state.active).toBe(artifact)
+  expect(model.state.session).toBe(status)
 })
 
 test("an incompatible cached artifact cannot discard saved source files or notes", async () => {

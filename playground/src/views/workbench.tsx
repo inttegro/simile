@@ -505,13 +505,14 @@ function RequestPanel({ model, state }: { model: Playground; state: State }) {
                 disabled={state.busy || !route}
                 onClick={() =>
                   void model.act(async () => {
-                    const generated = await model.call("synthesizeRequest", {
-                      revision: artifact.revision,
-                      options: {
+                    const generated = await model.artifactCall(
+                      artifact,
+                      "synthesizeRequest",
+                      {
                         selector: { key: route!.key },
                         seed: seed || undefined,
-                      },
-                    })
+                      }
+                    )
                     setMode(generated.body ? "text" : "absent")
                     setBody(generated.body ? decode(generated.body) : "")
                     if (generated.contentType)
@@ -668,7 +669,6 @@ function Profiles({ model, state }: { model: Playground; state: State }) {
                 name,
                 valuesJson: setupValues(setup!.collects, values),
                 select: true,
-                seed: "7",
               })
               setProfileJson(result.profileJson)
               setReveal(false)

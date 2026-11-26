@@ -48,6 +48,7 @@ const artifact = await client.call("compileWorkspace", {
   files: { "api.yaml": source }, contractEntry: "api.yaml",
 });
 await client.call("startSession", { revision: artifact.revision });
+await client.call("releaseArtifact", { revision: artifact.revision });
 const response = await client.call("handleRequest", {
   method: "GET", uri: "/orders", responseSeed: "18446744073709551615",
 });
@@ -81,8 +82,11 @@ snapshot and never leases work. Handles expire at their queue visibility deadlin
 without changing state. Async execution and acknowledgement commit together.
 Exporting a checkpoint captures bytes; it does not
 claim persistence. There is no UI, IndexedDB integration, or webhook network sender.
-The Worker retains candidates until termination and transfers only response-owned
-buffers; inputs remain reusable by the caller.
+Call `releaseArtifact({ revision })` when a candidate is no longer needed. It frees
+the Rust handle and returns `{ released: false }` if already absent. Sessions own
+their artifacts independently, so releasing a candidate does not affect requests,
+reset, or checkpoint restore. Reload its returned bytes to run another baseline.
+The Worker transfers only response-owned buffers; inputs remain reusable.
 
 The checked-in Smithy fixture was produced by the native CLI (artifact format 24):
 

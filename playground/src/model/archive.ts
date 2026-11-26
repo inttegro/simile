@@ -79,6 +79,19 @@ export function workspaceArchive(project: Project, artifact: ArtifactResult) {
       strToU8(text),
     ])
   )
+  // Native handoff also runs on filesystems with case-insensitive names.
+  const generated = ["notes.md", "handoff.sh", "service.similec"]
+  for (const path of Object.keys(files)) {
+    const normalized = path.toLowerCase()
+    if (
+      generated.some(
+        (name) => normalized === name || normalized.startsWith(name + "/")
+      )
+    )
+      throw new Error(
+        `Rename source file "${path}" before export; it conflicts with a generated workspace file.`
+      )
+  }
   files["NOTES.md"] = strToU8(project.notes)
   files["HANDOFF.sh"] = strToU8(handoff(project, artifact))
   files["service.similec"] = artifact.bytes

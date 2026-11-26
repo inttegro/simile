@@ -53,6 +53,13 @@ it can use a compiler result. Baselines run in the runtime Worker but create fre
 Rust runtimes, so they do not mutate the active HTTP session. Calls within each
 Worker are serialized.
 
+The compiler Worker releases each Rust artifact handle after returning copied
+bytes, including stale compilation results. The runtime loads, uses, and releases
+an artifact for each baseline, synthesis, or session start. The controller queues
+these sequences together so overlapping calls cannot free each other's handles.
+This trades repeated decoding for bounded artifact memory. The active session
+owns its artifact independently; it continues after the temporary handle is freed.
+
 | Location | Owns |
 | --- | --- |
 | [src/App.tsx](src/App.tsx) | Application layout, selected files/operations, pane visibility, and top-level actions. |
@@ -86,10 +93,10 @@ sequenceDiagram
     Model-->>Editor: Candidate ready, or compilation diagnostic
     Note over Model,Runtime: Existing HTTP session remains on its active artifact
     Editor->>Model: Run baseline
-    Model->>Runtime: Load candidate if needed, runOperation
+    Model->>Runtime: Load candidate, runOperation, releaseArtifact
     Runtime-->>Editor: Fresh-run report via controller
     Editor->>Model: Start or restart HTTP session
-    Model->>Runtime: Load candidate if needed, startSession
+    Model->>Runtime: Load candidate, startSession, releaseArtifact
     Runtime-->>Model: Validated session status
     Model->>Model: Record active artifact and session options
 ```
@@ -203,7 +210,9 @@ of the Swagger 2.0 sample, retaining all 20 operations. Its
 the sample; it needs no live fetch or runtime converter.
 
 File/folder/ZIP imports become validated relative paths in the virtual project.
-Workspace export includes source, notes, artifact bytes, and `HANDOFF.sh`. Quick
+Workspace export includes source, notes, artifact bytes, and `HANDOFF.sh`. Export
+rejects source paths conflicting with `NOTES.md`, `HANDOFF.sh`, or `service.similec`
+and asks the user to rename them before retrying, preserving their contents. Quick
 mode first generates and validates a Simfile so native registration compiles the
 same configuration. Native profiles are provisioned separately; browser session
 credentials are not copied into the CLI registry. Bundle ZIPs use the shared

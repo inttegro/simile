@@ -1,10 +1,78 @@
 import { test, expect } from "@playwright/test"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { unzipSync, strFromU8 } from "fflate"
 async function compiled(page: import("@playwright/test").Page) {
   await page.goto("/")
   await expect(page.getByText(/Compiled · 4 ops/)).toBeVisible()
 }
+test("separately provisioned profiles have distinct credentials and isolated orders", async ({
+  page,
+}) => {
+  await compiled(page)
+  await page.getByRole("tab", { name: "HTTP session", exact: true }).click()
+  await page.getByRole("button", { name: "Start service", exact: true }).click()
+  await expect(page.getByText(/Running [a-f0-9]{8}/)).toBeVisible()
+  await page.getByRole("tab", { name: "Profiles & setup" }).click()
+  const profiles = []
+  for (const name of ["first", "second"]) {
+    await page.getByLabel("Profile name", { exact: true }).fill(name)
+    await page.getByLabel("name", { exact: true }).fill(name)
+    await page
+      .getByRole("button", { name: "Create profile", exact: true })
+      .click()
+    await expect(
+      page.getByText("Credentials issued. Use the profile toggle")
+    ).toBeVisible()
+    await page
+      .getByRole("button", { name: "Reveal issued credentials" })
+      .click()
+    profiles.push(
+      JSON.parse(
+        await page
+          .locator(".output")
+          .filter({ hasText: "Issued profile" })
+          .locator("pre")
+          .innerText()
+      )
+    )
+  }
+  // Compare without including credential values in assertion output.
+  expect(profiles[0].id === profiles[1].id).toBe(false)
+  expect(
+    JSON.stringify(profiles[0].credentials) ===
+      JSON.stringify(profiles[1].credentials)
+  ).toBe(false)
+  await page.getByRole("tab", { name: "HTTP request", exact: true }).click()
+  await page.locator("summary").filter({ hasText: "Authentication" }).click()
+  await page.getByRole("button", { name: "Refresh profiles" }).click()
+  await page.getByRole("switch", { name: "Use profile credentials" }).check()
+  await page
+    .getByLabel("Credential profile", { exact: true })
+    .selectOption("first")
+  await page
+    .getByRole("button", { name: "Synthesize body", exact: true })
+    .click()
+  await page.getByRole("button", { name: "Send request", exact: true }).click()
+  await expect(page.locator(".response-status")).toContainText("201")
+  const response = page
+    .locator(".output")
+    .filter({ hasText: "Response body · exact" })
+    .locator("pre")
+  const id = JSON.parse(await response.innerText()).id
+  await page
+    .getByLabel("HTTP route", { exact: true })
+    .selectOption("GET /orders/{id}")
+  await page.getByLabel("path: id", { exact: true }).fill(id)
+  await page.getByRole("button", { name: "Send request", exact: true }).click()
+  await expect(page.locator(".response-status")).toContainText("200")
+  await expect(response).toContainText(id)
+  await page
+    .getByLabel("Credential profile", { exact: true })
+    .selectOption("second")
+  await page.getByRole("button", { name: "Send request", exact: true }).click()
+  await expect(page.locator(".response-status")).toContainText("404")
+})
 test("author, audit, provision, create/read, work, checkpoint, and reproduce", async ({
   page,
 }) => {
@@ -149,6 +217,51 @@ test("invalid artifacts preserve the session and CLI Smithy artifacts run", asyn
   await expect(
     page.getByRole("button", { name: "Save reproduction" })
   ).toBeEnabled()
+})
+test("export collisions show a recoverable error without losing source", async ({
+  page,
+}, testInfo) => {
+  await compiled(page)
+  const source = "# My handoff instructions\nprintf 'keep this file'\n"
+  await page.getByLabel("Import files", { exact: true }).setInputFiles([
+    {
+      name: "api.yaml",
+      mimeType: "text/yaml",
+      buffer: Buffer.from(
+        'openapi: 3.1.0\ninfo: { title: Example, version: 1.0.0 }\npaths:\n  /health:\n    get:\n      responses:\n        "204": { description: Healthy }\n'
+      ),
+    },
+    { name: "HANDOFF.sh", mimeType: "text/plain", buffer: Buffer.from(source) },
+  ])
+  await expect(page.getByText(/Compiled · 1 ops/)).toBeVisible()
+  const downloads: string[] = []
+  page.on("download", (file) => downloads.push(file.suggestedFilename()))
+  await page.getByRole("button", { name: "Export", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Runnable workspace ZIP" }).click()
+  await expect(page.getByRole("alert")).toContainText(
+    'Rename source file "HANDOFF.sh"'
+  )
+  expect(downloads).toEqual([])
+  await page
+    .getByRole("navigation", { name: "Project files" })
+    .getByRole("button", { name: "HANDOFF.sh" })
+    .click()
+  await expect(page.locator(".source-editor .cm-content")).toContainText(
+    "keep this file"
+  )
+  await page.getByText("Manage files", { exact: true }).click()
+  await page.getByLabel("File path", { exact: true }).fill("my-handoff.sh")
+  await page.getByRole("button", { name: "Rename", exact: true }).click()
+  await page.getByRole("button", { name: "Export", exact: true }).click()
+  const download = page.waitForEvent("download")
+  await page.getByRole("menuitem", { name: "Runnable workspace ZIP" }).click()
+  const path = testInfo.outputPath("renamed-workspace.zip")
+  await (await download).saveAs(path)
+  const files = unzipSync(await readFile(path))
+  expect(strFromU8(files["my-handoff.sh"])).toBe(source)
+  expect(strFromU8(files["HANDOFF.sh"])).toContain(
+    "simile inspect ./service.similec"
+  )
 })
 test("exports a runnable workspace and exact reproduction files", async ({
   page,

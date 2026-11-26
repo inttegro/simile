@@ -63,7 +63,7 @@ export class Playground {
   private compileEpoch = 0
   private saveRevision = 0
   private sessionEpoch = 0
-  private runtimeLoaded = new Set<string>()
+  private artifactCalls: Promise<unknown> = Promise.resolve()
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => {
@@ -160,7 +160,10 @@ export class Playground {
     if (this.compiler.isClosed) this.compiler = new Engine()
     const compiler = this.compiler
     try {
-      return await compiler.call(method, input)
+      const result = await compiler.call(method, input)
+      // The result owns copied bytes, including when a newer edit makes it stale.
+      await compiler.call("releaseArtifact", { revision: result.revision })
+      return result
     } catch (error) {
       // Fatal Worker errors close the engine. Leave compilation diagnostics
       // visible, but let the next edit, Compile, or import use a fresh Worker.
@@ -236,26 +239,49 @@ export class Playground {
   ) {
     const artifact = this.state.candidate
     if (!artifact) throw new Error("Compile or import an artifact first.")
-    await this.loadRuntime(artifact)
-    return this.runtime.call(method, {
-      revision: artifact.revision,
-      options,
-    } as Methods[K]["input"])
+    return this.artifactCall(artifact, method, options)
   }
-  private async loadRuntime(artifact: ArtifactResult) {
-    if (!this.runtimeLoaded.has(artifact.revision)) {
-      await this.runtime.call("loadArtifact", { bytes: artifact.bytes })
-      this.runtimeLoaded.add(artifact.revision)
-    }
+  artifactCall<K extends "runOperation" | "synthesizeRequest">(
+    artifact: ArtifactResult,
+    method: K,
+    options: Methods[K]["input"]["options"]
+  ) {
+    return this.withArtifact(artifact, (runtime) =>
+      runtime.call(method, {
+        revision: artifact.revision,
+        options,
+      } as Methods[K]["input"])
+    )
+  }
+  private withArtifact<T>(
+    artifact: ArtifactResult,
+    action: (runtime: Engine) => Promise<T>
+  ): Promise<T> {
+    const runtime = this.runtime
+    // Serialize load/use/release together so overlapping calls cannot free each
+    // other's handles. A running session owns its artifact independently.
+    const pending = this.artifactCalls.then(async () => {
+      await runtime.call("loadArtifact", { bytes: artifact.bytes })
+      let result: T
+      try {
+        result = await action(runtime)
+      } finally {
+        if (!runtime.isClosed)
+          await runtime.call("releaseArtifact", { revision: artifact.revision })
+      }
+      if (runtime !== this.runtime)
+        throw new Error("Runtime changed before the operation completed.")
+      return result
+    })
+    this.artifactCalls = pending.catch(() => undefined)
+    return pending
   }
   async start(options: SessionOptions) {
     const active = this.state.candidate
     if (!active) throw new Error("Compile or import an artifact first.")
-    await this.loadRuntime(active)
-    const session = await this.runtime.call("startSession", {
-      revision: active.revision,
-      options,
-    })
+    const session = await this.withArtifact(active, (runtime) =>
+      runtime.call("startSession", { revision: active.revision, options })
+    )
     this.sessionEpoch++
     this.set({
       active,
@@ -331,9 +357,9 @@ export class Playground {
       const session = await next.call("restoreCheckpoint", {
         bytes: saved.checkpoint,
       })
+      await next.call("releaseArtifact", { revision: active.revision })
       this.runtime.dispose()
       this.runtime = next
-      this.runtimeLoaded = new Set([active.revision])
       this.sessionEpoch++
       this.set({
         active,
@@ -355,7 +381,6 @@ export class Playground {
   restartRuntime() {
     this.runtime.dispose()
     this.runtime = new Engine()
-    this.runtimeLoaded.clear()
     this.sessionEpoch++
     this.set({
       session: undefined,

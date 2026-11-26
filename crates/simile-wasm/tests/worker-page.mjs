@@ -67,6 +67,23 @@ async function main() {
   const checkpoint = await client.call("exportCheckpoint", {});
   check(checkpoint.bytes instanceof Uint8Array, "checkpoint must be canonical bytes");
   const originalCheckpoint = decode(checkpoint.bytes);
+  check((await client.call("releaseArtifact", { revision })).released, "candidate was not released");
+  check(!(await client.call("releaseArtifact", { revision })).released, "release must be idempotent");
+  await rejects(() => client.call("runOperation", baseline), "unknown_revision");
+  check(decode((await client.call("exportCheckpoint", {})).bytes) === originalCheckpoint, "releasing a candidate changed the active session");
+  const retired = [];
+  for (let edit = 0; edit < 16; edit++) {
+    const edited = { ...files, "lifecycle.yaml": files["lifecycle.yaml"].replace("title: Browser lifecycle", `title: Revision ${edit}`) };
+    const result = await client.call("compileWorkspace", { files: edited, contractEntry: "lifecycle.yaml", modules: ["lifecycle.hcl"] });
+    check(!retired.includes(result.revision) && result.revision !== revision, "edit fixture must produce a new artifact digest");
+    check((await client.call("releaseArtifact", { revision: result.revision })).released, "edited artifact was not released");
+    retired.push(result.revision);
+  }
+  for (const retiredRevision of retired)
+    await rejects(() => client.call("runOperation", { ...baseline, revision: retiredRevision }), "unknown_revision");
+  for (const input of [{}, { revision: "" }, { revision: 1 }])
+    await rejects(() => client.call("releaseArtifact", input), "invalid_message");
+  check((await client.call("status", {})).artifactDigest === revision, "edited candidates replaced the live session");
   for (const [pattern, replacement] of [
     [/"version":1/, '"version":2'],
     [/"artifactFormat":\d+/, '"artifactFormat":65535'],
@@ -122,6 +139,7 @@ async function main() {
   check(artifact.bytes.byteLength > 0, "caller artifact buffer was detached");
   const loaded = await client.call("loadArtifact", { bytes: artifact.bytes });
   check(loaded.revision === revision, "reloading transferred artifact bytes changed revision");
+  check((await client.call("runOperation", { ...baseline, options: { ...baseline.options, seed: "0" } })).seed === "0", "released artifact could not run after reload");
   const smithyBytes = new Uint8Array(await (await fetch("/tests/fixtures/orders.smithy.similec")).arrayBuffer());
   const smithy = await client.call("loadArtifact", { bytes: smithyBytes });
   const smithyRun = await client.call("runOperation", { revision: smithy.revision, options: { selector: { id: "createOrder" }, seed: "0" } });
