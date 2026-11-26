@@ -72,6 +72,18 @@ simile proxy acme --to https://api.acme.com --learn
 See [Proxy and learn](https://os.inttegro.dev/simile/proxy-and-learn) for evidence handling and the
 generated service workspace.
 
+## Playground
+
+Define and run a service on the same screen in the browser. Edit an OpenAPI or TypeScript
+contract with optional HCL behavior, or drop a compiled `.similec` artifact. Run operations,
+inspect responses, and exercise stateful HTTP sessions using the same Rust engine through
+WebAssembly. Compilation and execution stay in your browser.
+
+![Simile playground with the Orders contract, request editor, and generated response side by side](docs/images/playground.png)
+
+See the [playground README](playground/README.md) for samples, local setup, workflows, and
+static hosting instructions.
+
 ## What Simile models
 
 - HTTP operations described by OpenAPI 3.0–3.2, Smithy 2.0, or semantic TypeScript declarations.
