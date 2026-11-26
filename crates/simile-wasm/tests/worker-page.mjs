@@ -228,6 +228,32 @@ async function main() {
   const futureCheckpoint = await client.call("exportCheckpoint", {});
   await client.call("restoreCheckpoint", { bytes: futureCheckpoint.bytes });
   check(BigInt((await client.call("status", {})).clockMilliseconds) >= BigInt(future), "realtime restore rewound a future clock");
+  const tickingWorker = new Worker("/tests/ticking-clock-worker.mjs", { type: "module" });
+  try {
+    await new Promise((resolve, reject) => {
+      tickingWorker.addEventListener("message", resolve, { once: true });
+      tickingWorker.addEventListener("error", reject, { once: true });
+    });
+    const ticking = new SimileClient(tickingWorker);
+    await ticking.call("loadArtifact", { bytes: artifact.bytes });
+    await ticking.call("startSession", { revision, options: { clockMode: "realtime", startMilliseconds: "1000" } });
+    for (const reset of [false, true]) {
+      if (reset) await ticking.call("resetState", {});
+      const saved = await ticking.call("exportCheckpoint", {});
+      const captured = JSON.parse(decode(saved.bytes));
+      check(captured.snapshot.initialClock.now > 1000, "initialization did not cross a realtime clock tick");
+      const before = (await ticking.call("status", {})).generation;
+      captured.initialClock.now -= 1;
+      await rejects(() => ticking.call("restoreCheckpoint", { bytes: encode(JSON.stringify(captured)) }), "checkpoint_incompatible");
+      check((await ticking.call("status", {})).generation === before, "invalid clock metadata replaced the active session");
+      await ticking.call("restoreCheckpoint", { bytes: saved.bytes }).catch(error => {
+        throw new Error(`realtime checkpoint rejected after a clock tick: ${JSON.stringify(error)}`);
+      });
+      check((await ticking.call("status", {})).generation !== before, "realtime checkpoint did not restore after initialization or reset");
+    }
+  } finally {
+    tickingWorker.terminate();
+  }
   return assertions;
 }
 main().then(count => { globalThis.simileTestResult = { ok: true, assertions: count }; })

@@ -203,7 +203,8 @@ impl ServiceSession {
             service: summary.service,
             stack_protocol: simile_stack::PROTOCOL_VERSION,
             clock: snapshot.clock(),
-            initial_clock: self.initial_clock,
+            // Realtime may advance between the requested start and Stack creation.
+            initial_clock: snapshot.initial_clock(),
             session_revision: self.revision.get().to_string(),
             snapshot,
         };
