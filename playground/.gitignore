@@ -26,4 +26,3 @@ dist-ssr
 src/wasm/
 playwright-report/
 test-results/
-.cloudflare/

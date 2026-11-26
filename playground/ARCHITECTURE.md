@@ -225,11 +225,11 @@ flowchart TD
 Worker's binding import to `src/wasm/`, emits ES module Workers, and uses a relative
 asset base. `pnpm build` builds WASM, checks TypeScript, and produces the static app.
 Development and the default build use Cargo's debug profile. `build:production`
-selects the existing release profile, producing an asset below Cloudflare's 25 MiB
-file limit. `pnpm run deploy` builds that release bundle and publishes `dist/` with
-the `cf` CLI using [cloudflare.config.ts](cloudflare.config.ts). The Cloudflare
-Worker serves static assets at `similator.dela.dev`; the two Simile Workers in the
-runtime diagram still execute in the user's browser.
+selects the existing release profile for a smaller WASM asset. Publish the contents
+of `dist/` with any static host that serves JavaScript modules and WASM. Both
+Simile Workers execute in the user's browser; deployment needs no server runtime
+or provider SDK. See [build and deployment instructions](README.md#build-and-deploy)
+for the output directory, serving requirements, and verification commands.
 
 Unit tests cover controller races, Worker recovery, committed persistence,
 archives, formatting, and lossless request edits. Playwright runs the production

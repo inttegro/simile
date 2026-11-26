@@ -18,50 +18,61 @@ provenance and conversion commands are in `src/templates/petstore/SOURCE.md`.
 
 ## Run locally
 
-Use Node 26.13.1, pnpm 12.23.0, Rust 1.85.0, and the matching binding tool:
+Use Node 22.12 or newer, pnpm 12.23.0, Rust 1.85.0, and the matching binding
+tool. Run these commands from the repository root:
 
 ```sh
-rustup target add --toolchain 1.85.0 wasm32-unknown-unknown
+rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.100 --locked
 pnpm --dir playground install --frozen-lockfile
 pnpm --dir playground dev
 ```
 
-`build:wasm` generates ignored bindings in `src/wasm/` and the standalone binding
-harness's `pkg/` directory. `build` produces a static site in `dist/`; serve it over
-HTTP with the WASM MIME type. `preview` serves the production build locally.
-Development and the default `build` use the debug WASM profile. `build:production`
-uses the existing Rust release profile, keeping the WASM asset below Cloudflare's
-25 MiB file limit. Further size tuning and performance budgets remain separate work.
+Open the local URL printed by Vite. `build:wasm` generates ignored bindings in
+`playground/src/wasm/` and the standalone binding harness's `pkg/` directory.
+Development and the default `build` use the debug WASM profile.
 
-## Deploy to Cloudflare
+## Build and deploy
 
-The deployment target is [similator.dela.dev](https://similator.dela.dev).
-With the `cf` CLI installed and authenticated to the configured account, run:
+The playground is a static site. After installing the tools and dependencies
+above, build the optimized WASM and app, then preview the result locally:
 
 ```sh
-pnpm --dir playground run deploy
+pnpm --dir playground build:production
+pnpm --dir playground preview --host 127.0.0.1 --port 4173
 ```
 
-This builds the release WASM and static app, then runs `cf deploy dist` from the
-playground directory. [cloudflare.config.ts](cloudflare.config.ts) selects the
-`similator` Worker, account, and custom domain. Cloudflare serves static assets and
-manages the domain's DNS/TLS; Simile's engine still runs in browser module Workers.
-There is no server-side Simile runtime, database, or webhook sender in this deployment.
-The `workers.dev` and preview URLs are disabled.
+Open `http://127.0.0.1:4173`. The production command uses Cargo's release profile
+and writes the complete site to `playground/dist/`. Vite's preview server is for
+local verification; publish the built files with your chosen static host.
+See [Vite's static deployment guide](https://vite.dev/guide/static-deploy).
 
-To inspect a build before upload, run `pnpm --dir playground build:production`,
-then `cf deploy dist --dry-run` from `playground/`. Deploy without rebuilding with
-`cf deploy dist`. Generated Cloudflare output is ignored by Git.
+1. Upload the contents of `playground/dist/`, including its `assets/` directory,
+   to the host's public directory. Use `index.html` as the directory index.
+2. Serve the site over HTTPS with JavaScript module support. Serve `.wasm` files
+   as `application/wasm` for
+   [streaming compilation](https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/JavaScript_interface/instantiateStreaming_static).
+   Asset requests must return the actual files, rather than an HTML fallback.
+3. Keep `index.html` fresh when publishing a new build and retain the assets it
+   references. The app uses relative asset URLs and has no server-side routes.
+4. Open the published URL, compile a starter, run a baseline, and start an HTTP
+   session to confirm that the Worker and WASM assets load.
 
-Run the same browser suite against the deployed site without starting a local server:
+Compilation, execution, and persistence run in the browser. Hosting only needs to
+serve static files; it needs no Simile backend, database, account-specific build
+settings, or runtime secrets. Configure the host and domain outside this repository.
+Browser storage belongs to the site's origin; export work before changing domains.
+
+Run the browser suite against a published site by replacing the example URL:
 
 ```sh
-PLAYGROUND_BASE_URL=https://similator.dela.dev pnpm --dir playground test:e2e
+pnpm --dir playground exec playwright install chromium
+PLAYGROUND_BASE_URL=https://playground.example.com pnpm --dir playground test:e2e
 ```
 
-Each test uses its own browser context and local storage; the tests exercise
-simulated HTTP locally in WASM, including the bundled Petstore sample.
+Setting `PLAYGROUND_BASE_URL` skips the local preview server. Each test uses its
+own browser context and local storage; simulated HTTP runs locally in WASM,
+including the bundled Petstore sample.
 
 ## Workflow
 
@@ -177,4 +188,4 @@ It registers and provisions the exported workspace in a temporary native home,
 verifies authenticated create/read over TCP, and replays the exported bundle.
 
 Components are checked-in shadcn source. To add components, use
-`pnpm --dir playground dlx shadcn@latest add ...` with the global shadcn skill.
+`pnpm --dir playground dlx shadcn@latest add ...`.

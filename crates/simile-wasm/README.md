@@ -88,6 +88,6 @@ The checked-in Smithy fixture was produced by the native CLI (artifact format 24
 
 ```sh
 cargo run -p simile-cli -- compile crates/simile-core/tests/fixtures/orders.smithy \
-  --artifact /tmp/orders.smithy.similec
-cmp /tmp/orders.smithy.similec crates/simile-wasm/tests/fixtures/orders.smithy.similec
+  --artifact target/orders.smithy.similec
+cmp target/orders.smithy.similec crates/simile-wasm/tests/fixtures/orders.smithy.similec
 ```

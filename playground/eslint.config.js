@@ -11,7 +11,6 @@ export default defineConfig([
     "src/wasm",
     "test-results",
     "playwright-report",
-    ".cloudflare",
   ]),
   {
     files: ["**/*.{ts,tsx}"],
