@@ -337,6 +337,16 @@ fn maps_runtime_failures_through_provider_protocol_errors() {
 }
 
 #[test]
+fn refuses_to_invent_a_protocol_error_from_a_status_only_mapping() {
+    let artifact = status_only_protocol_error_artifact();
+    let response = Runtime::new(&artifact)
+        .synthesize_protocol_error("POST /orders", "invalid_body")
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(response.is_none());
+}
+
+#[test]
 fn fresh_invocations_generate_different_responses() {
     let artifact = artifact();
     let runtime = Runtime::new(&artifact);
@@ -756,6 +766,48 @@ profile "revoked_app" {
         .compile(CompileRequest {
             openapi: Source::new("auth.yaml", openapi),
             modules: vec![Source::new("auth.hcl", behavior)],
+            heuristic_policy: simile_heuristics::Policy::Standard,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    decode(&encode(&service).unwrap_or_else(|error| panic!("{error}")))
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn status_only_protocol_error_artifact() -> Artifact {
+    let openapi = r#"
+openapi: 3.1.0
+info: { title: Ambiguous errors, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: lookupOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: string }
+      responses:
+        '400':
+          description: Request rejected
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [code]
+                    properties: { code: { const: idempotency_key_unsupported } }
+                  - type: object
+                    required: [code]
+                    properties: { code: { const: missing_request_parameter } }
+"#;
+    let service = Compiler::new()
+        .compile(CompileRequest {
+            openapi: Source::new("ambiguous-errors.yaml", openapi),
+            modules: Vec::new(),
             heuristic_policy: simile_heuristics::Policy::Standard,
         })
         .unwrap_or_else(|error| panic!("{error}"));

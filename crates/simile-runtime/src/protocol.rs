@@ -1,3 +1,4 @@
+use simile_artifact::{ArtifactOperation, ArtifactResponse};
 use simile_spec::ResponseStatus;
 
 use crate::{
@@ -97,6 +98,14 @@ impl Runtime {
         let Some(status) = status else {
             return Ok(None);
         };
+        // A status-only mapping cannot identify one error branch when a provider groups several
+        // public failures under the same response status. It may use the response schema only when
+        // that schema admits one possible body; otherwise Simile's precise diagnostic is safer.
+        if mapping.body().is_none()
+            && !response_has_unique_body(operation, status, mapping.content_type())
+        {
+            return Ok(None);
+        }
         synthesize_response_with_seed(
             self.artifact(),
             ResponseSynthesisRequest {
@@ -111,4 +120,53 @@ impl Runtime {
         )
         .map(Some)
     }
+}
+
+fn response_has_unique_body(
+    operation: ArtifactOperation<'_>,
+    status: u16,
+    requested_content_type: Option<&str>,
+) -> bool {
+    let Some(response) = select_response(operation, status) else {
+        return false;
+    };
+    let Some(body) = response.body() else {
+        return false;
+    };
+    let content_type = requested_content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            body.media_types()
+                .find(|media_type| crate::is_json(media_type))
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            body.media_types()
+                .find(|media_type| crate::codec::supports_response(media_type))
+                .map(str::to_owned)
+        });
+    content_type
+        .and_then(|content_type| body.select(&content_type))
+        .is_some_and(|media| media.has_unique_schema_value())
+}
+
+fn select_response(operation: ArtifactOperation<'_>, status: u16) -> Option<ArtifactResponse<'_>> {
+    let responses = operation.responses().collect::<Vec<_>>();
+    responses
+        .iter()
+        .find(|response| response.status() == &ResponseStatus::Exact(status))
+        .or_else(|| {
+            responses.iter().find(|response| {
+                matches!(response.status(), ResponseStatus::Range(_))
+                    && response.status().matches(status)
+            })
+        })
+        .or_else(|| {
+            responses
+                .iter()
+                .find(|response| response.status() == &ResponseStatus::Default)
+        })
+        .cloned()
 }

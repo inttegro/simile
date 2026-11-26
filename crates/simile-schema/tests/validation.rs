@@ -44,6 +44,42 @@ fn validates_recursive_component_schemas() {
 }
 
 #[test]
+fn distinguishes_unique_response_shapes_from_branching_error_schemas() {
+    let (unique_plan, unique_schemas) = plan(
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+                "code": {"const": "invalid_order"},
+                "message": {"const": "order request rejected"}
+            }
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let unique = BoundRequestBody::new(&unique_plan, &unique_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    assert!(unique.has_unique_schema_value());
+
+    let (branching_plan, branching_schemas) = plan(
+        json!({
+            "oneOf": [
+                {"const": {"code": "idempotency_key_unsupported"}},
+                {"const": {"code": "missing_request_parameter"}}
+            ]
+        }),
+        BTreeMap::new(),
+        OpenApiFeature::V3_1,
+    );
+    let branching = BoundRequestBody::new(&branching_plan, &branching_schemas)
+        .select("application/json")
+        .unwrap_or_else(|| panic!("media type should be present"));
+    assert!(!branching.has_unique_schema_value());
+}
+
+#[test]
 fn enforces_combinators_and_openapi_30_nullable() {
     let (plan, schemas) = plan(
         json!({

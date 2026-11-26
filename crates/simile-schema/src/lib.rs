@@ -281,6 +281,51 @@ impl SchemaCatalog {
     fn contains(&self, schema: SchemaRef) -> bool {
         valid_id(schema.0, self.nodes.len())
     }
+
+    fn has_unique_value(&self, schema: SchemaRef) -> bool {
+        self.node_has_unique_value(schema.0, &mut BTreeSet::new())
+    }
+
+    fn node_has_unique_value(&self, schema: SchemaId, visiting: &mut BTreeSet<SchemaId>) -> bool {
+        let Some(node) = self.nodes.get(schema as usize) else {
+            return false;
+        };
+        if node.const_value.is_some()
+            || node
+                .enum_values
+                .as_ref()
+                .is_some_and(|values| values.len() == 1)
+        {
+            return true;
+        }
+        if node.allowed.is_some() || node.not.is_some() || !node.all_of.is_empty() {
+            return false;
+        }
+        if !node.any_of.is_empty() || !node.one_of.is_empty() || !visiting.insert(schema) {
+            return false;
+        }
+        let unique = if node.types == BTreeSet::from([JsonType::Null]) {
+            true
+        } else if node.types == BTreeSet::from([JsonType::Object]) {
+            node.additional == AdditionalProperties::Deny
+                && node.required.len() == node.properties.len()
+                && node.properties.iter().all(|(name, property)| {
+                    node.required.contains(name) && self.node_has_unique_value(*property, visiting)
+                })
+        } else if node.types == BTreeSet::from([JsonType::Array]) {
+            node.min_items == node.max_items
+                && node.min_items.is_some_and(|length| {
+                    length == 0
+                        || node
+                            .items
+                            .is_some_and(|item| self.node_has_unique_value(item, visiting))
+                })
+        } else {
+            false
+        };
+        visiting.remove(&schema);
+        unique
+    }
 }
 
 /// A selected media type bound to the shared compiled schema catalog.
@@ -349,6 +394,18 @@ impl<'a> BoundMediaType<'a> {
         self.selected
             .schema()
             .map_or_else(Vec::new, |schema| self.schemas.validate(schema, value))
+    }
+
+    /// Whether the compiled schema admits exactly one value.
+    ///
+    /// This deliberately answers a structural question about the public contract. Examples and
+    /// synthesis hints can make generation repeatable without making that generated value the only
+    /// valid response.
+    #[must_use]
+    pub fn has_unique_schema_value(&self) -> bool {
+        self.selected
+            .schema()
+            .is_some_and(|schema| self.schemas.has_unique_value(schema))
     }
 
     /// Validate one direct object property against its compiled schema.
