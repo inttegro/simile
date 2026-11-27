@@ -84,6 +84,12 @@ WebAssembly. Compilation and execution stay in your browser.
 See the [playground README](playground/README.md) for samples, local setup, workflows, and
 static hosting instructions.
 
+Launch the self-contained playground from an installed Simile binary:
+
+```sh
+simile playground
+```
+
 ## What Simile models
 
 - HTTP operations described by OpenAPI 3.0–3.2, Smithy 2.0, or semantic TypeScript declarations.

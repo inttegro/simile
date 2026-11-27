@@ -32,6 +32,7 @@ diagnostics and progress go to standard error.
 | `simile inspect ARTIFACT` | Verify and summarize a compiled artifact. | [Compiled artifact](/compiled-artifact) |
 | `simile describe` or `simile describe service [service]` | Explain the current `Simfile`, a registered service, or an explicit configuration. | [Describe a service](/describe-service) |
 | `simile audit ARTIFACT` | Explain remaining fidelity gaps and optionally fail on warnings. | [Fidelity audit](/fidelity-audit) |
+| `simile playground` | Open the self-contained browser workspace for authoring and exercising a service. | [Playground](/playground) |
 
 ## Execute and reproduce operations
 

@@ -97,6 +97,7 @@
 				"group": "Build a service",
 				"pages": [
 					"define-a-service",
+					"playground",
 					{
 						"group": "Contract and composition",
 						"pages": [

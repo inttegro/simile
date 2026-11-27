@@ -18,6 +18,18 @@ provenance and conversion commands are in `src/templates/petstore/SOURCE.md`.
 
 ## Run locally
 
+An installed Simile binary contains the production playground and opens it directly:
+
+```sh
+simile playground
+```
+
+Press Ctrl-C in the terminal to stop its loopback server. Use `--no-open` when you want Simile to
+print the URL without opening a browser. The default port is `4243`; use `--port PORT` to select a
+different loopback port.
+
+### Develop the playground
+
 Use Node 22.12 or newer, pnpm 12.23.0, Rust 1.85.0, and the matching binding
 tool. Run these commands from the repository root:
 
