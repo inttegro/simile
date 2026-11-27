@@ -8,7 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# The production build is checked in because the native CLI embeds it. Regenerate it with
+# `pnpm build:production` whenever playground sources change.
 dist-ssr
 *.local
 

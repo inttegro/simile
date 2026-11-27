@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod console;
 mod error;
+mod playground;
 mod terminal;
 mod ui;
 
@@ -37,6 +38,7 @@ fn run(cli: Cli, terminal: &Terminal) -> Result<commands::Status> {
     let runs_server = matches!(
         &cli.command,
         cli::Command::Console(_)
+            | cli::Command::Playground(_)
             | cli::Command::Proxy(_)
             | cli::Command::Start(_)
             | cli::Command::Test(_)

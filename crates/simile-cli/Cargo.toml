@@ -22,6 +22,7 @@ anstyle.workspace = true
 axum.workspace = true
 clap.workspace = true
 crossterm.workspace = true
+include_dir.workspace = true
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true

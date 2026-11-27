@@ -116,6 +116,8 @@ pub enum Command {
     Compile(CompileArgs),
     /// Open the interactive workspace for registered local services.
     Console(ConsoleArgs),
+    /// Author and exercise a service in the browser.
+    Playground(PlaygroundArgs),
     /// Replay one or more executable examples as a conformance suite.
     Conformance(ConformanceArgs),
     /// Check the local environment and report actionable problems.
@@ -168,6 +170,17 @@ pub struct ConsoleArgs {
     /// Open the console in the system browser instead of the terminal.
     #[arg(long)]
     pub web: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PlaygroundArgs {
+    /// Loopback port to use.
+    #[arg(long, default_value_t = 4243, value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: u16,
+
+    /// Print the playground URL without opening the system browser.
+    #[arg(long)]
+    pub no_open: bool,
 }
 
 #[derive(Debug, Args)]

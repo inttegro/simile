@@ -6,6 +6,7 @@ mod console;
 mod describe;
 mod doctor;
 mod inspect;
+mod playground;
 mod profile;
 mod profiles;
 mod proxy;
@@ -46,6 +47,7 @@ pub fn execute(command: Command, ctx: &Context, terminal: &Terminal) -> Result<S
         Command::Doctor => doctor::execute(ctx, terminal),
         Command::Describe(arguments) => describe::execute(arguments, ctx, terminal),
         Command::Inspect(arguments) => inspect::execute(arguments, terminal),
+        Command::Playground(arguments) => playground::execute(arguments, terminal),
         Command::Profile(arguments) => profile::execute(arguments, ctx, terminal),
         Command::Profiles(arguments) => profiles::execute(arguments, ctx, terminal),
         Command::Proxy(arguments) => proxy::execute(arguments, ctx, terminal),

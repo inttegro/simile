@@ -110,6 +110,31 @@ fn exposes_the_terminal_and_web_console_forms() {
 }
 
 #[test]
+fn exposes_the_embedded_browser_playground() {
+    let help = Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["playground", "--help"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    let usage = format!(
+        "Usage: simile{} playground [OPTIONS]",
+        std::env::consts::EXE_SUFFIX
+    );
+    assert!(help.contains(&usage));
+    assert!(help.contains("--port <PORT>"));
+    assert!(help.contains("--no-open"));
+
+    Command::new(snapbox::cmd::cargo_bin!("simile"))
+        .args(["--output", "json", "playground"])
+        .assert()
+        .failure()
+        .stderr_eq(
+            "invalid command arguments: playground is interactive and does not support --output json\n",
+        );
+}
+
+#[test]
 fn doctor_writes_machine_output_only_to_stdout() {
     Command::new(snapbox::cmd::cargo_bin!("simile"))
         .args(["--output", "json", "doctor"])
