@@ -1,0 +1,57 @@
+---
+title: Simile 0.6.0
+sidebarTitle: 0.6.0
+description: A local browser playground, portable WebAssembly execution, and an authenticated console workbench.
+---
+
+Released November 27, 2026.
+
+Simile 0.6.0 brings service authoring and emulation into the browser. The downloadable CLI now
+includes a complete local playground, while the service console gains a workbench for exercising a
+running emulator through its real listener and runtime pipeline.
+
+<Info>
+  The compiled artifact format remains at version 24. Existing 0.5.1 artifacts remain readable.
+  Run `simile update SERVICE` to rebuild an installed service with the current compiler.
+</Info>
+
+## Launch the playground from Simile
+
+```console
+simile playground
+```
+
+The command serves the bundled application on `http://127.0.0.1:4243` and opens it in your browser.
+The workspace can author OpenAPI or semantic TypeScript contracts, compile HCL behavior, run
+operations, inspect state, save explicit checkpoints, and export a native Simile project.
+
+Use `--port` to choose another loopback port or `--no-open` when you want to open the URL yourself.
+The playground ships inside the platform archives, so it needs no separate frontend checkout or
+package installation.
+
+## Run Simile's engine in a browser worker
+
+The new WebAssembly target exposes compilation and stateful execution through a worker-safe API.
+Browser sessions share request validation, profile authorization, effects, response selection, and
+logical-clock behavior with native Simile. Portable parity tests cover the shared execution path.
+
+Browser workspaces use IndexedDB for source files and explicit checkpoints. They do not open a TCP
+listener. Export the workspace when another application needs to call the service through native
+Simile.
+
+## Exercise live operations from the console
+
+The browser console now includes a request workbench. It can build a representative request from
+the compiled contract, then send it through the running service with a selected profile, scenario,
+and fault profile.
+
+Control requests are authenticated and restricted to the local console session. Validation failures
+retain their precise protocol errors, and operation pages synthesize representative requests and
+responses from the compiled contract.
+
+## Install or inspect the release
+
+- [Download Simile 0.6.0](/downloads)
+- [Open the Playground guide](/playground)
+- [Open the Console guide](/simile-web)
+- [View the signed GitHub release](https://github.com/inttegro/simile/releases/tag/v0.6.0)

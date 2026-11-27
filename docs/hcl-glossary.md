@@ -4,7 +4,7 @@ description: Definitions for the language, compilation model, and runtime concep
 ---
 
 This glossary gives one stable meaning to terms used across the Simile HCL reference and guides.
-Definitions describe Simile v0.5.1. Follow each link for syntax or execution details.
+Definitions describe Simile v0.6.0. Follow each link for syntax or execution details.
 
 ## A
 

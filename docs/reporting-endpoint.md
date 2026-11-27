@@ -29,7 +29,7 @@ Simile sends `POST /v1/reports/preflight` with JSON:
 
 ```json
 {
-  "simileVersion": "0.5.1",
+  "simileVersion": "0.6.0",
   "service": "inttegro",
   "serviceVersion": "2026-11-22",
   "artifactDigest": "1fba24f7b8a06d5d…"

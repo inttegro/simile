@@ -4,6 +4,19 @@ All notable changes to Simile will be documented in this file.
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-27
+
+- Add `simile playground`, a bundled browser workspace for authoring, compiling, running,
+  inspecting, and exporting service definitions without a separate frontend installation.
+- Add a portable WebAssembly runtime and shared HTTP execution layer so browser workers and native
+  listeners use the same request validation, profile authorization, effects, and response rules.
+- Add an authenticated browser-console workbench for running compiled operations with profiles,
+  scenarios, and fault profiles through the live service pipeline.
+- Generate representative requests and responses from compiled operation contracts and preserve
+  precise protocol errors when a request fails validation.
+- Publish the browser playground source, architecture, parity checks, persistence model, and native
+  handoff workflow.
+
 ## 0.5.1 - 2026-11-25
 
 - Expand `simile console` into an immersive terminal interface and add live, searchable HTTP and
